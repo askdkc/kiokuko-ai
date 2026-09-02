@@ -5,6 +5,8 @@ import { withImmediateTransaction } from '../db/transaction.js';
 import { KiokukoError } from '../errors.js';
 import { detectRepositoryRoot } from '../repository/detect-root.js';
 import { canonicalContentHash } from '../serialization/validate.js';
+import { PACKAGE_VERSION } from '../package-version.js';
+import { OPENCODE_HOOK_PROTOCOL_VERSION } from '../opencode/hook-protocol.js';
 import { directiveForRun } from './directives.js';
 import { PLAN_START_RECOVERY_BLOCKER_PREFIX } from './plan-recovery.js';
 import {
@@ -24,11 +26,13 @@ export const ENNO_ADAPTER_WARNING = 'Kiokuko Enno-Oduno adapter unavailable; all
 export const ENNO_CLIENTS = ENNO_CLIENT_KINDS;
 export type EnnoClient = EnnoClientKind;
 const hookInputSchema = z.object({
+  protocolVersion: z.literal(OPENCODE_HOOK_PROTOCOL_VERSION).optional(),
+  packageVersion: z.string().min(1).max(100).optional(),
   session_id: z.string().min(1).max(256).optional(),
   sessionId: z.string().min(1).max(256).optional(),
+  terminalMessageId: z.string().min(1).max(256).optional(),
   cwd: z.string().min(1).max(4_096),
-  stop_hook_active: z.boolean().optional(),
-}).passthrough();
+}).strict();
 
 interface CandidateRow extends SqliteRow {
   runId: string;
@@ -43,6 +47,8 @@ interface CandidateRow extends SqliteRow {
 }
 
 export interface AdapterDecision {
+  disposition: 'continue' | 'stop' | 'retry';
+  code: 'continue' | 'no_active_run' | 'ambiguous_run' | 'continuation_limit' | 'adapter_unavailable';
   continue: boolean;
   runId: string | null;
   status: EnnoOdunoState['status'] | null;
@@ -214,14 +220,38 @@ function claimContinuation(
   client: EnnoClient,
   snapshot: ReturnType<typeof readEnnoSnapshot>,
   directiveDigest: string,
-): boolean {
+  terminalMessageId: string,
+): { allowed: boolean; replayed: boolean } {
   if (snapshot.clientSessionId === null || snapshot.clientKind !== client) {
     throw new KiokukoError('INTEGRITY_ERROR', 'Enno continuation requires the current client route');
   }
+  const sourceTerminalHash = createHash('sha256')
+    .update('kiokuko-opencode-terminal-v1\0', 'utf8')
+    .update(snapshot.clientSessionId, 'utf8')
+    .update('\0', 'utf8')
+    .update(terminalMessageId, 'utf8')
+    .digest('hex');
   const existing = database.prepare(`
     SELECT contract_revision AS contractRevision, mutation_revision AS mutationRevision,
-           attempts, directive_digest AS directiveDigest, continuation_count AS continuationCount,
-           total_count AS totalCount
+           attempts, directive_digest AS directiveDigest, route_epoch AS routeEpoch
+    FROM enno_client_continuation_receipts
+    WHERE run_id = ? AND client_kind = ? AND source_session_id = ? AND source_terminal_hash = ?
+  `).get<{
+    contractRevision: number;
+    mutationRevision: number;
+    attempts: number;
+    directiveDigest: string;
+    routeEpoch: number;
+  }>(
+    snapshot.runId,
+    client,
+    snapshot.clientSessionId,
+    sourceTerminalHash,
+  );
+  const aggregate = database.prepare(`
+    SELECT contract_revision AS contractRevision, mutation_revision AS mutationRevision,
+           attempts, directive_digest AS directiveDigest,
+           continuation_count AS continuationCount, total_count AS totalCount
     FROM enno_client_continuations
     WHERE run_id = ? AND client_kind = ? AND source_session_id = ?
   `).get<{
@@ -231,20 +261,62 @@ function claimContinuation(
     directiveDigest: string;
     continuationCount: number;
     totalCount: number;
-  }>(
-    snapshot.runId,
-    client,
-    snapshot.clientSessionId,
-  );
+  }>(snapshot.runId, client, snapshot.clientSessionId);
   const unchanged = existing?.contractRevision === snapshot.revision
     && existing.mutationRevision === snapshot.mutationRevision
     && existing.attempts === snapshot.attempts
-    && existing.directiveDigest === directiveDigest;
-  const count = unchanged ? existing.continuationCount : 0;
+    && existing.directiveDigest === directiveDigest
+    && existing.routeEpoch === (snapshot.routeEpoch ?? 0);
+  if (existing !== undefined && !unchanged) {
+    throw new KiokukoError('INTEGRITY_ERROR', 'OpenCode terminal receipt was reused for a different Enno state');
+  }
+  if (unchanged) return { allowed: true, replayed: true };
+
+  const receiptCount = Number(database.prepare(`
+    SELECT COUNT(*) AS count
+    FROM enno_client_continuation_receipts
+    WHERE run_id = ? AND client_kind = ? AND source_session_id = ?
+      AND contract_revision = ? AND mutation_revision = ? AND attempts = ? AND directive_digest = ?
+  `).get<{ count: number }>(
+    snapshot.runId,
+    client,
+    snapshot.clientSessionId,
+    snapshot.revision,
+    snapshot.mutationRevision,
+    snapshot.attempts,
+    directiveDigest,
+  )?.count ?? 0);
+  const receiptTotalCount = Number(database.prepare(`
+    SELECT COUNT(*) AS count
+    FROM enno_client_continuation_receipts
+    WHERE run_id = ? AND client_kind = ? AND source_session_id = ?
+  `).get<{ count: number }>(snapshot.runId, client, snapshot.clientSessionId)?.count ?? 0);
+  const aggregateUnchanged = aggregate?.contractRevision === snapshot.revision
+    && aggregate.mutationRevision === snapshot.mutationRevision
+    && aggregate.attempts === snapshot.attempts
+    && aggregate.directiveDigest === directiveDigest;
+  const count = Math.max(receiptCount, aggregateUnchanged ? aggregate.continuationCount : 0);
+  const totalCount = Math.max(receiptTotalCount, aggregate?.totalCount ?? 0);
   const remaining = Math.max(0, snapshot.contract.maxAttempts - snapshot.attempts);
-  const totalCount = existing?.totalCount ?? 0;
   const totalLimit = snapshot.contract.maxAttempts;
-  if (count >= remaining || totalCount >= totalLimit) return false;
+  if (count >= remaining || totalCount >= totalLimit) return { allowed: false, replayed: false };
+  database.prepare(`
+    INSERT INTO enno_client_continuation_receipts (
+      run_id, client_kind, source_session_id, source_terminal_hash,
+      contract_revision, mutation_revision, attempts, directive_digest, route_epoch, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    snapshot.runId,
+    client,
+    snapshot.clientSessionId,
+    sourceTerminalHash,
+    snapshot.revision,
+    snapshot.mutationRevision,
+    snapshot.attempts,
+    directiveDigest,
+    snapshot.routeEpoch ?? 0,
+    new Date().toISOString(),
+  );
   database.prepare(`
     INSERT INTO enno_client_continuations (
       run_id, client_kind, source_session_id, contract_revision, mutation_revision,
@@ -275,7 +347,7 @@ function claimContinuation(
     directiveDigest,
     new Date().toISOString(),
   );
-  return true;
+  return { allowed: true, replayed: false };
 }
 
 export function decideAdapterContinuation(database: SqliteDatabase, client: string, rawInput: unknown): AdapterDecision {
@@ -285,6 +357,9 @@ export function decideAdapterContinuation(database: SqliteDatabase, client: stri
   const supportedClient = client as EnnoClient;
   const parsed = hookInputSchema.safeParse(rawInput);
   if (!parsed.success) throw new KiokukoError('VALIDATION_ERROR', 'Enno client hook input is invalid');
+  if (parsed.data.packageVersion !== undefined && parsed.data.packageVersion !== PACKAGE_VERSION) {
+    throw new KiokukoError('CONFLICT', 'Enno client hook package version does not match');
+  }
   const sessionId = parsed.data.session_id ?? parsed.data.sessionId;
   if (sessionId === undefined) throw new KiokukoError('VALIDATION_ERROR', 'Enno client session ID is required');
   const repositoryRoot = detectRepositoryRoot({ cwd: parsed.data.cwd }).root;
@@ -302,18 +377,35 @@ export function decideAdapterContinuation(database: SqliteDatabase, client: stri
     }
     const directive = directiveForRun(snapshot);
     if (directive === null) throw new KiokukoError('INTEGRITY_ERROR', 'Enno active run has no role directive');
-    const claimed = claimContinuation(database, supportedClient, snapshot, canonicalContentHash(directive));
-    const resumeToken = claimed ? issueResumeTokenInTransaction(database, snapshot) : null;
-    const executionLease = claimed && directive.role === 'goki' && directive.workUnit !== null
+    const directiveDigest = canonicalContentHash(directive);
+    const terminalMessageId = parsed.data.terminalMessageId
+      ?? `legacy-${snapshot.revision}-${snapshot.mutationRevision}-${snapshot.attempts}-${directiveDigest}`;
+    const receipt = claimContinuation(database, supportedClient, snapshot, directiveDigest, terminalMessageId);
+    const resumeToken = receipt.allowed ? issueResumeTokenInTransaction(database, snapshot) : null;
+    const executionLease = receipt.allowed && directive.role === 'goki' && directive.workUnit !== null
       ? claimExecutionLeaseInTransaction(database, snapshot, directive.workUnit.id, { clientKind: supportedClient, sessionId })
       : null;
-    return { kind: 'continuation', snapshot, directive, claimed, resumeToken, executionLease } as const;
+    return { kind: 'continuation', snapshot, directive, claimed: receipt.allowed, replayed: receipt.replayed, resumeToken, executionLease } as const;
   });
   if (continuation.kind === 'none') {
-    return { continue: false, runId: null, status: null, directive: null, reason: null, warning: null, resumeToken: null, routeEpoch: null, executionLease: null };
+    return {
+      disposition: 'stop',
+      code: 'no_active_run',
+      continue: false,
+      runId: null,
+      status: null,
+      directive: null,
+      reason: null,
+      warning: null,
+      resumeToken: null,
+      routeEpoch: null,
+      executionLease: null,
+    };
   }
   if (continuation.kind === 'ambiguous') {
     return {
+      disposition: 'stop',
+      code: 'ambiguous_run',
       continue: false,
       runId: null,
       status: null,
@@ -328,6 +420,8 @@ export function decideAdapterContinuation(database: SqliteDatabase, client: stri
   const { snapshot } = continuation;
   if (!continuation.claimed) {
     return {
+      disposition: 'stop',
+      code: 'continuation_limit',
       continue: false,
       runId: snapshot.runId,
       status: snapshot.status,
@@ -340,6 +434,8 @@ export function decideAdapterContinuation(database: SqliteDatabase, client: stri
     };
   }
   return {
+    disposition: 'continue',
+    code: 'continue',
     continue: true,
     runId: snapshot.runId,
     status: snapshot.status,
@@ -364,11 +460,46 @@ export function renderStopHookDecision(decision: AdapterDecision): object {
 }
 
 export function renderOpenCodeDecision(decision: AdapterDecision): object {
-  return decision;
+  return {
+    protocolVersion: OPENCODE_HOOK_PROTOCOL_VERSION,
+    packageVersion: PACKAGE_VERSION,
+    ...decision,
+  };
 }
 
-export function failOpenAdapterOutput(client: EnnoClient): object {
+export function failOpenAdapterOutput(
+  client: EnnoClient,
+  code: 'adapter_unavailable' | 'invalid_response' | 'version_mismatch' = 'adapter_unavailable',
+): object {
   return client === 'opencode'
-    ? { continue: false, runId: null, status: null, directive: null, reason: null, warning: ENNO_ADAPTER_WARNING, resumeToken: null, routeEpoch: null, executionLease: null }
-    : { continue: false, runId: null, status: null, directive: null, reason: null, warning: ENNO_ADAPTER_WARNING, resumeToken: null, routeEpoch: null, executionLease: null };
+    ? {
+      protocolVersion: OPENCODE_HOOK_PROTOCOL_VERSION,
+      packageVersion: PACKAGE_VERSION,
+      disposition: code === 'adapter_unavailable' ? 'retry' : 'stop',
+      code,
+      continue: false,
+      runId: null,
+      status: null,
+      directive: null,
+      reason: null,
+      warning: code === 'adapter_unavailable' ? ENNO_ADAPTER_WARNING : null,
+      resumeToken: null,
+      routeEpoch: null,
+      executionLease: null,
+    }
+    : {
+      protocolVersion: OPENCODE_HOOK_PROTOCOL_VERSION,
+      packageVersion: PACKAGE_VERSION,
+      disposition: 'retry',
+      code: 'adapter_unavailable',
+      continue: false,
+      runId: null,
+      status: null,
+      directive: null,
+      reason: null,
+      warning: ENNO_ADAPTER_WARNING,
+      resumeToken: null,
+      routeEpoch: null,
+      executionLease: null,
+    };
 }

@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "minimum": "1.18.25",
+  "tested": ["1.18.25", "1.18.26"],
+  "releaseRepository": "anomalyco/opencode",
+  "platforms": {
+    "linux-x64": {
+      "archive": "opencode-linux-x64.tar.gz",
+      "versions": {
+        "1.18.25": {
+          "sha512": "793a89cbcc2c41efc1e67ef63720a870921a41106cd4389bb79e319b90ce92d494157c1377c0d2cca7976dc5904755395d7dc2f3573f1fbe977be478c4ae7098"
+        },
+        "1.18.26": {
+          "sha512": "a5ba06a10a4d6acd134f820d49c604c93b2a5df1447f7ac622612156dce993dedd8d549a6be46302e8040e7daaf951e73f0794818a0cb5089e7637f13258c743"
+        }
+      }
+    },
+    "linux-arm64": {
+      "archive": "opencode-linux-arm64.tar.gz",
+      "versions": {
+        "1.18.26": {
+          "sha512": "b4ca6c4d7abd3756f517401fe5e936e10c21cabfb82efdc7cfe2141d1da6533865054ce8087149b7927ed707c9dc4284e07011f41b48becd62ed6b943f30d76f"
+        }
+      }
+    },
+    "macos-x64": {
+      "archive": "opencode-darwin-x64.zip",
+      "versions": {
+        "1.18.26": {
+          "sha512": "750bb1a9c7b35f4a182d6ed17d2f77a5ad2ca6436f6d4ff943df14f252632121ab2c90eef908a506393c303cddf8415564ce8af047ad8defa132de6d9071d4df"
+        }
+      }
+    },
+    "macos-arm64": {
+      "archive": "opencode-darwin-arm64.zip",
+      "versions": {
+        "1.18.26": {
+          "sha512": "9d1586f8c6d25f3e0227ec7a5d014180e015a0e6e9df41cc12b8759e168027c630f846c39b5c6f9ebbea9b36e1ed53175c9449ad787a64e062c432525f88940e"
+        }
+      }
+    },
+    "windows-x64": {
+      "archive": "opencode-windows-x64.zip",
+      "versions": {
+        "1.18.26": {
+          "sha512": "f84db26ff04ab6c0348ed5dea86c489c817d6bcdada8b092f829570dc001442c11f207c2e52a80ee1a3d07f603a7c4cc801b21ee6a150ba70a2f28201db52c0e"
+        }
+      }
+    }
+  }
+}

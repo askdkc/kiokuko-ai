@@ -9,6 +9,7 @@ const fixtureDirectory = path.resolve(import.meta.dirname, '../fixtures/client-e
 interface ClientEventFixture {
   schemaVersion: number;
   client: { kind: string; version: string };
+  purpose?: string;
   capture: { status: 'verified' | 'partial'; method: string };
   events: Array<Record<string, unknown>>;
 }
@@ -24,9 +25,12 @@ function serialized(fixture: ClientEventFixture): string {
 test('the OpenCode event fixture is versioned, bounded, and sanitized clean-room evidence', async () => {
   const fixtures = await Promise.all([
     loadFixture('opencode-1.18.18.json'),
+    loadFixture('opencode-1.18.25.json'),
+    loadFixture('opencode-1.18.26.json'),
   ]);
 
-  assert.deepEqual(fixtures.map((fixture) => fixture.client.kind), ['opencode']);
+  assert.deepEqual(fixtures.map((fixture) => fixture.client.kind), ['opencode', 'opencode', 'opencode']);
+  assert.match(fixtures[0]?.purpose ?? '', /regression-only/u);
   for (const fixture of fixtures) {
     assert.equal(fixture.schemaVersion, 1);
     assert.ok(fixture.client.version.length > 0);
@@ -40,7 +44,7 @@ test('the OpenCode event fixture is versioned, bounded, and sanitized clean-room
 });
 
 test('the fixture preserves only event categories observed in the OpenCode run', async () => {
-  const opencode = await loadFixture('opencode-1.18.18.json');
+  const opencode = await loadFixture('opencode-1.18.26.json');
   assert.deepEqual(opencode.events.map((event) => event.channel), [
     'event',
     'tool.execute.before',

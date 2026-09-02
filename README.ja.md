@@ -1,10 +1,10 @@
-# Kiokuko（記憶庫）for Opencode
+# Kiokuko（記憶庫）for OpenCode
 
 [English](README.md) | 日本語 | [简体中文](README.zh-CN.md) | [한국어](README.ko.md)
 
 **MCPで接続し、必要な記憶を検索し、作業後に知識を蓄積する。**
 
-KiokukoはOpencode向けのローカル外部メモリ導入Pluginです。SQLiteに知識を保存し、
+KiokukoはOpenCode向けのローカル外部メモリ導入Pluginです。SQLiteに知識を保存し、
 次のタスクに関係する文脈を検索し、作業結果から再利用できる知識を記録します。
 
 ## 基本概念

@@ -4,6 +4,7 @@ import test from 'node:test';
 import os from 'node:os';
 import path from 'node:path';
 import { KiokukoPlugin } from '../../src/opencode/plugin.js';
+import { PACKAGE_VERSION } from '../../src/package-version.js';
 
 test('OpenCode plugin registers only an event hook and prompts after explicit hook approval', async () => {
   const originalBun = (globalThis as { Bun?: unknown }).Bun;
@@ -21,6 +22,10 @@ test('OpenCode plugin registers only an event hook and prompts after explicit ho
         stdin: { write() {}, end() {} },
         stdout: new ReadableStream({ start(controller) {
           controller.enqueue(new TextEncoder().encode(JSON.stringify({
+            protocolVersion: 1,
+            packageVersion: PACKAGE_VERSION,
+            disposition: 'continue',
+            code: 'continue',
             continue: true,
             runId: 'run-test',
             status: 'goki_executing',

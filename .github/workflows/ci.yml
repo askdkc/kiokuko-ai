@@ -28,6 +28,9 @@ jobs:
       - name: Type-check
         run: npm run typecheck
 
+      - name: Build package
+        run: npm run build
+
       - name: Run test suite
         run: npm test
 
@@ -43,7 +46,7 @@ jobs:
         run: npm run test:sampledb
 
       - name: Verify package contents
-        run: npm run pack:check
+        run: npm pack --dry-run --json
 
       - name: Verify minimal global install
         run: npm run test:global-install
@@ -65,8 +68,6 @@ jobs:
             runner: macos-15-intel
           - platform: macos-arm64
             runner: macos-15
-          - platform: windows-x64
-            runner: windows-2025
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 15
     steps:
@@ -92,3 +93,40 @@ jobs:
 
       - name: Verify pinned local embedding manifest
         run: node scripts/run-local-embedding-smoke.mjs --offline
+
+      - name: Install pinned OpenCode release
+        run: node scripts/install-opencode-release.mjs --version 1.18.26 --platform ${{ matrix.platform }} --output "${{ runner.temp }}/opencode"
+
+      - name: Run OpenCode platform host smoke
+        run: npm run test:e2e:opencode:host
+        env:
+          OPENCODE_BIN: ${{ runner.temp }}/opencode
+
+  opencode-host-contract:
+    name: OpenCode host contract (${{ matrix.opencode }})
+    strategy:
+      fail-fast: false
+      matrix:
+        opencode: [1.18.25, 1.18.26]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24.16.0
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install exact OpenCode release
+        run: node scripts/install-opencode-release.mjs --version "${{ matrix.opencode }}" --platform linux-x64 --output "${{ runner.temp }}/opencode"
+
+      - name: Run required host contract
+        run: npm run test:e2e:opencode:host
+        env:
+          OPENCODE_BIN: ${{ runner.temp }}/opencode

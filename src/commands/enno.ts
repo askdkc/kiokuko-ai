@@ -17,6 +17,7 @@ import {
   renderOpenCodeDecision,
   type EnnoClient,
 } from '../enno-oduno/adapters.js';
+import { parseOpenCodeHookRequest } from '../opencode/hook-protocol.js';
 
 async function readInputFromStdin(): Promise<Buffer> {
   const chunks: Buffer[] = [];
@@ -83,13 +84,18 @@ export function registerEnnoCommand(root: Command, dependencies: EnnoCommandDepe
       }
       try {
         if (dependencies.withDatabase === undefined) throw new KiokukoError('SERVICE_UNAVAILABLE', 'Enno adapter database is unavailable');
-        const input = parseRoleJson(await readInputFromStdin());
+        const input = parseOpenCodeHookRequest(parseRoleJson(await readInputFromStdin()));
         const decision = await dependencies.withDatabase((database) => decideAdapterContinuation(database, client, input));
         const output = renderOpenCodeDecision(decision);
         process.stdout.write(serializeRoleOutput(output));
-      } catch {
+      } catch (error) {
         process.stderr.write(`${ENNO_ADAPTER_WARNING}\n`);
-        process.stdout.write(serializeRoleOutput(failOpenAdapterOutput(client)));
+        const code = error instanceof KiokukoError && error.code === 'CONFLICT'
+          ? 'version_mismatch'
+          : error instanceof KiokukoError && error.code === 'VALIDATION_ERROR'
+            ? 'invalid_response'
+            : 'adapter_unavailable';
+        process.stdout.write(serializeRoleOutput(failOpenAdapterOutput(client, code)));
       }
     });
 }

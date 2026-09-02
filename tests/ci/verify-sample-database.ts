@@ -92,7 +92,10 @@ function assertCurrentFixture(): void {
   const database = openConnection(sampleDatabasePath, { readOnly: true });
   try {
     assert.equal(database.prepare('PRAGMA application_id').get<{ application_id: number }>()?.application_id, 0x4B494F4B);
-    assert.equal(database.prepare('PRAGMA user_version').get<{ user_version: number }>()?.user_version, 1);
+    assert.equal(
+      database.prepare('PRAGMA user_version').get<{ user_version: number }>()?.user_version,
+      CURRENT_SCHEMA_VERSION,
+    );
     const versions = database.prepare('SELECT version FROM schema_migrations ORDER BY version')
       .all<{ version: number }>()
       .map(({ version }) => version);

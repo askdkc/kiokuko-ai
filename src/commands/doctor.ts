@@ -9,7 +9,7 @@ import { KiokukoError } from '../errors.js';
 import { readRegularFile } from '../agent-file/atomic-write.js';
 import { BEGIN_MARKER, END_MARKER } from '../agent-file/managed-block.js';
 import { readProjectConfig } from '../config/project-config.js';
-import { getOpenCodeConfigDirectory, getDatabaseLockPath, getGlobalDatabasePath, getRuntimeDescriptorPath } from '../config/paths.js';
+import { getOpenCodeConfigDirectory, getDatabaseLockPath, getGlobalDatabasePath, getRuntimeDescriptorPath, getOpenCodeSkillsDirectory } from '../config/paths.js';
 import { listRepositoryLocations, type RepositoryLocation } from '../repository/binding.js';
 import { isPidAlive } from '../server/instance-lock.js';
 import { readRuntimeDescriptor } from '../server/runtime-descriptor.js';
@@ -25,8 +25,10 @@ import { parseEmbeddingConfig } from '../embedding/config.js';
 import { readPersistedEmbeddingSettings } from '../embedding/settings.js';
 import type { VectorSearchBackend } from '../embedding/types.js';
 import type { SqliteDatabase } from '../db/adapter.js';
-import { renderOpenCodeConfig } from '../setup/opencode-config.js';
+import { inspectOpenCodeIntegration } from '../setup/opencode-config.js';
 import { setupMcpIdentityConflictClient } from '../setup/mcp-conflict.js';
+import { loadBundledStandardSkillFiles } from '../setup/standard-skills.js';
+import { resolveManagedOpenCodeRuntime } from '../opencode/runtime-invocation.js';
 
 export interface DoctorCheck {
   ok: boolean;
@@ -62,7 +64,10 @@ export interface DoctorResult {
     hybridSearch: DoctorCheck;
     embeddings: DoctorCheck;
     ennoOperations: DoctorCheck;
+    openCodePlugin: DoctorCheck;
     openCodeMcp: DoctorCheck;
+    openCodeRuntime: DoctorCheck;
+    openCodeSkills: DoctorCheck;
   };
 }
 
@@ -137,25 +142,61 @@ async function openCodeConfigPath(): Promise<string> {
   return path.join(directory, 'opencode.json');
 }
 
-/** Inspect the OpenCode MCP identity using the same canonical parser as setup. */
-async function openCodeMcpCheck(): Promise<DoctorCheck> {
+interface OpenCodeChecks {
+  plugin: DoctorCheck;
+  mcp: DoctorCheck;
+  runtime: DoctorCheck;
+  skills: DoctorCheck;
+}
+
+/** Inspect OpenCode integration identities without rendering or mutating config. */
+async function openCodeChecks(): Promise<OpenCodeChecks> {
   let config;
   try {
     config = await readRegularFile(await openCodeConfigPath());
   } catch {
-    return { ok: false, count: 1, detail: 'config=unavailable' };
+    const unavailable = { ok: false, count: 1, detail: 'config=unavailable' };
+    return { plugin: unavailable, mcp: unavailable, runtime: unavailable, skills: unavailable };
   }
-  if (config === undefined) return { ok: true, count: 0, detail: 'config=absent' };
+  if (config === undefined) {
+    const absent = { ok: true, count: 0, detail: 'config=absent' };
+    return { plugin: absent, mcp: absent, runtime: absent, skills: absent };
+  }
+  const runtime = await resolveManagedOpenCodeRuntime();
   try {
-    // Rendering is intentionally discarded: it validates the existing identity
-    // without writing, and accepts configs that simply have not been configured.
-    renderOpenCodeConfig(config.content);
-    return { ok: true, count: 0, detail: 'config=canonical-or-not-configured' };
+    const inspection = inspectOpenCodeIntegration(config.content, runtime);
+    const current = (value: string): DoctorCheck => ({
+      ok: value === 'current' || value === 'absent',
+      count: value === 'current' || value === 'absent' ? 0 : 1,
+      detail: `config=${value}`,
+    });
+    const runtimeCheck: DoctorCheck = runtime === undefined
+      ? { ok: false, count: 1, detail: 'runtime=unavailable' }
+      : { ok: true, count: 0, detail: 'runtime=current' };
+    let skills: DoctorCheck;
+    try {
+      const bundled = await loadBundledStandardSkillFiles();
+      let mismatches = 0;
+      let present = 0;
+      for (const file of bundled) {
+        const installed = await readRegularFile(path.join(getOpenCodeSkillsDirectory(), file.skillName, file.relativePath));
+        if (installed !== undefined) present += 1;
+        if (installed?.content !== file.content) mismatches += 1;
+      }
+      skills = present === 0
+        ? { ok: true, count: 0, detail: 'skills=absent' }
+        : { ok: mismatches === 0, count: mismatches, detail: `mismatches=${mismatches}` };
+    } catch {
+      skills = { ok: false, count: 1, detail: 'skills=unavailable' };
+    }
+    return { plugin: current(inspection.plugin), mcp: current(inspection.mcp), runtime: runtimeCheck, skills };
   } catch (error) {
     if (setupMcpIdentityConflictClient(error) === 'opencode') {
-      return { ok: false, count: 1, detail: 'config=conflict' };
+      const conflict = { ok: false, count: 1, detail: 'config=conflict' };
+      return { plugin: conflict, mcp: conflict, runtime: { ok: false, count: 1, detail: 'runtime=unavailable' }, skills: conflict };
     }
-    return { ok: false, count: 1, detail: 'config=invalid' };
+    const invalid = { ok: false, count: 1, detail: 'config=invalid' };
+    return { plugin: invalid, mcp: invalid, runtime: invalid, skills: invalid };
   }
 }
 
@@ -211,7 +252,10 @@ interface DoctorCollectionOptions {
   runtimeDescriptorPath?: string;
   embeddingEnvironment?: NodeJS.ProcessEnv;
   embeddingBackend?: VectorSearchBackend;
+  openCodePlugin: DoctorCheck;
   openCodeMcp: DoctorCheck;
+  openCodeRuntime: DoctorCheck;
+  openCodeSkills: DoctorCheck;
 }
 
 async function collectDoctorResult(
@@ -377,8 +421,15 @@ async function collectDoctorResult(
       WHERE type = 'table' AND name = ?
     `).get(table)) && hasColumn(database, table, 'lease_expires_at')
   ));
-  const ennoOperations = !ennoLeaseSchemaPresent
-      ? { ok: false, count: 1, detail: 'Enno operation lease schema is incomplete' }
+  const continuationReceiptSchemaPresent = Boolean(database.prepare(`
+    SELECT 1 AS present FROM sqlite_schema
+    WHERE type = 'table' AND name = 'enno_client_continuation_receipts'
+  `).get()) && [
+    'run_id', 'client_kind', 'source_session_id', 'source_terminal_hash',
+    'contract_revision', 'mutation_revision', 'attempts', 'directive_digest', 'route_epoch', 'created_at',
+  ].every((column) => hasColumn(database, 'enno_client_continuation_receipts', column));
+  const ennoOperations = !ennoLeaseSchemaPresent || !continuationReceiptSchemaPresent
+      ? { ok: false, count: 1, detail: 'Enno operation or continuation receipt schema is incomplete' }
     : (() => {
       const now = new Date().toISOString();
       const expiredReceipts = count(database, `
@@ -397,10 +448,19 @@ async function collectDoctorResult(
       const recoveredVerifiers = count(database, `
         SELECT COUNT(*) AS count FROM enno_verifier_runs WHERE status = 'abandoned'
       `);
+      const invalidContinuationReceipts = count(database, `
+        SELECT COUNT(*) AS count FROM enno_client_continuation_receipts
+        WHERE client_kind != 'opencode'
+           OR length(source_session_id) NOT BETWEEN 1 AND 256
+           OR length(source_terminal_hash) != 64
+           OR source_terminal_hash GLOB '*[^0-9a-f]*'
+           OR length(directive_digest) != 64
+           OR directive_digest GLOB '*[^0-9a-f]*'
+      `);
       return {
-        ok: expiredReceipts + expiredVerifiers === 0,
-        count: expiredReceipts + expiredVerifiers,
-        detail: `staleReceipts=${expiredReceipts}, staleVerifiers=${expiredVerifiers}, recoveredReceipts=${recoveredReceipts}, recoveredVerifiers=${recoveredVerifiers}`,
+        ok: expiredReceipts + expiredVerifiers + invalidContinuationReceipts === 0,
+        count: expiredReceipts + expiredVerifiers + invalidContinuationReceipts,
+        detail: `staleReceipts=${expiredReceipts}, staleVerifiers=${expiredVerifiers}, invalidContinuationReceipts=${invalidContinuationReceipts}, recoveredReceipts=${recoveredReceipts}, recoveredVerifiers=${recoveredVerifiers}`,
       };
     })();
   const checks = {
@@ -424,7 +484,10 @@ async function collectDoctorResult(
     hybridSearch: hybridCheck,
     embeddings: embeddings.check,
     ennoOperations,
+    openCodePlugin: options.openCodePlugin,
     openCodeMcp: options.openCodeMcp,
+    openCodeRuntime: options.openCodeRuntime,
+    openCodeSkills: options.openCodeSkills,
   };
   const ok = Object.values(checks).every((check) => check.ok);
   return {
@@ -447,7 +510,14 @@ export async function runDoctor(
     ...(options.migrationsDirectory === undefined ? {} : { migrationsDirectory: options.migrationsDirectory }),
   };
   const initialized = await initializeDatabase(initOptions);
-  const openCodeMcp = options.databasePath === undefined ? await openCodeMcpCheck() : skippedOpenCodeMcpCheck();
+  const openCode = options.databasePath === undefined
+    ? await openCodeChecks()
+    : {
+      plugin: skippedOpenCodeMcpCheck(),
+      mcp: skippedOpenCodeMcpCheck(),
+      runtime: skippedOpenCodeMcpCheck(),
+      skills: skippedOpenCodeMcpCheck(),
+    };
   let embeddingConfig;
   try {
     embeddingConfig = options.embeddingEnvironment === undefined
@@ -485,7 +555,10 @@ export async function runDoctor(
       ...((opened.backend ?? options.embeddingBackend) === undefined
         ? {}
         : { embeddingBackend: opened.backend ?? options.embeddingBackend }),
-      openCodeMcp,
+      openCodePlugin: openCode.plugin,
+      openCodeMcp: openCode.mcp,
+      openCodeRuntime: openCode.runtime,
+      openCodeSkills: openCode.skills,
     });
   } catch (error) {
     operationFailed = true;

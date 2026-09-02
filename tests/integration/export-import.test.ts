@@ -1578,7 +1578,7 @@ test('doctor reports integrity, migration, FTS, and permissions checks', async (
     assert.deepEqual(result.checks.ennoOperations, {
       ok: true,
       count: 0,
-      detail: 'staleReceipts=0, staleVerifiers=0, recoveredReceipts=0, recoveredVerifiers=0',
+      detail: 'staleReceipts=0, staleVerifiers=0, invalidContinuationReceipts=0, recoveredReceipts=0, recoveredVerifiers=0',
     });
   } finally {
     data.db.close();

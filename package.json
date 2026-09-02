@@ -1,7 +1,7 @@
 {
   "name": "kiokuko-ai",
   "version": "0.1.0",
-  "description": "External memory for Opencode",
+  "description": "External memory for OpenCode",
   "type": "module",
   "main": "./dist/opencode/plugin.js",
   "types": "./dist/opencode/plugin.d.ts",
@@ -17,7 +17,7 @@
   },
   "engines": {
     "node": ">=24.16.0",
-    "opencode": ">=1.18.25"
+    "opencode": ">=1.18.25 <2"
   },
   "publishConfig": {
     "access": "public"
@@ -47,6 +47,8 @@
     "test:evaluation": "npm run build && node scripts/run-retrieval-evaluation.mjs",
     "test:benchmark": "npm run build && node scripts/run-retrieval-benchmark.mjs",
     "test:e2e:opencode": "npm run build && node scripts/run-enno-agent-e2e.mjs opencode",
+    "test:e2e:opencode:host": "npm run build && node scripts/run-opencode-host-e2e.mjs",
+    "test:e2e:opencode:live": "npm run build && node scripts/run-enno-agent-e2e.mjs opencode",
     "sampledb:generate": "node --import tsx tests/fixtures/sample-database.ts tests/sampledb/kiokuko-ai.sqlite",
     "test:sampledb": "npm run build && node --import tsx tests/ci/verify-sample-database.ts",
     "pack:check": "npm pack --dry-run",

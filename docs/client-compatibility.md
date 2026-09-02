@@ -22,13 +22,18 @@ array, and manages the `mcp.kiokuko` entry:
   "mcp": {
     "kiokuko": {
       "type": "local",
-      "command": ["kiokuko", "mcp"],
+      "command": ["kiokuko-ai", "mcp"],
       "enabled": true,
       "environment": { "KIOKUKO_SKILL_DISCOVERY": "official" }
     }
   }
 }
 ```
+
+The manual example uses the installed `kiokuko-ai` command. The recommended
+`setup` flow records the exact package version and absolute Node/CLI paths so
+the plugin hook and MCP server use the same installed release. Re-run `setup`
+after upgrading the package.
 
 The setup command has no `--clients` option. The current plugin identity is
 added once; unrelated plugin entries remain untouched. A malformed or

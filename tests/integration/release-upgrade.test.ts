@@ -31,14 +31,14 @@ test('unknown non-empty SQLite schema is rejected without mutation', async () =>
     unchanged.close();
   }
 });
-test('current empty database path initializes from the single v0.1.0 migration', async () => {
+test('current empty database path initializes from the complete migration history', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'kiokuko-release-empty-db-'));
   const databasePath = path.join(root, 'empty.sqlite3');
   await mkdir(root, { recursive: true });
   await writeFile(databasePath, Buffer.alloc(0));
 
   const result = await initializeDatabase({ databasePath });
-  assert.deepEqual(result.applied, [1]);
-  assert.equal(result.currentVersion, 1);
+  assert.deepEqual(result.applied, [1, 2]);
+  assert.equal(result.currentVersion, 2);
   assert.equal(result.backupPath, null);
 });

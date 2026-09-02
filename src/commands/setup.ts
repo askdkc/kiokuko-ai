@@ -29,6 +29,7 @@ import { KiokukoError } from '../errors.js';
 import { isSkillDiscoveryMode, normalizeSkillDiscoveryMode, SKILL_DISCOVERY_ENV } from '../skills/config.js';
 import type { SkillDiscoveryMode } from '../skills/types.js';
 import { hasCanonicalOpenCodeMcpConfig, renderOpenCodeConfig } from '../setup/opencode-config.js';
+import { resolveManagedOpenCodeRuntime } from '../opencode/runtime-invocation.js';
 import { setupMcpIdentityConflictClient } from '../setup/mcp-conflict.js';
 import { renderGlobalInstructions } from '../setup/render.js';
 import {
@@ -221,9 +222,9 @@ export async function runSetupFlow<T extends { clients: SetupClient[]; projectAg
   }
   const setupOptions: SetupOptions = {
     ...pathEnvironment,
-    command: options.command ?? 'kiokuko-ai',
     dryRun: options.dryRun === true,
     standardSkills: options.standardSkills ?? true,
+    ...(options.command === undefined ? {} : { command: options.command }),
     ...(skillDiscoveryMode === undefined ? {} : { skillDiscoveryMode }),
     ...(options.ennoOduno === undefined ? {} : { ennoOduno: options.ennoOduno }),
   };
@@ -643,6 +644,7 @@ export async function setupGlobalClients(
   const databasePath = options.databasePath ?? getGlobalDatabasePath(pathEnvironment);
   const standardSkills = options.standardSkills ?? true;
   const environment = options.env ?? process.env;
+  const runtime = options.command === undefined ? await resolveManagedOpenCodeRuntime(environment) : undefined;
   const environmentSkillDiscoveryMode = options.skillDiscoveryMode === undefined
     && Object.prototype.hasOwnProperty.call(environment, SKILL_DISCOVERY_ENV)
     ? normalizeSkillDiscoveryMode(environment[SKILL_DISCOVERY_ENV])
@@ -662,7 +664,10 @@ export async function setupGlobalClients(
         existing,
         command,
         skillDiscoveryMode,
-        { replaceConflictingIdentity: replaceConflictingMcpServers.has('opencode') },
+        {
+          replaceConflictingIdentity: replaceConflictingMcpServers.has('opencode'),
+          ...(runtime === undefined ? {} : { runtime }),
+        },
       ),
       selectedConfig.mustRemainAbsent,
     );

@@ -5,16 +5,19 @@ import path from 'node:path';
 import test from 'node:test';
 import { openConnection } from '../../src/db/connection.js';
 import { loadMigrationSnapshot, migrateDatabase } from '../../src/db/migrate.js';
+import { CURRENT_MIGRATION_VERSIONS, CURRENT_SCHEMA_VERSION } from '../fixtures/current-migrations.js';
 
-test('the v0.1.0 database has one canonical initial migration and is idempotent', () => {
+test('the current database has canonical migrations and is idempotent', () => {
   const database = openConnection(':memory:');
   try {
     const first = migrateDatabase(database);
-    assert.deepEqual(first.applied, [1]);
-    assert.equal(first.currentVersion, 1);
+    assert.deepEqual(first.applied, CURRENT_MIGRATION_VERSIONS);
+    assert.equal(first.currentVersion, CURRENT_SCHEMA_VERSION);
     assert.deepEqual(migrateDatabase(database).applied, []);
-    assert.equal(database.prepare('SELECT COUNT(*) AS count FROM schema_migrations').get<{ count: number }>()?.count, 1);
+    assert.equal(database.prepare('SELECT COUNT(*) AS count FROM schema_migrations').get<{ count: number }>()?.count, CURRENT_MIGRATION_VERSIONS.length);
     assert.equal(database.prepare("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'entries'").get()?.['1'], 1);
+    assert.equal(database.prepare("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'enno_client_continuation_receipts'").get()?.['1'], 1);
+    assert.equal(database.prepare('PRAGMA user_version').get<{ user_version: number }>()?.user_version, CURRENT_SCHEMA_VERSION);
   } finally {
     database.close();
   }
