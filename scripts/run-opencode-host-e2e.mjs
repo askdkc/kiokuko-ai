@@ -72,6 +72,14 @@ async function requireSuccess(command, args, options = {}) {
   return result;
 }
 
+async function waitFor(predicate, label, timeout = 60_000) {
+  const deadline = Date.now() + timeout;
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error(`${label}_timeout`);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+}
+
 async function installedPackagePath(prefix) {
   const candidates = process.platform === 'win32'
     ? [path.join(prefix, 'node_modules', 'kiokuko-ai')]
@@ -198,6 +206,47 @@ async function mcpTools(cliScript, environment, cwd) {
   return result?.result?.tools ?? [];
 }
 
+async function mcpToolCall(cliScript, environment, cwd, name, argumentsValue) {
+  const input = [
+    JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {
+      protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'kiokuko-host-contract', version: '1' },
+    } }),
+    JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }),
+    JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name, arguments: argumentsValue } }),
+  ].join('\n') + '\n';
+  const child = spawn(process.execPath, [cliScript, 'mcp'], { cwd, env: environment, shell: false, stdio: ['pipe', 'pipe', 'pipe'] });
+  let buffer = '';
+  let result;
+  const response = new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`MCP ${name} timeout`)), 45_000);
+    child.stdout.on('data', (chunk) => {
+      buffer += chunk.toString('utf8');
+      const lines = buffer.split('\n');
+      buffer = lines.pop() ?? '';
+      for (const line of lines) {
+        try {
+          const value = JSON.parse(line);
+          if (value.id === 2) {
+            result = value;
+            clearTimeout(timer);
+            resolve(value);
+            child.kill('SIGTERM');
+          }
+        } catch {
+          // The bounded call ignores non-JSON diagnostic lines.
+        }
+      }
+    });
+    child.once('error', (error) => { clearTimeout(timer); reject(new Error(`MCP spawn failed:${error?.code ?? 'spawn_failed'}`)); });
+  });
+  child.stdin.end(input);
+  await response;
+  if (result?.error !== undefined || result?.result?.isError === true) {
+    throw new Error(`MCP ${name} returned an error`);
+  }
+  return result?.result?.structuredContent ?? result?.result;
+}
+
 async function main() {
   const opencodeValue = process.env.OPENCODE_BIN;
   if (typeof opencodeValue !== 'string') throw new Error('OPENCODE_BIN must be set');
@@ -231,7 +280,7 @@ async function main() {
   const installedPackage = path.join(installedRoot, 'package.json');
   const packageJson = parseJson(await readFile(installedPackage, 'utf8'), 'installed_package');
   if (packageJson.name !== 'kiokuko-ai') throw new Error('installed package identity mismatch');
-  await requireSuccess(process.execPath, [cliScript, 'setup', '--skill-discovery', 'off', '--enno-oduno', 'off', '--json'], { cwd: project, env: environment, timeoutMs: 120_000, label: 'setup' });
+  await requireSuccess(process.execPath, [cliScript, 'setup', '--skill-discovery', 'off', '--enno-oduno', 'on', '--json'], { cwd: project, env: environment, timeoutMs: 120_000, label: 'setup' });
   const configPath = path.join(config, 'opencode', 'opencode.json');
   const openCodeConfig = parseJson(await readFile(configPath, 'utf8'), 'opencode_config');
   const pluginIndex = openCodeConfig.plugin.findIndex((entry) => Array.isArray(entry) && String(entry[0]).startsWith('kiokuko-ai@'));
@@ -240,7 +289,11 @@ async function main() {
   await access(path.join(config, 'opencode', 'skills', 'kiokuko-soul', 'SKILL.md'));
   openCodeConfig.plugin[pluginIndex] = [pathToFileURL(path.join(installedRoot, 'dist', 'opencode', 'plugin.js')).href, openCodeConfig.plugin[pluginIndex][1]];
   await writeFile(configPath, `${JSON.stringify(openCodeConfig, null, 2)}\n`);
-  const fixture = await startFakeOpenAiServer();
+  let continuationHandler = async () => undefined;
+  const fixture = await startFakeOpenAiServer({
+    emitTaskPrepare: false,
+    onContinuation: (payload) => continuationHandler(payload),
+  });
   const projectConfig = {
     '$schema': 'https://opencode.ai/config.json',
     model: 'fixture/fixture-model',
@@ -265,11 +318,91 @@ async function main() {
     });
     const hookResponse = parseJson(hook.stdout.toString('utf8'), 'hook_output');
     if (hookResponse.disposition !== 'stop' || hookResponse.code !== 'no_active_run') throw new Error(`hook_stop_contract:${String(hookResponse.disposition)}:${String(hookResponse.code)}`);
+
+    const capabilities = [
+      'kiokuko-soul',
+      'kiokuko-simple-work',
+      'kiokuko-single-purpose-functions',
+      'kiokuko-ui-design-soul',
+      'memory-reasoning',
+      'kiokuko-enno-oduno',
+    ].map((name) => ({ kind: 'skill', name }));
+    capabilities.push(...toolNames.map((name) => ({ kind: 'mcp_tool', name })));
+    const taskPrepare = await mcpToolCall(cliScript, environment, project, 'task_prepare', {
+      soulRead: true,
+      requestId: 'host-active-continuation',
+      task: 'Run the deterministic OpenCode host continuation contract check.',
+      cwd: project,
+      profileHints: { taskType: 'build', target: 'host continuation', expected: 'one continuation receipt' },
+      capabilities,
+      client: { kind: 'opencode', version: health.version },
+      maxContextChars: 12_000,
+    });
+    if (taskPrepare?.ennoOduno?.status !== 'oduno_ideal') throw new Error('active Enno preparation did not reach ideal phase');
+    const identity = {
+      runId: taskPrepare.run?.runId,
+      workspace: taskPrepare.project?.workspace,
+      orchestrationId: taskPrepare.intake?.sessionId,
+    };
+    if (Object.values(identity).some((value) => typeof value !== 'string')) throw new Error('active Enno preparation identity is incomplete');
+    const idealTool = toolNames.find((name) => /(?:^|_)enno_ideal_submit$/u.test(name));
+    const answerTool = toolNames.find((name) => /(?:^|_)enno_answer$/u.test(name));
+    if (idealTool === undefined || answerTool === undefined) throw new Error('required Enno MCP tools are missing');
+    const ideal = await mcpToolCall(cliScript, environment, project, idealTool, {
+      ...identity,
+      expectedRevision: taskPrepare.ennoOduno.contractRevision ?? 1,
+      idempotencyKey: 'host-active-ideal',
+      ideal: {
+        objective: 'Run the deterministic OpenCode host continuation contract check',
+        principles: ['Use only existing public MCP operations'],
+        skillContributions: [],
+        successSignals: ['One continuation request and one durable receipt'],
+      },
+    });
+    if (ideal?.ennoOduno?.status !== 'zenki_planning') throw new Error('active Enno preparation did not reach planning phase');
+    continuationHandler = async (payload) => {
+      const directive = payload?.directive;
+      if (typeof payload?.resumeToken !== 'string' || typeof directive?.runId !== 'string' || typeof directive?.contractRevision !== 'number') {
+        throw new Error('continuation payload identity is incomplete');
+      }
+      const cancelled = await mcpToolCall(cliScript, environment, project, answerTool, {
+        runId: directive.runId,
+        resumeToken: payload.resumeToken,
+        expectedRevision: directive.contractRevision,
+        idempotencyKey: 'host-continuation-cancel',
+        action: 'cancel',
+      });
+      if (cancelled?.ennoOduno?.status !== 'cancelled') throw new Error('active Enno continuation did not terminate the fixture run');
+    };
     const run = await requireSuccess(opencode, ['run', '--attach', server.url, '--dir', project, '--model', 'fixture/fixture-model', 'Return the fixture completion.'], { cwd: project, env: environment, timeoutMs: 120_000, label: 'opencode_run' });
     if (run.code !== 0) throw new Error('OpenCode fixture run failed');
     if (fixture.stats.chatCompletions < 1) throw new Error('fixture provider was not called');
-    if (fixture.stats.taskPrepareResponses < 1) throw new Error('fixture provider did not exercise task_prepare');
-    process.stdout.write(`${JSON.stringify({ protocolVersion: 1, status: 'passed', opencodeVersion: health.version, mcp: 'connected', toolCatalog: toolNames.length, hook: hookResponse.code, fixtureRequests: fixture.stats.chatCompletions, taskPrepareResponses: fixture.stats.taskPrepareResponses, fixtureDigests: fixture.stats.requestDigests.map((value) => value.slice(0, 16)) })}\n`);
+    await waitFor(() => fixture.stats.continuationRequests >= 1, 'active_continuation');
+    if (fixture.stats.continuationRequests !== 1) {
+      throw new Error(`active continuation request count mismatch:${fixture.stats.continuationRequests}`);
+    }
+    const { openConnection } = await import('../dist/db/connection.js');
+    const database = openConnection(environment.KIOKUKO_DATABASE, { readOnly: true });
+    try {
+      const activeRun = database.prepare(`
+        SELECT run_id AS runId, status
+        FROM enno_contracts
+        WHERE repository_root = ?
+        ORDER BY created_at DESC
+        LIMIT 1
+      `).get(project);
+      if (activeRun?.runId === undefined) throw new Error('active Enno run was not created');
+      if (activeRun.status !== 'cancelled') throw new Error(`active Enno run was not terminated:${String(activeRun.status)}`);
+      const receiptCount = Number(database.prepare(`
+        SELECT COUNT(*) AS count
+        FROM enno_client_continuation_receipts
+        WHERE run_id = ?
+      `).get(activeRun.runId)?.count ?? 0);
+      if (receiptCount !== 1) throw new Error(`durable continuation receipt count mismatch:${receiptCount}`);
+    } finally {
+      database.close();
+    }
+    process.stdout.write(`${JSON.stringify({ protocolVersion: 1, status: 'passed', opencodeVersion: health.version, mcp: 'connected', toolCatalog: toolNames.length, hook: hookResponse.code, fixtureRequests: fixture.stats.chatCompletions, taskPrepareResponses: fixture.stats.taskPrepareResponses, preparedEnnoStatus: ideal.ennoOduno.status, continuationRequests: fixture.stats.continuationRequests, durableReceipts: 1, fixtureDigests: fixture.stats.requestDigests.map((value) => value.slice(0, 16)) })}\n`);
   } finally {
     await server.close();
     await fixture.close();

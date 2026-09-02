@@ -146,6 +146,39 @@ test('undelivered prompt remains pending and retries with the same message ID', 
   assert.equal(state.get('pending-session\0pending-terminal')?.state, 'completed');
 });
 
+test('undelivered prompt is quarantined after three unconfirmed sends', async () => {
+  const state = new OpenCodeIdleState();
+  let hookCalls = 0;
+  let prompts = 0;
+  const messageIds: string[] = [];
+  const client = {
+    session: {
+      get: async () => ({ data: { id: 'exhausted-session' } }),
+      messages: async () => ({ data: [{ info: { id: 'exhausted-terminal' } }] }),
+      prompt: async ({ body }: { body: { messageID: string } }) => {
+        prompts += 1;
+        messageIds.push(body.messageID);
+        throw new Error('not delivered');
+      },
+    },
+  };
+  const runHook = async () => {
+    hookCalls += 1;
+    return { kind: 'continue' as const, text: 'retry until exhausted' };
+  };
+  const input = idle('exhausted-session', 'exhausted-terminal');
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    await handleOpenCodeIdle(client as never, '/repo', input, { runHook, state });
+  }
+  assert.equal(hookCalls, 1);
+  assert.equal(prompts, 3);
+  assert.equal(new Set(messageIds).size, 1);
+  assert.deepEqual(state.get('exhausted-session\0exhausted-terminal'), {
+    state: 'quarantined',
+    reason: 'prompt_retry_exhausted',
+  });
+});
+
 test('one hundred concurrent idle events claim one terminal once', async () => {
   const state = new OpenCodeIdleState();
   let hookCalls = 0;

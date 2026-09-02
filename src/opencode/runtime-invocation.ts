@@ -17,7 +17,7 @@ const pluginOptionsSchema = z.object({
   packageVersion: z.string().min(1).max(100),
   nodeExecutable: absolutePath,
   cliScript: absolutePath,
-}).strict();
+});
 
 export type OpenCodePluginOptions = z.infer<typeof pluginOptionsSchema>;
 

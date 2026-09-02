@@ -117,6 +117,10 @@ async function sendPendingPrompt(
       // Keep the pending prompt for an event-driven retry.
     }
     await safeLog(dependencies.log, 'OpenCode continuation prompt was not confirmed', 'prompt_not_confirmed');
+    if (pending.promptAttempts >= MAX_IDLE_RETRIES) {
+      state.markQuarantined(key, 'prompt_retry_exhausted');
+      await safeLog(dependencies.log, 'OpenCode continuation prompt retry exhausted', 'prompt_retry_exhausted', pending.promptAttempts);
+    }
   }
 }
 

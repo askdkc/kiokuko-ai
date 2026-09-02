@@ -21,7 +21,13 @@ export class OpenCodeIdleState {
   begin(key: string): IdleBeginResult {
     const existing = this.entries.get(key);
     if (existing?.state === 'in_flight') return { kind: 'ignored' };
-    if (existing?.state === 'pending_prompt') return { kind: 'send_pending', entry: existing };
+    if (existing?.state === 'pending_prompt') {
+      if (existing.promptAttempts >= MAX_IDLE_RETRIES) {
+        this.entries.set(key, { state: 'quarantined', reason: 'prompt_retry_exhausted' });
+        return { kind: 'ignored' };
+      }
+      return { kind: 'send_pending', entry: existing };
+    }
     if (existing?.state === 'completed' || existing?.state === 'quarantined') return { kind: 'ignored' };
 
     const attempts = existing?.state === 'retryable_failure' ? existing.attempts + 1 : 1;

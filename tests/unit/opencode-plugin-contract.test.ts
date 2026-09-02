@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
 import { KiokukoPlugin } from '../../src/opencode/plugin.js';
+import { PACKAGE_VERSION } from '../../src/package-version.js';
 
 test('OpenCode plugin entrypoint exposes a loadable named plugin', async () => {
   const hooks = await KiokukoPlugin({
@@ -31,7 +32,7 @@ test('package boundary points OpenCode loader at the plugin dist entrypoint and 
     peerDependenciesMeta?: Record<string, { optional?: boolean }>;
   };
   assert.equal(packageJson.name, 'kiokuko-ai');
-  assert.equal(packageJson.version, '0.2.0');
+  assert.equal(packageJson.version, PACKAGE_VERSION);
   assert.equal(packageJson.main, './dist/opencode/plugin.js');
   assert.equal(packageJson.types, './dist/opencode/plugin.d.ts');
   assert.equal(packageJson.bin?.['kiokuko-ai'], 'dist/bin/kiokuko.js');

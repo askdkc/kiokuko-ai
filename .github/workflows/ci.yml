@@ -28,6 +28,9 @@ jobs:
       - name: Type-check
         run: npm run typecheck
 
+      - name: Build package
+        run: npm run build
+
       - name: Run test suite
         run: npm test
 
@@ -43,7 +46,7 @@ jobs:
         run: npm run test:sampledb
 
       - name: Verify package contents
-        run: npm run pack:check
+        run: npm pack --dry-run --json
 
       - name: Verify minimal global install
         run: npm run test:global-install

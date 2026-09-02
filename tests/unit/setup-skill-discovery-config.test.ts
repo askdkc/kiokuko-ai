@@ -4,6 +4,7 @@ import { parse } from 'jsonc-parser';
 import { KiokukoError } from '../../src/errors.js';
 import { renderOpenCodeConfig } from '../../src/setup/opencode-config.js';
 import { PACKAGE_VERSION } from '../../src/package-version.js';
+import { parseOpenCodePluginOptions } from '../../src/opencode/runtime-invocation.js';
 
 const runtime = {
   protocolVersion: 1 as const,
@@ -152,6 +153,18 @@ test('OpenCode setup upgrades the plugin and MCP to one exact runtime while pres
   assert.deepEqual(parsed.mcp.kiokuko.command, [runtime.nodeExecutable, runtime.cliScript, 'mcp']);
   assert.deepEqual(parsed.mcp.kiokuko.environment, { KIOKUKO_SKILL_DISCOVERY: 'community' });
   assert.equal(renderOpenCodeConfig(rendered.content, 'kiokuko-ai', undefined, { runtime }).action, 'unchanged');
+});
+
+test('runtime option parsing strips preserved unmanaged plugin options', () => {
+  const parsed = parseOpenCodePluginOptions({
+    keep: 'this',
+    protocolVersion: runtime.protocolVersion,
+    packageVersion: runtime.packageVersion,
+    nodeExecutable: runtime.nodeExecutable,
+    cliScript: runtime.cliScript,
+  });
+  assert.deepEqual(parsed, runtime);
+  assert.equal(Object.hasOwn(parsed ?? {}, 'keep'), false);
 });
 
 test('runtime-less plugin strings stay strings when no tuple options exist', () => {

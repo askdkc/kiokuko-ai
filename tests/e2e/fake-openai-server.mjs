@@ -7,7 +7,29 @@ function digest(value) {
   return createHash('sha256').update(value).digest('hex');
 }
 
-function responseBody(body) {
+function contentText(content) {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) return content.map((part) => contentText(part)).join('');
+  if (content !== null && typeof content === 'object') {
+    return typeof content.text === 'string' ? content.text : content.content === undefined ? '' : contentText(content.content);
+  }
+  return '';
+}
+
+function continuationPayload(messages) {
+  const last = messages[messages.length - 1];
+  if (last?.role !== 'user') return undefined;
+  const text = contentText(last.content);
+  const marker = text.indexOf('{"resumeToken"');
+  if (marker < 0) return undefined;
+  try {
+    return JSON.parse(text.slice(marker));
+  } catch {
+    return undefined;
+  }
+}
+
+function responseBody(body, emitTaskPrepare) {
   const messages = Array.isArray(body?.messages) ? body.messages : [];
   const tools = Array.isArray(body?.tools) ? body.tools : [];
   const toolNames = tools
@@ -18,7 +40,9 @@ function responseBody(body) {
     .map((call) => call?.function?.name)
     .filter((name) => typeof name === 'string');
   const taskPrepare = toolNames.find((name) => /(?:^|_)task_prepare$/u.test(name));
-  if (calledNames.length === 0 && taskPrepare !== undefined) {
+  const continuation = continuationPayload(messages);
+  if (continuation !== undefined) return { text: 'fixture provider completed the OpenCode host continuation.' };
+  if (emitTaskPrepare && calledNames.length === 0 && taskPrepare !== undefined) {
     return {
       toolCalls: [{
         id: 'fixture-task-prepare-1',
@@ -30,7 +54,12 @@ function responseBody(body) {
             requestId: 'fixture-request-1',
             task: 'Run the deterministic OpenCode host contract check.',
             profileHints: { taskType: 'build', target: 'host contract', expected: 'the host contract passes' },
-            capabilities: toolNames.map((name) => ({ kind: 'mcp_tool', name })),
+            capabilities: [
+              { kind: 'skill', name: 'kiokuko-soul' },
+              { kind: 'skill', name: 'kiokuko-enno-oduno' },
+              { kind: 'skill', name: 'kiokuko-single-purpose-functions' },
+              ...toolNames.map((name) => ({ kind: 'mcp_tool', name })),
+            ],
             maxContextChars: 12000,
           }),
         },
@@ -40,8 +69,8 @@ function responseBody(body) {
   return { text: 'fixture provider completed the OpenCode host contract.' };
 }
 
-function completion(body, sequence) {
-  const response = responseBody(body);
+function completion(body, sequence, emitTaskPrepare) {
+  const response = responseBody(body, emitTaskPrepare);
   const id = `fixture-completion-${sequence}`;
   if (response.toolCalls !== undefined) {
     return {
@@ -101,8 +130,16 @@ function streamCompletion(value) {
   return chunks;
 }
 
-export async function startFakeOpenAiServer() {
-  const stats = { models: 0, chatCompletions: 0, taskPrepareResponses: 0, requestDigests: [] };
+export async function startFakeOpenAiServer(options = {}) {
+  const emitTaskPrepare = options.emitTaskPrepare ?? true;
+  const onContinuation = options.onContinuation;
+  const stats = {
+    models: 0,
+    chatCompletions: 0,
+    taskPrepareResponses: 0,
+    continuationRequests: 0,
+    requestDigests: [],
+  };
   let sequence = 0;
   const server = createServer(async (request, response) => {
     if (request.method === 'GET' && request.url === '/v1/models') {
@@ -137,7 +174,12 @@ export async function startFakeOpenAiServer() {
       return;
     }
     sequence += 1;
-    const value = completion(body, sequence);
+    const continuation = continuationPayload(Array.isArray(body.messages) ? body.messages : []);
+    if (continuation !== undefined) {
+      stats.continuationRequests += 1;
+      if (typeof onContinuation === 'function') await onContinuation(continuation);
+    }
+    const value = completion(body, sequence, emitTaskPrepare);
     if (value.choices?.[0]?.message?.tool_calls?.some((call) => /(?:^|_)task_prepare$/u.test(call?.function?.name ?? ''))) {
       stats.taskPrepareResponses += 1;
     }
