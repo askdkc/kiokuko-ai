@@ -31,11 +31,11 @@ test('package boundary points OpenCode loader at the plugin dist entrypoint and 
     peerDependenciesMeta?: Record<string, { optional?: boolean }>;
   };
   assert.equal(packageJson.name, 'kiokuko-ai');
-  assert.equal(packageJson.version, '0.1.0');
+  assert.equal(packageJson.version, '0.2.0');
   assert.equal(packageJson.main, './dist/opencode/plugin.js');
   assert.equal(packageJson.types, './dist/opencode/plugin.d.ts');
   assert.equal(packageJson.bin?.['kiokuko-ai'], 'dist/bin/kiokuko.js');
-  assert.equal(packageJson.engines?.opencode, '>=1.18.25');
+  assert.equal(packageJson.engines?.opencode, '>=1.18.25 <2');
   assert.equal(packageJson.peerDependencies?.['@opencode-ai/plugin'], '^1.18.25');
   assert.deepEqual(packageJson.peerDependenciesMeta?.['@opencode-ai/plugin'], { optional: true });
   assert.deepEqual(packageJson.exports, {

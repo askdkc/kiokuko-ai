@@ -3,6 +3,14 @@ import test from 'node:test';
 import { parse } from 'jsonc-parser';
 import { KiokukoError } from '../../src/errors.js';
 import { renderOpenCodeConfig } from '../../src/setup/opencode-config.js';
+import { PACKAGE_VERSION } from '../../src/package-version.js';
+
+const runtime = {
+  protocolVersion: 1 as const,
+  packageVersion: PACKAGE_VERSION,
+  nodeExecutable: '/tmp/Unicode Path/node',
+  cliScript: '/tmp/Unicode Path/kiokuko-ai/dist/bin/kiokuko.js',
+};
 
 test('OpenCode setup rejects duplicate JSONC keys', () => {
   assert.throws(
@@ -116,4 +124,37 @@ test('OpenCode setup rejects invalid MCP container and requested state without r
     () => renderOpenCodeConfig('{}\n', 'kiokuko-ai', 'official', { replaceConflictingIdentity: 'yes' as never }),
     (error: unknown) => error instanceof KiokukoError && error.code === 'VALIDATION_ERROR',
   );
+});
+
+test('OpenCode setup upgrades the plugin and MCP to one exact runtime while preserving tuple options', () => {
+  const existing = JSON.stringify({
+    plugin: [
+      ['kiokuko-ai', { keep: 'this', packageVersion: 'old' }],
+      'unrelated-plugin',
+    ],
+    mcp: { kiokuko: {
+      type: 'local',
+      command: ['kiokuko-ai', 'mcp'],
+      enabled: true,
+      environment: { KIOKUKO_SKILL_DISCOVERY: 'community' },
+    } },
+  }, null, 2) + '\n';
+  const rendered = renderOpenCodeConfig(existing, 'kiokuko-ai', undefined, { runtime });
+  const parsed = parse(rendered.content) as {
+    plugin: unknown[];
+    mcp: { kiokuko: { command: string[]; environment: Record<string, string> } };
+  };
+  assert.deepEqual(parsed.plugin[0], [
+    `kiokuko-ai@${PACKAGE_VERSION}`,
+    { keep: 'this', packageVersion: PACKAGE_VERSION, protocolVersion: 1, nodeExecutable: runtime.nodeExecutable, cliScript: runtime.cliScript },
+  ]);
+  assert.equal(parsed.plugin[1], 'unrelated-plugin');
+  assert.deepEqual(parsed.mcp.kiokuko.command, [runtime.nodeExecutable, runtime.cliScript, 'mcp']);
+  assert.deepEqual(parsed.mcp.kiokuko.environment, { KIOKUKO_SKILL_DISCOVERY: 'community' });
+  assert.equal(renderOpenCodeConfig(rendered.content, 'kiokuko-ai', undefined, { runtime }).action, 'unchanged');
+});
+
+test('runtime-less plugin strings stay strings when no tuple options exist', () => {
+  const rendered = renderOpenCodeConfig('{ "plugin": ["kiokuko-ai"] }\n');
+  assert.deepEqual((parse(rendered.content) as { plugin: unknown[] }).plugin, [`kiokuko-ai@${PACKAGE_VERSION}`]);
 });

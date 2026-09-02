@@ -15,7 +15,7 @@ import { importSkillSnapshot } from '../../src/skills/store.js';
 import { validateSkillSnapshot } from '../../src/skills/source/snapshot-validator.js';
 import type { SkillCandidate } from '../../src/skills/types.js';
 
-export const SAMPLE_DATABASE_BASELINE_VERSION = 1;
+export const SAMPLE_DATABASE_BASELINE_VERSION = 2;
 export const SAMPLE_PROJECT_WORKSPACE = 'project:sampledb-ci';
 export const SAMPLE_GLOBAL_WORKSPACE = 'global';
 export const SAMPLE_EXTERNAL_SKILL_ID = 'github:sveltejs/ai-tools:svelte-code-writer';

@@ -22,13 +22,16 @@ setupはOpenCodeの`opencode.json`または`opencode.jsonc`に`kiokuko` MCP entr
   "mcp": {
     "kiokuko": {
       "type": "local",
-      "command": ["kiokuko", "mcp"],
+      "command": ["kiokuko-ai", "mcp"],
       "enabled": true,
       "environment": { "KIOKUKO_SKILL_DISCOVERY": "official" }
     }
   }
 }
 ```
+
+これは手動設定の最小例です。推奨する `kiokuko-ai setup` は plugin の版を固定し、
+plugin hook と MCP server が同じ絶対 Node/CLI runtime を使う設定を生成します。
 
 無関係な設定とコメントは保持します。値の変更、重複plugin identity、余分なMCP field、
 unmanagedな`kiokuko` identityはconflictとして無断上書きしません。対話実行では置換前に確認し、

@@ -1,10 +1,10 @@
-# Kiokuko（记忆库）for Opencode
+# Kiokuko（记忆库）for OpenCode
 
 [English](README.md) | [日本語](README.ja.md) | 简体中文 | [한국어](README.ko.md)
 
 **通过 MCP 连接，检索需要的记忆，并在工作后积累知识。**
 
-Kiokuko 是面向 Opencode 的本地外部记忆插件。它把知识保存在 SQLite 中，在下一次任务中检索相关上下文，
+Kiokuko 是面向 OpenCode 的本地外部记忆插件。它把知识保存在 SQLite 中，在下一次任务中检索相关上下文，
 并保存可复用的工作结果。
 
 ```text

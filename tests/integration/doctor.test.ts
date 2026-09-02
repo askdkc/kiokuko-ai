@@ -11,11 +11,13 @@ import { openConnection, SqliteVecLoadError } from '../../src/db/connection.js';
 import { LOCAL_SMALL_PRESET } from '../../src/embedding/presets/local-small.js';
 import { createLocalEmbeddingProfile } from '../../src/embedding/profile.js';
 import { activateLocalEmbeddingProfile } from '../../src/embedding/store.js';
+import { resolveManagedOpenCodeRuntime } from '../../src/opencode/runtime-invocation.js';
 import {
   findMissingRepositoryLocations,
   registerRepositoryAndLocation,
   removeMissingRepositoryLocations,
 } from '../../src/repository/binding.js';
+import { renderOpenCodeConfig } from '../../src/setup/opencode-config.js';
 
 async function temporaryDatabase(prefix: string) {
   const directory = await mkdtemp(path.join(tmpdir(), `kiokuko-doctor-${prefix}-`));
@@ -303,12 +305,11 @@ test('doctor accepts the canonical OpenCode Kiokuko MCP identity', async () => {
   value.database.close();
   const configHome = path.join(value.directory, 'config-home');
   await mkdir(path.join(configHome, 'opencode'), { recursive: true });
+  const runtime = await resolveManagedOpenCodeRuntime();
+  assert.ok(runtime, 'the built Kiokuko runtime must be discoverable for the canonical fixture');
   await writeFile(
     path.join(configHome, 'opencode', 'opencode.json'),
-    JSON.stringify({
-      mcp: { kiokuko: { type: 'local', command: ['kiokuko-ai', 'mcp'], enabled: true, environment: { KIOKUKO_SKILL_DISCOVERY: 'official' } } },
-      plugin: ['kiokuko-ai'],
-    }, null, 2) + '\n',
+    renderOpenCodeConfig('{}', 'kiokuko-ai', 'official', { runtime }).content,
   );
 
   const result = await withDoctorEnvironment(value.directory, configHome, () => runDoctor());
@@ -316,7 +317,7 @@ test('doctor accepts the canonical OpenCode Kiokuko MCP identity', async () => {
   assert.deepEqual(result.checks.openCodeMcp, {
     ok: true,
     count: 0,
-    detail: 'config=canonical-or-not-configured',
+    detail: 'config=current',
   });
 });
 
@@ -339,9 +340,11 @@ test('doctor prefers opencode.jsonc over opencode.json', async () => {
   value.database.close();
   const configHome = path.join(value.directory, 'config-home');
   await mkdir(path.join(configHome, 'opencode'), { recursive: true });
+  const runtime = await resolveManagedOpenCodeRuntime();
+  assert.ok(runtime, 'the built Kiokuko runtime must be discoverable for the JSONC fixture');
   await writeFile(
     path.join(configHome, 'opencode', 'opencode.jsonc'),
-    JSON.stringify({ mcp: { kiokuko: { type: 'local', command: ['kiokuko-ai', 'mcp'], enabled: true, environment: { KIOKUKO_SKILL_DISCOVERY: 'official' } } } }),
+    renderOpenCodeConfig('{ // preferred JSONC\n}\n', 'kiokuko-ai', 'official', { runtime }).content,
   );
   await writeFile(
     path.join(configHome, 'opencode', 'opencode.json'),
@@ -353,6 +356,6 @@ test('doctor prefers opencode.jsonc over opencode.json', async () => {
   assert.deepEqual(result.checks.openCodeMcp, {
     ok: true,
     count: 0,
-    detail: 'config=canonical-or-not-configured',
+    detail: 'config=current',
   });
 });

@@ -36,6 +36,7 @@ import {
 } from '../../src/enno-oduno/store.js';
 import { ADVISORY_SLOT_DEFINITIONS, type AdvisoryContext, type AdvisoryPhase } from '../../src/enno-oduno/types.js';
 import { discoverSkills } from '../../src/skills/discovery-service.js';
+import { createHash } from 'node:crypto';
 
 const capabilities = [
   { kind: 'skill', name: 'kiokuko-soul', description: 'Routes work to every applicable Kiokuko Skill.' },
@@ -356,6 +357,85 @@ test('hook prefers an exact session and otherwise refuses ambiguous active repos
     database.close();
   }
 });
+
+test('the same OpenCode terminal is an exact replay and does not consume another receipt', async () => {
+  const first = await fixture();
+  const second = await fixture();
+  try {
+    const planned = await plannedExecution(first.database, first.root, 'terminal-replay', verifier(first.root, 'pass'), {
+      maxAttempts: 3,
+    });
+    const terminalMessageId = 'terminal-replay-message';
+    const firstClaim = decideAdapterContinuation(first.database, 'opencode', {
+      sessionId: planned.hostSessionId,
+      terminalMessageId,
+      cwd: first.root,
+    });
+    const replay = decideAdapterContinuation(first.database, 'opencode', {
+      sessionId: planned.hostSessionId,
+      terminalMessageId,
+      cwd: first.root,
+    });
+    assert.equal(firstClaim.continue, true);
+    assert.equal(replay.continue, true);
+    assert.equal(databaseCount(first.database, planned.identity.runId), 1);
+
+    const parallelRun = await plannedExecution(second.database, second.root, 'terminal-concurrent', verifier(second.root, 'pass'), {
+      maxAttempts: 3,
+    });
+    const claims = await Promise.all([
+      Promise.resolve(decideAdapterContinuation(second.database, 'opencode', {
+        sessionId: parallelRun.hostSessionId,
+        terminalMessageId: 'terminal-concurrent-message',
+        cwd: second.root,
+      })),
+      Promise.resolve(decideAdapterContinuation(second.database, 'opencode', {
+        sessionId: parallelRun.hostSessionId,
+        terminalMessageId: 'terminal-concurrent-message',
+        cwd: second.root,
+      })),
+    ]);
+    assert.ok(claims.every((claim) => claim.continue));
+    assert.equal(databaseCount(second.database, parallelRun.identity.runId), 1);
+  } finally {
+    first.database.close();
+    second.database.close();
+  }
+});
+
+test('a receipt reused after the Enno state changes fails closed', async () => {
+  const { root, database } = await fixture();
+  try {
+    const planned = await plannedExecution(database, root, 'terminal-conflict', verifier(root, 'pass'));
+    const terminalMessageId = 'terminal-conflict-message';
+    const terminalHash = createHash('sha256')
+      .update('kiokuko-opencode-terminal-v1\0', 'utf8')
+      .update(planned.hostSessionId, 'utf8')
+      .update('\0', 'utf8')
+      .update(terminalMessageId, 'utf8')
+      .digest('hex');
+    database.prepare(`
+      INSERT INTO enno_client_continuation_receipts (
+        run_id, client_kind, source_session_id, source_terminal_hash,
+        contract_revision, mutation_revision, attempts, directive_digest, route_epoch, created_at
+      ) VALUES (?, 'opencode', ?, ?, 999, 999, 0, ?, 0, ?)
+    `).run(planned.identity.runId, planned.hostSessionId, terminalHash, 'a'.repeat(64), new Date().toISOString());
+    assert.throws(() => decideAdapterContinuation(database, 'opencode', {
+      sessionId: planned.hostSessionId,
+      terminalMessageId,
+      cwd: root,
+    }), /terminal receipt was reused/u);
+  } finally {
+    database.close();
+  }
+});
+
+function databaseCount(database: ReturnType<typeof openConnection>, runId: string): number {
+  return Number(database.prepare(`
+    SELECT COUNT(*) AS count FROM enno_client_continuation_receipts
+    WHERE run_id = ? AND client_kind = 'opencode'
+  `).get<{ count: number }>(runId)?.count ?? 0);
+}
 
 test('an active WorkUnit lease prevents automatic rerouting to another local client', async () => {
   const { root, database } = await fixture();
@@ -2039,15 +2119,19 @@ test('spawn failure blocks the run while continuation exhaustion only stops the 
   const second = await fixture();
   try {
     const planned = await plannedExecution(second.database, second.root, 'continuation-limit', verifier(second.root, 'pass'), { maxAttempts: 1 });
-    assert.equal(decideAdapterContinuation(second.database, 'opencode', { session_id: planned.hostSessionId, cwd: second.root }).continue, true);
-    const exhausted = decideAdapterContinuation(second.database, 'opencode', { session_id: planned.hostSessionId, cwd: second.root });
+    assert.equal(decideAdapterContinuation(second.database, 'opencode', {
+      session_id: planned.hostSessionId, terminalMessageId: 'limit-terminal-1', cwd: second.root,
+    }).continue, true);
+    const exhausted = decideAdapterContinuation(second.database, 'opencode', {
+      session_id: planned.hostSessionId, terminalMessageId: 'limit-terminal-2', cwd: second.root,
+    });
     assert.equal(exhausted.continue, false);
     assert.equal(exhausted.status, 'goki_executing');
     assert.match(exhausted.warning ?? '', /run remains active/iu);
     assert.equal(second.database.prepare('SELECT status FROM enno_contracts WHERE run_id = ?').get<{ status: string }>(planned.identity.runId)?.status, 'goki_executing');
     assert.equal(second.database.prepare('SELECT status FROM ledger_runs WHERE run_id = ?').get<{ status: string }>(planned.identity.runId)?.status, 'active');
     assert.throws(() => decideAdapterContinuation(second.database, 'opencode', {
-      session_id: 'replacement-opencode-session', cwd: second.root,
+      session_id: 'replacement-opencode-session', terminalMessageId: 'limit-terminal-3', cwd: second.root,
     }), /active Enno WorkUnit lease/iu);
   } finally {
     second.database.close();

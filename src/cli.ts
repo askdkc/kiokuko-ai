@@ -861,13 +861,13 @@ export function buildCli(dependencies: CliDependencies = {}): Command {
   });
 
   cli.command('setup').description('Configure global Kiokuko memory and the OpenCode npm plugin, then refresh managed instructions in registered projects')
-    .option('--command <path>', 'Kiokuko executable name or absolute path', 'kiokuko')
+    .option('--command <path>', 'Kiokuko executable name or absolute path')
     .option('--dry-run', 'Validate and show planned changes without writing')
     .option('--no-standard-skills', 'Skip installing bundled Kiokuko standard skills')
     .option('--skill-discovery <mode>', 'External Skill discovery: off,official,community')
     .option('--enno-oduno <mode>', 'Enno-Oduno agent loop: on,off')
     .option('--json', 'Emit a JSON response')
-    .action(async (options: { command: string; dryRun?: boolean; json?: boolean; standardSkills: boolean; skillDiscovery?: string; ennoOduno?: string }) => {
+    .action(async (options: { command?: string; dryRun?: boolean; json?: boolean; standardSkills: boolean; skillDiscovery?: string; ennoOduno?: string }) => {
       const optionSkillDiscoveryMode = options.skillDiscovery === undefined
         ? undefined
         : parseSetupSkillDiscoveryMode(options.skillDiscovery);
@@ -876,9 +876,9 @@ export function buildCli(dependencies: CliDependencies = {}): Command {
       const setupOutput = dependencies.setupOutput ?? process.stdout;
       const data = await runSetupFlow({
         environment: setupEnvironment,
-        command: options.command,
         dryRun: options.dryRun === true,
         standardSkills: options.standardSkills,
+        ...(options.command === undefined ? {} : { command: options.command }),
         ...(optionSkillDiscoveryMode === undefined ? {} : { skillDiscoveryMode: optionSkillDiscoveryMode }),
         ...(options.ennoOduno === undefined ? {} : { ennoOduno: parseEnnoSetupMode(options.ennoOduno) }),
         json: options.json === true,

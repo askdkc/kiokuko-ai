@@ -5,7 +5,8 @@ import path from 'node:path';
 import { parse } from 'jsonc-parser';
 import test from 'node:test';
 import { setupGlobalClients } from '../../src/commands/setup.js';
-import { KIOKUKO_OPENCODE_PLUGIN } from '../../src/setup/opencode-config.js';
+import { KIOKUKO_OPENCODE_PLUGIN_PACKAGE } from '../../src/setup/opencode-config.js';
+import { PACKAGE_VERSION } from '../../src/package-version.js';
 
 async function temporaryEnvironment(prefix: string) {
   const root = await mkdtemp(path.join(tmpdir(), `kiokuko-setup-${prefix}-`));
@@ -31,11 +32,17 @@ test('setup targets OpenCode only and is idempotent', async () => {
   });
   assert.deepEqual(first.clients, ['opencode']);
   const config = parse(await readFile(temporary.openCodeConfig, 'utf8')) as {
-    plugin: string[];
+    plugin: unknown[];
     mcp: { kiokuko: { command: string[] } };
   };
-  assert.deepEqual(config.plugin, [KIOKUKO_OPENCODE_PLUGIN]);
-  assert.deepEqual(config.mcp.kiokuko.command, ['kiokuko-ai', 'mcp']);
+  assert.equal(config.plugin.length, 1);
+  const plugin = config.plugin[0] as [string, Record<string, unknown>];
+  assert.equal(plugin[0], `${KIOKUKO_OPENCODE_PLUGIN_PACKAGE}@${PACKAGE_VERSION}`);
+  assert.deepEqual(Object.keys(plugin[1]).sort(), ['cliScript', 'nodeExecutable', 'packageVersion', 'protocolVersion']);
+  assert.equal(config.mcp.kiokuko.command.at(-1), 'mcp');
+  assert.equal(config.mcp.kiokuko.command.length, 3);
+  assert.ok(config.mcp.kiokuko.command[0]?.startsWith('/'));
+  assert.ok(config.mcp.kiokuko.command[1]?.endsWith('/dist/bin/kiokuko.js'));
   const second = await setupGlobalClients({
     databasePath: temporary.databasePath,
     platform: 'linux',
@@ -72,6 +79,7 @@ test('setup preserves unknown OpenCode plugin entries', async () => {
     env: temporary.env,
     standardSkills: false,
   });
-  const config = parse(await readFile(temporary.openCodeConfig, 'utf8')) as { plugin: string[] };
-  assert.deepEqual(config.plugin, ['unrelated-plugin', KIOKUKO_OPENCODE_PLUGIN]);
+  const config = parse(await readFile(temporary.openCodeConfig, 'utf8')) as { plugin: unknown[] };
+  assert.equal(config.plugin[0], 'unrelated-plugin');
+  assert.equal((config.plugin[1] as [string])[0], `${KIOKUKO_OPENCODE_PLUGIN_PACKAGE}@${PACKAGE_VERSION}`);
 });

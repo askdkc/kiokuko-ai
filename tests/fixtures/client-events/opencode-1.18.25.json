@@ -2,34 +2,28 @@
   "schemaVersion": 1,
   "client": {
     "kind": "opencode",
-    "version": "1.18.18"
+    "version": "1.18.25"
   },
-  "purpose": "regression-only; not evidence for the supported-version contract",
   "capture": {
     "status": "verified",
-    "method": "Project-local plugin in a temporary Git repository with one successful bash tool call"
+    "method": "Allowlisted OpenCode host event capture for the minimum supported release"
   },
   "events": [
     {
       "channel": "event",
       "type": "session.created",
-      "sessionId": "<session-id>",
-      "directory": "<workspace>"
+      "sessionId": "<session-id>"
     },
     {
       "channel": "tool.execute.before",
       "tool": "bash",
       "sessionId": "<session-id>",
-      "callId": "<call-id>",
-      "args": {
-        "command": "printf opencode-ok > opencode-marker.txt"
-      }
+      "callId": "<call-id>"
     },
     {
       "channel": "shell.env",
       "sessionId": "<session-id>",
       "callId": "<call-id>",
-      "cwd": "<workspace>",
       "environmentNames": []
     },
     {
@@ -37,9 +31,6 @@
       "tool": "bash",
       "sessionId": "<session-id>",
       "callId": "<call-id>",
-      "args": {
-        "command": "printf opencode-ok > opencode-marker.txt"
-      },
       "result": {
         "exit": 0,
         "truncated": false,
@@ -49,7 +40,8 @@
     {
       "channel": "event",
       "type": "session.idle",
-      "sessionId": "<session-id>"
+      "sessionId": "<session-id>",
+      "messageId": "<message-id>"
     }
   ]
 }

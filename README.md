@@ -1,10 +1,10 @@
-# Kiokuko (記憶庫) for Opencode
+# Kiokuko (記憶庫) for OpenCode
 
 English | [日本語](README.ja.md) | [简体中文](README.zh-CN.md) | [한국어](README.ko.md)
 
 **Connect through MCP, recall useful context, and build reusable project memory.**
 
-Kiokuko is a local external memory plugin for Opencode. It stores durable knowledge
+Kiokuko is a local external memory plugin for OpenCode. It stores durable knowledge
 in SQLite, retrieves relevant context for the next task, and records useful results
 after work. You keep using your client normally; the client calls Kiokuko through MCP.
 

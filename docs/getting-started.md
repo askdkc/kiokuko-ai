@@ -23,13 +23,17 @@ and adds the npm plugin to the `plugin` array:
   "mcp": {
     "kiokuko": {
       "type": "local",
-      "command": ["kiokuko", "mcp"],
+      "command": ["kiokuko-ai", "mcp"],
       "enabled": true,
       "environment": { "KIOKUKO_SKILL_DISCOVERY": "official" }
     }
   }
 }
 ```
+
+This is the minimum manual configuration. `kiokuko-ai setup` is preferred: it
+pins the plugin version and writes the same absolute Node/CLI runtime pair for
+the plugin hook and MCP server.
 
 Unrelated settings and comments are preserved. Changed values, duplicate plugin
 identities, extra MCP fields, or another unmanaged `kiokuko` identity are conflicts
