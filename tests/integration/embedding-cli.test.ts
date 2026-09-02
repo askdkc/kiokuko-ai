@@ -133,7 +133,7 @@ test('embedding setup configures clients and refreshes project instructions', as
     };
     assert.equal(setupCalls.length, 1);
     const setupCall = setupCalls[0]!;
-    assert.equal(setupCall.command, 'kiokuko');
+    assert.equal(setupCall.command, 'kiokuko-ai');
     assert.equal(setupCall.dryRun, true);
     assert.equal(setupCall.standardSkills, true);
     assert.deepEqual(setupCall.replaceConflictingMcpServers, []);
@@ -182,14 +182,14 @@ test('embedding setup confirms and replaces a conflicting client MCP identity', 
     }).parseAsync(['node', 'kiokuko-ai', 'embeddings', 'setup', '--dry-run']);
     assert.deepEqual(setupCalls, [
       {
-        command: 'kiokuko',
+        command: 'kiokuko-ai',
         dryRun: true,
         standardSkills: true,
         skillDiscoveryMode: 'official',
         replaceConflictingMcpServers: [],
       },
       {
-        command: 'kiokuko',
+        command: 'kiokuko-ai',
         dryRun: true,
         standardSkills: true,
         skillDiscoveryMode: 'official',

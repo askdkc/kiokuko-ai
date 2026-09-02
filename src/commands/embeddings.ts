@@ -357,7 +357,7 @@ export function registerEmbeddingsCommands(cli: Command, dependencies: Embedding
   embeddings.command('setup')
     .description('Install semantic search and configure OpenCode')
     .option('--preset <name>', 'Embedding preset', 'local-small')
-    .option('--command <path>', 'Kiokuko executable name or absolute path', 'kiokuko')
+    .option('--command <path>', 'Kiokuko executable name or absolute path', 'kiokuko-ai')
     .option('--dry-run', 'Plan setup without downloading or mutating anything')
     .option('--no-standard-skills', 'Skip installing bundled Kiokuko standard skills')
     .option('--skill-discovery <mode>', 'External Skill discovery: off,official,community')
