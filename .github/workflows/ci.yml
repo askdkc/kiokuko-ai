@@ -1,0 +1,94 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24.16.0
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type-check
+        run: npm run typecheck
+
+      - name: Run test suite
+        run: npm test
+
+      - name: Run semantic retrieval evaluation
+        run: npm run test:evaluation
+
+      - name: Verify sqlite-vec package and production composition
+        run: npm run test:sqlite-vec
+        env:
+          KIOKUKO_REQUIRE_SQLITE_VEC_SMOKE: "1"
+
+      - name: Verify sample database migration and Web API
+        run: npm run test:sampledb
+
+      - name: Verify package contents
+        run: npm run pack:check
+
+      - name: Verify minimal global install
+        run: npm run test:global-install
+
+      - name: Verify pinned local embedding manifest
+        run: node scripts/run-local-embedding-smoke.mjs --offline
+
+  semantic-platform-smoke:
+    name: Semantic smoke (${{ matrix.platform }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-x64
+            runner: ubuntu-24.04
+          - platform: linux-arm64
+            runner: ubuntu-24.04-arm
+          - platform: macos-x64
+            runner: macos-15-intel
+          - platform: macos-arm64
+            runner: macos-15
+          - platform: windows-x64
+            runner: windows-2025
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24.16.0
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build package
+        run: npm run build
+
+      - name: Verify sqlite-vec package and production composition
+        run: npm run test:sqlite-vec
+        env:
+          KIOKUKO_REQUIRE_SQLITE_VEC_SMOKE: "1"
+
+      - name: Verify pinned local embedding manifest
+        run: node scripts/run-local-embedding-smoke.mjs --offline

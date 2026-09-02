@@ -1,0 +1,10 @@
+{
+  "minimumQueryCount": 100,
+  "minimumRecallAt1": 0.9,
+  "minimumRecallAt5": 0.99,
+  "minimumExactIdentifierRecallAt1": 1,
+  "minimumSemanticOnlyRecallAt5": 0.95,
+  "minimumSemanticOnlyImprovement": 0.5,
+  "maximumScopeLeakageCount": 0,
+  "maximumFalseNegativeDeliveryCount": 0
+}
