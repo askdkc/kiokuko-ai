@@ -66,6 +66,11 @@
     "adm-zip": "0.6.0",
     "sharp": "0.35.4"
   },
+  "allowScripts": {
+    "onnxruntime-node": true,
+    "sharp": true,
+    "protobufjs": true
+  },
   "peerDependencies": {
     "@opencode-ai/plugin": "^1.18.25",
     "@huggingface/hub": "2.16.1",
