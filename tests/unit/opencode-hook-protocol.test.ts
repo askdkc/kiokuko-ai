@@ -57,4 +57,9 @@ test('OpenCode hook response requires an exact disposition contract and hides in
   assert.equal(parseOpenCodeHookResponse(response({ disposition: 'continue', code: 'continue', continue: false, reason: 'resume' })), undefined);
   assert.equal(parseOpenCodeHookResponse(response({ packageVersion: '0.0.0' })), undefined);
   assert.equal(parseOpenCodeHookResponse(response({ resumeToken: 'sk-1234567890123456' })), undefined);
+  assert.deepEqual(
+    parseOpenCodeHookResponse(response({ disposition: 'continue', code: 'continue', continue: true, reason: 'line one\nline two' }))?.reason,
+    'line one\nline two',
+  );
+  assert.equal(parseOpenCodeHookResponse(response({ disposition: 'continue', code: 'continue', continue: true, reason: 'line one\u0000line two' })), undefined);
 });

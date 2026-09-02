@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { access, lstat, mkdtemp, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import { access, lstat, mkdtemp, mkdir, readFile, readdir, realpath, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
@@ -13,6 +13,29 @@ const timeoutMs = 180_000;
 
 function npmExecutable() {
   return process.platform === 'win32' ? 'npm.cmd' : 'npm';
+}
+
+function quoteWindowsCommandArg(value) {
+  if (!/[\s"&|<>^]/u.test(value)) return value;
+  const escaped = value
+    .replace(/(\\*)"/gu, '$1$1\\"')
+    .replace(/(\\+)$/u, '$1$1');
+  return `"${escaped}"`;
+}
+
+function spawnCommand(command, args, options) {
+  if (process.platform !== 'win32' || !command.toLowerCase().endsWith('.cmd')) {
+    return spawn(command, args, { ...options, shell: false });
+  }
+  // Node cannot launch .cmd files with shell:false on Windows (it reports
+  // EINVAL). Keep shell parsing limited to this fixed npm command and quote
+  // every generated argument so paths with spaces remain one argument.
+  const commandLine = [command, ...args].map(quoteWindowsCommandArg).join(' ');
+  return spawn(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', commandLine], {
+    ...options,
+    shell: false,
+    windowsHide: true,
+  });
 }
 
 function digest(value) {
@@ -34,7 +57,7 @@ function append(current, chunk) {
 
 function execute(command, args, options = {}) {
   return new Promise((resolve) => {
-    const child = spawn(command, args, { ...options, shell: false, stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = spawnCommand(command, args, { ...options, stdio: ['pipe', 'pipe', 'pipe'] });
     let stdout = Buffer.alloc(0);
     let stderr = Buffer.alloc(0);
     let timedOut = false;
@@ -258,12 +281,13 @@ async function main() {
   const prefix = path.join(root, 'prefix');
   const project = path.join(root, 'project with spaces', '日本語');
   await Promise.all([mkdir(home, { recursive: true }), mkdir(config, { recursive: true }), mkdir(data, { recursive: true }), mkdir(prefix, { recursive: true }), mkdir(project, { recursive: true })]);
+  const projectRoot = await realpath(project);
   const environment = {
     ...process.env,
     HOME: home,
     XDG_CONFIG_HOME: config,
     XDG_DATA_HOME: data,
-    KIOKUKO_DATABASE: path.join(data, 'kiokuko-ai.sqlite'),
+    KIOKUKO_DATA_DIR: data,
     KIOKUKO_SKILL_DISCOVERY: 'off',
     NPM_CONFIG_CACHE: path.join(root, 'npm-cache'),
     NO_PROXY: '127.0.0.1,localhost',
@@ -290,9 +314,13 @@ async function main() {
   openCodeConfig.plugin[pluginIndex] = [pathToFileURL(path.join(installedRoot, 'dist', 'opencode', 'plugin.js')).href, openCodeConfig.plugin[pluginIndex][1]];
   await writeFile(configPath, `${JSON.stringify(openCodeConfig, null, 2)}\n`);
   let continuationHandler = async () => undefined;
+  let continuationFinished = Promise.resolve();
   const fixture = await startFakeOpenAiServer({
     emitTaskPrepare: false,
-    onContinuation: (payload) => continuationHandler(payload),
+    onContinuation: (payload) => {
+      continuationFinished = Promise.resolve().then(() => continuationHandler(payload));
+      return continuationFinished;
+    },
   });
   const projectConfig = {
     '$schema': 'https://opencode.ai/config.json',
@@ -378,11 +406,12 @@ async function main() {
     if (run.code !== 0) throw new Error('OpenCode fixture run failed');
     if (fixture.stats.chatCompletions < 1) throw new Error('fixture provider was not called');
     await waitFor(() => fixture.stats.continuationRequests >= 1, 'active_continuation');
+    await continuationFinished;
     if (fixture.stats.continuationRequests !== 1) {
       throw new Error(`active continuation request count mismatch:${fixture.stats.continuationRequests}`);
     }
     const { openConnection } = await import('../dist/db/connection.js');
-    const database = openConnection(environment.KIOKUKO_DATABASE, { readOnly: true });
+    const database = openConnection(path.join(data, 'kiokuko-ai.sqlite'), { readOnly: true });
     try {
       const activeRun = database.prepare(`
         SELECT run_id AS runId, status
@@ -390,7 +419,7 @@ async function main() {
         WHERE repository_root = ?
         ORDER BY created_at DESC
         LIMIT 1
-      `).get(project);
+      `).get(projectRoot);
       if (activeRun?.runId === undefined) throw new Error('active Enno run was not created');
       if (activeRun.status !== 'cancelled') throw new Error(`active Enno run was not terminated:${String(activeRun.status)}`);
       const receiptCount = Number(database.prepare(`

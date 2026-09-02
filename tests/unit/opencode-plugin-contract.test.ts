@@ -15,7 +15,8 @@ test('OpenCode plugin entrypoint exposes a loadable named plugin', async () => {
     serverUrl: new URL('http://127.0.0.1:4096'),
     $: {} as never,
   });
-  assert.deepEqual(Object.keys(hooks).sort(), ['event']);
+  assert.deepEqual(Object.keys(hooks).sort(), ['dispose', 'event']);
+  assert.equal(typeof hooks.dispose, 'function');
   assert.equal(typeof hooks.event, 'function');
 });
 

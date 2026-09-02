@@ -4,6 +4,7 @@ import { PACKAGE_VERSION } from '../package-version.js';
 import { KiokukoError } from '../errors.js';
 
 export const OPENCODE_HOOK_PROTOCOL_VERSION = 1 as const;
+export const OPENCODE_HOOK_MAX_TEXT_LENGTH = 64 * 1024;
 
 const boundedText = (maximum: number) => z.string()
   .min(1)
@@ -11,6 +12,13 @@ const boundedText = (maximum: number) => z.string()
   .refine((value) => value.trim() === value)
   .refine((value) => !/[\u0000-\u001f\u007f\u200b-\u200f\u202a-\u202e\u2060\u2066-\u206f]/u.test(value));
 
+const boundedMultilineText = (maximum: number) => z.string()
+  .min(1)
+  .max(maximum)
+  .refine((value) => value.trim() === value)
+  .refine((value) => !/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f\u200b-\u200f\u202a-\u202e\u2060\u2066-\u206f]/u.test(value));
+
+const nullableMultilineText = (maximum: number) => z.union([boundedMultilineText(maximum), z.null()]);
 const nullableText = (maximum: number) => z.union([boundedText(maximum), z.null()]);
 
 const hookDirectiveSchema = z.object({}).passthrough();
@@ -49,8 +57,8 @@ export const openCodeHookResponseSchema = z.object({
   runId: nullableText(256),
   status: nullableText(100),
   directive: z.union([hookDirectiveSchema, z.null()]),
-  reason: nullableText(16 * 1024),
-  warning: nullableText(16 * 1024),
+  reason: nullableMultilineText(OPENCODE_HOOK_MAX_TEXT_LENGTH),
+  warning: nullableMultilineText(OPENCODE_HOOK_MAX_TEXT_LENGTH),
   resumeToken: nullableText(512),
   routeEpoch: z.union([z.number().int().min(0), z.null()]),
   executionLease: z.union([hookLeaseSchema, z.null()]),

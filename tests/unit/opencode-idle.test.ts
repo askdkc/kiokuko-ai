@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { handleOpenCodeIdle } from '../../src/opencode/idle.js';
+import { handleOpenCodeIdle, reconcileOpenCodeIdle } from '../../src/opencode/idle.js';
 import { OpenCodeIdleState } from '../../src/opencode/idle-state.js';
 
 function idle(sessionID: string, messageID?: string): object {
@@ -203,6 +203,77 @@ test('one hundred concurrent idle events claim one terminal once', async () => {
   )));
   assert.equal(hookCalls, 1);
   assert.equal(prompts, 1);
+});
+
+test('idle reconciliation recovers a silent host event stream and ignores child sessions', async () => {
+  const state = new OpenCodeIdleState();
+  const reconciliationState = { sessionUpdates: new Map<string, number>(), retrySessionIds: new Set<string>() };
+  let hookCalls = 0;
+  const prompts: string[] = [];
+  const client = {
+    session: {
+      list: async () => ({ data: [
+        { id: 'root-session', directory: '/repo', time: { updated: 2 } },
+        { id: 'child-session', directory: '/repo', parentID: 'root-session', time: { updated: 2 } },
+      ] }),
+      status: async () => ({ data: {
+        'root-session': { type: 'idle' },
+        'child-session': { type: 'idle' },
+      } }),
+      get: async ({ path }: { path: { id: string } }) => ({ data: { id: path.id } }),
+      messages: async () => ({ data: [{ info: {
+        id: 'terminal-session', role: 'assistant', time: { completed: 1 },
+      } }] }),
+      prompt: async ({ path }: { path: { id: string } }) => { prompts.push(path.id); },
+    },
+  };
+  await reconcileOpenCodeIdle(client as never, '/repo', {
+    state,
+    reconciliationState,
+    runHook: async () => {
+      hookCalls += 1;
+      return { kind: 'continue' as const, text: 'resume once' };
+    },
+  });
+  await reconcileOpenCodeIdle(client as never, '/repo', {
+    state,
+    reconciliationState,
+    runHook: async () => {
+      hookCalls += 1;
+      return { kind: 'continue' as const, text: 'must not replay unchanged session' };
+    },
+  });
+  assert.equal(hookCalls, 1);
+  assert.deepEqual(prompts, ['root-session']);
+});
+
+test('silent host reconciliation retries the same completed terminal after a transient hook failure', async () => {
+  const state = new OpenCodeIdleState();
+  const reconciliationState = { sessionUpdates: new Map<string, number>(), retrySessionIds: new Set<string>() };
+  let hookCalls = 0;
+  let promptCalls = 0;
+  const client = {
+    session: {
+      list: async () => ({ data: [{ id: 'retry-session', directory: '/repo', time: { updated: 3 } }] }),
+      status: async () => ({ data: {} }),
+      get: async () => ({ data: { id: 'retry-session' } }),
+      messages: async () => ({ data: [{ info: {
+        id: 'retry-terminal', role: 'assistant', time: { completed: 1 },
+      } }] }),
+      prompt: async () => { promptCalls += 1; },
+    },
+  };
+  const runHook = async () => {
+    hookCalls += 1;
+    return hookCalls === 1
+      ? { kind: 'failure' as const, retryable: true, reason: 'timeout' as const }
+      : { kind: 'continue' as const, text: 'retry the same terminal' };
+  };
+  await reconcileOpenCodeIdle(client as never, '/repo', { state, reconciliationState, runHook });
+  await reconcileOpenCodeIdle(client as never, '/repo', { state, reconciliationState, runHook });
+  assert.equal(hookCalls, 2);
+  assert.equal(promptCalls, 1);
+  assert.deepEqual(reconciliationState.retrySessionIds, new Set());
 });
 
 test('idle state eviction never removes active entries', () => {

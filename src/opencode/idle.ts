@@ -22,8 +22,14 @@ export interface IdleContinuationDependencies {
   runHook?: typeof runKiokukoHook;
   log?: (message: string, extra?: Record<string, unknown>) => Promise<void> | void;
   state?: OpenCodeIdleState;
+  reconciliationState?: OpenCodeIdleReconciliationState;
   runtime?: OpenCodeRuntimeInvocation;
   runtimeFailure?: HookFailureReason;
+}
+
+export interface OpenCodeIdleReconciliationState {
+  readonly sessionUpdates: Map<string, number>;
+  readonly retrySessionIds: Set<string>;
 }
 
 function eventObject(value: unknown): Record<string, unknown> | undefined {
@@ -231,6 +237,96 @@ export async function handleOpenCodeIdle(
       state.markRetryableFailure(provisionalKey, provisional.attempts, 'lifecycle_error');
     }
     await safeLog(dependencies.log, 'OpenCode continuation failed open', 'lifecycle_error');
+  }
+}
+
+function responseData(value: unknown): unknown {
+  const record = eventObject(value);
+  return record !== undefined && 'data' in record ? record.data : value;
+}
+
+function completedAssistantMessage(value: unknown): boolean {
+  const message = eventObject(value);
+  const info = eventObject(message?.info);
+  if (info?.role !== 'assistant') return false;
+  const time = eventObject(info.time);
+  return typeof time?.completed === 'number' || typeof info.finish === 'string';
+}
+
+/**
+ * Reconcile idle root sessions when the host does not deliver lifecycle
+ * events. OpenCode exposes the status endpoint independently of its event
+ * stream, so this is also a bounded recovery path for a silent event bus.
+ */
+export async function reconcileOpenCodeIdle(
+  client: OpenCodeClient,
+  directory: string,
+  dependencies: IdleContinuationDependencies = {},
+): Promise<void> {
+  const sessionApi = client.session as typeof client.session & {
+    list?: (input: { query: { directory: string } }) => Promise<unknown>;
+    status?: (input: { query: { directory: string } }) => Promise<unknown>;
+  };
+  if (typeof sessionApi.list !== 'function' || typeof sessionApi.status !== 'function') return;
+
+  const [sessionsResponse, statusesResponse] = await Promise.all([
+    sessionApi.list({ query: { directory } }),
+    sessionApi.status({ query: { directory } }),
+  ]);
+  const sessions = responseData(sessionsResponse);
+  const statuses = responseData(statusesResponse);
+  if (!Array.isArray(sessions)) return;
+  const rootSessions = new Map<string, { updated: number | undefined }>();
+  for (const session of sessions) {
+    const record = eventObject(session);
+    const id = record?.id;
+    if (record?.parentID !== undefined || record?.directory !== directory
+      || typeof id !== 'string' || id.length === 0) continue;
+    const time = eventObject(record.time);
+    const updated = typeof time?.updated === 'number' && Number.isSafeInteger(time.updated) ? time.updated : undefined;
+    rootSessions.set(id, { updated });
+  }
+  const rootSessionIds = new Set(rootSessions.keys());
+  const statusEntries = eventObject(statuses);
+  if (statusEntries === undefined) return;
+  const statusSessionIds = new Set(Object.keys(statusEntries));
+  const reconciliationState = dependencies.reconciliationState ?? { sessionUpdates: new Map(), retrySessionIds: new Set<string>() };
+  const changedSessionIds = new Set<string>();
+  for (const [sessionId, session] of rootSessions) {
+    if (session.updated === undefined) continue;
+    if (reconciliationState.sessionUpdates.get(sessionId) !== session.updated) changedSessionIds.add(sessionId);
+    reconciliationState.sessionUpdates.set(sessionId, session.updated);
+  }
+  const candidateSessionIds = statusSessionIds.size > 0
+    ? [...statusSessionIds]
+    : [...rootSessions.entries()]
+      .filter(([sessionId]) => changedSessionIds.has(sessionId) || reconciliationState.retrySessionIds.has(sessionId))
+      .sort((left, right) => (right[1].updated ?? 0) - (left[1].updated ?? 0))
+      .map(([sessionId]) => sessionId);
+
+  for (const sessionId of candidateSessionIds) {
+    const status = statusEntries[sessionId];
+    let fallbackTerminal: string | undefined;
+    if (!rootSessionIds.has(sessionId) || (statusSessionIds.size > 0 && eventObject(status)?.type !== 'idle')) continue;
+    if (statusSessionIds.size === 0) {
+      const messagesResponse = await client.session.messages({ path: { id: sessionId } });
+      const messages = responseData(messagesResponse);
+      if (!Array.isArray(messages) || !completedAssistantMessage(messages[messages.length - 1])) continue;
+      fallbackTerminal = terminalId(messages);
+      if (fallbackTerminal === undefined) continue;
+    }
+    await handleOpenCodeIdle(client, directory, {
+      type: 'session.idle',
+      properties: { sessionID: sessionId, ...(fallbackTerminal === undefined ? {} : { messageID: fallbackTerminal }) },
+    }, dependencies);
+    if (fallbackTerminal !== undefined && dependencies.reconciliationState !== undefined) {
+      const state = dependencies.state?.get(`${sessionId}\0${fallbackTerminal}`);
+      if (state?.state === 'retryable_failure' || state?.state === 'pending_prompt') {
+        dependencies.reconciliationState.retrySessionIds.add(sessionId);
+      } else {
+        dependencies.reconciliationState.retrySessionIds.delete(sessionId);
+      }
+    }
   }
 }
 
