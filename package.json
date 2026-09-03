@@ -1,6 +1,6 @@
 {
   "name": "kiokuko-ai",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "External memory for OpenCode",
   "type": "module",
   "main": "./dist/opencode/plugin.js",
