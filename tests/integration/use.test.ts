@@ -285,6 +285,109 @@ test('binding convergence retries when the intended agent result replaces a stal
   assert.equal(binding.workspace, 'project:concurrent-observation');
 });
 
+test('initial agent planning adopts a concurrent winner before binding convergence', async () => {
+  const root = await repository('concurrent-agent-before-binding');
+  const data = await mkdtemp(path.join(tmpdir(), 'kiokuko-data-'));
+  const databasePath = path.join(data, 'kiokuko-ai.sqlite');
+  const bindingPath = path.join(root, '.kiokuko.json');
+  const agentPath = path.join(root, 'AGENTS.md');
+  const originalAgent = 'human header\n';
+  await writeFile(agentPath, originalAgent);
+  const parent = await stat(root, { bigint: true });
+  const winner = {
+    schemaVersion: 1 as const,
+    repositoryId: 'repo_concurrent_before_binding',
+    workspace: 'project:concurrent-before-binding',
+    agentFile: 'AGENTS.md',
+    templateVersion: AGENT_TEMPLATE_VERSION,
+  };
+  const winnerBinding = `${JSON.stringify(winner, null, 2)}\n`;
+  const winnerAgent = renderAgentFile(originalAgent, {
+    repositoryId: winner.repositoryId,
+    workspace: winner.workspace,
+    cliCommand: 'kiokuko-ai',
+    templateVersion: winner.templateVersion,
+  }).content;
+  const bindingPrepared = deferred();
+  const releaseBinding = deferred();
+  const agentQuarantine = deferred();
+  const releaseAgent = deferred();
+  let bindingWriter: ReturnType<typeof atomicWriteTextIfUnchanged> | undefined;
+  let agentWriter: ReturnType<typeof atomicWriteTextIfUnchanged> | undefined;
+  let bindingReads = 0;
+  let agentReads = 0;
+
+  const result = await useRepository({ root, databasePath }, {
+    readBindingFileForConvergence: async (filePath, options) => {
+      const snapshot = await readRegularFile(filePath, options);
+      bindingReads += 1;
+      if (bindingReads === 1) {
+        bindingWriter = atomicWriteTextIfUnchanged(
+          bindingPath,
+          winnerBinding,
+          {
+            expected: undefined,
+            containmentRoot: root,
+            expectedParentDirectory: { device: parent.dev, inode: parent.ino },
+          },
+          0o644,
+          {
+            beforeCommit: async () => {
+              bindingPrepared.resolve();
+              await releaseBinding.promise;
+            },
+          },
+        );
+        void bindingWriter.catch(() => undefined);
+        await bindingPrepared.promise;
+      }
+      return snapshot;
+    },
+    readAgentFileForConvergence: async (filePath, options) => {
+      const snapshot = await readRegularFile(filePath, options);
+      agentReads += 1;
+      if (agentReads === 1) {
+        releaseBinding.resolve();
+        if (bindingWriter === undefined) assert.fail('concurrent binding writer did not start');
+        await bindingWriter;
+        agentWriter = atomicWriteTextIfUnchanged(
+          agentPath,
+          winnerAgent,
+          {
+            expected: snapshot,
+            containmentRoot: root,
+            expectedParentDirectory: { device: parent.dev, inode: parent.ino },
+          },
+          snapshot?.mode ?? 0o644,
+          {
+            afterRename: async () => {
+              agentQuarantine.resolve();
+              await releaseAgent.promise;
+            },
+          },
+        );
+        void agentWriter.catch(() => undefined);
+        await agentQuarantine.promise;
+        return snapshot;
+      }
+      if (agentReads === 3) {
+        releaseAgent.resolve();
+        if (agentWriter === undefined) assert.fail('concurrent agent writer did not start');
+        await agentWriter;
+        return readRegularFile(filePath, options);
+      }
+      return snapshot;
+    },
+  });
+
+  assert.ok(bindingReads >= 2);
+  assert.equal(result.repositoryId, winner.repositoryId);
+  assert.equal(result.workspace, winner.workspace);
+  assert.equal(await readFile(bindingPath, 'utf8'), winnerBinding);
+  assert.equal(await readFile(agentPath, 'utf8'), winnerAgent);
+  assert.equal((await readdir(root)).some((name) => name.includes('kiokuko.json.') || name.includes('AGENTS.md.')), false);
+});
+
 test('initial agent planning retries when a concurrent setup installs the intended result', async () => {
   const root = await repository('initial-agent-observation-retry');
   const data = await mkdtemp(path.join(tmpdir(), 'kiokuko-data-'));

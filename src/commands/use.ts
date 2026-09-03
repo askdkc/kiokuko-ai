@@ -747,6 +747,8 @@ async function readSettledAgentPlan(
       parentIdentity,
       forbiddenBindingIdentity,
       observedFinalCandidate,
+       readFile,
+       forbiddenBindingIdentity === undefined,
     );
     if (settled === undefined) {
       throw new KiokukoError('CONFLICT', 'Concurrent agent mutation did not settle', {
@@ -849,6 +851,7 @@ async function readRetriedAgentPlan(
   forbiddenBindingIdentity?: FileIdentity,
   initialFinalCandidate?: RegularFileSnapshot,
   readFile: typeof readRegularFile = readRegularFile,
+  allowUnknownFinal = false,
 ): Promise<RegularFileSnapshot | undefined> {
   let finalCandidate = initialFinalCandidate;
   let linkedCandidate: RegularFileSnapshot | undefined;
@@ -923,14 +926,17 @@ async function readRetriedAgentPlan(
           target: filePath,
         });
       }
-      if (!isInitial && !isIntendedFinal) {
+      const isUnknownFinal = allowUnknownFinal
+        && !isInitial
+        && observed.snapshot.mode === intendedMode;
+      if (!isInitial && !isIntendedFinal && !isUnknownFinal) {
         throw new KiokukoError(
           'CONFLICT',
           'Concurrent agent target is neither the planned original nor the intended final state',
           { target: filePath },
         );
       }
-      if (isIntendedFinal) finalCandidate = observed.snapshot;
+      if (isIntendedFinal || isUnknownFinal) finalCandidate = observed.snapshot;
       lastWasLinked = observed.linkCount !== 1n;
       if (lastWasLinked) {
         linkedCandidate = observed.snapshot;

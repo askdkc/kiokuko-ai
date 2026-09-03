@@ -74,7 +74,6 @@ export function optionalRuntimeInstallInvocation(
         '--prefix',
         packageRoot,
         ...OPTIONAL_RUNTIME_PACKAGES,
-        ...OPTIONAL_RUNTIME_SCRIPT_ARGS,
       ],
       cwd: packageRoot,
     };
