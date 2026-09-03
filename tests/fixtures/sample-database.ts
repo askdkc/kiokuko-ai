@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { chmod, copyFile, mkdir, mkdtemp, readdir, rename, rm } from 'node:fs/promises';
+import { chmod, copyFile, mkdir, mkdtemp, open, readdir, rename, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -36,6 +36,12 @@ export const SAMPLE_GLOBAL_TITLES = [
 
 const FIXTURE_TIME = '2026-01-01T00:00:00.000Z';
 const FIXTURE_PROJECT_ROOT = '/tmp/kiokuko-sampledb-ci-project';
+const SQLITE_HEADER_SIZE = 100;
+const SQLITE_WRITER_VERSION_OFFSET = 96;
+// Node 24.16.0, the pinned CI/runtime floor, embeds SQLite 3.53.0. SQLite stores
+// the library version of the last writer in the file header even when the
+// logical database is identical, so normalize this informational fixture byte.
+export const SAMPLE_SQLITE_WRITER_VERSION = 3_053_000;
 const FIXTURE_EXTERNAL_ENTRY_IDS = [
   'entry-sampledb-external-overview',
   'entry-sampledb-external-inspect',
@@ -298,6 +304,27 @@ function assertCurrentState(database: ReturnType<typeof openConnection>): void {
   ]);
 }
 
+async function normalizeSqliteWriterVersion(databasePath: string): Promise<void> {
+  const handle = await open(databasePath, 'r+');
+  try {
+    const header = Buffer.alloc(SQLITE_HEADER_SIZE);
+    const { bytesRead } = await handle.read(header, 0, header.byteLength, 0);
+    assert.equal(bytesRead, SQLITE_HEADER_SIZE, 'Generated SQLite header is truncated');
+    assert.equal(
+      header.subarray(0, 16).toString('binary'),
+      'SQLite format 3\0',
+      'Generated fixture must have a SQLite 3 header',
+    );
+    const normalized = Buffer.alloc(4);
+    normalized.writeUInt32BE(SAMPLE_SQLITE_WRITER_VERSION);
+    const { bytesWritten } = await handle.write(normalized, 0, normalized.byteLength, SQLITE_WRITER_VERSION_OFFSET);
+    assert.equal(bytesWritten, normalized.byteLength, 'Could not normalize the SQLite writer version');
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+}
+
 export async function createSampleDatabase(targetPath: string): Promise<void> {
   const absoluteTarget = path.resolve(targetPath);
   if (!absoluteTarget.endsWith('.sqlite')) throw new Error('Sample database target must end with .sqlite');
@@ -320,6 +347,7 @@ export async function createSampleDatabase(targetPath: string): Promise<void> {
     canonicalizeGeneratedIdentifiers(database);
     assertCurrentState(database);
     database.close();
+    await normalizeSqliteWriterVersion(temporaryDatabase);
     await chmod(temporaryDatabase, 0o600);
     await rename(temporaryDatabase, absoluteTarget);
     completed = true;

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile, spawn, type ChildProcessByStdio } from 'node:child_process';
-import { chmod, copyFile, mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { chmod, copyFile, mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { Readable } from 'node:stream';
@@ -17,6 +17,7 @@ import {
   SAMPLE_PROJECT_TITLES,
   SAMPLE_PROJECT_UNICODE_BODY,
   SAMPLE_PROJECT_WORKSPACE,
+  SAMPLE_SQLITE_WRITER_VERSION,
 } from '../fixtures/sample-database.js';
 import {
   CURRENT_MIGRATION_VERSIONS,
@@ -84,10 +85,17 @@ async function runCliJson(args: string[], operation: string, environment: NodeJS
   return parseCliEnvelope(result.stdout, operation);
 }
 
-function assertCurrentFixture(): void {
+async function assertCurrentFixture(): Promise<void> {
   assert.ok(
     CURRENT_SCHEMA_VERSION > 0,
     'The sample database must use the current single-migration schema',
+  );
+  const header = (await readFile(sampleDatabasePath)).subarray(0, 100);
+  assert.equal(header.byteLength, 100, 'The sample database header is truncated');
+  assert.equal(
+    header.readUInt32BE(96),
+    SAMPLE_SQLITE_WRITER_VERSION,
+    'The sample database must normalize the informational SQLite writer version',
   );
   const database = openConnection(sampleDatabasePath, { readOnly: true });
   try {
@@ -337,7 +345,7 @@ async function verifyWeb(environment: NodeJS.ProcessEnv): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  assertCurrentFixture();
+  await assertCurrentFixture();
   const temporaryRoot = await mkdtemp(path.join(tmpdir(), 'kiokuko-sampledb-ci-'));
   try {
     const isolated = await isolatedEnvironment(temporaryRoot);
