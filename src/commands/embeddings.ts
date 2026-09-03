@@ -76,6 +76,10 @@ export function optionalRuntimeInstallInvocation(
         '--no-save',
         '--package-lock=false',
         '--omit=dev',
+        // These packages are also devDependencies in the source checkout. Without
+        // this hint, npm classifies explicit no-save installs as dev dependencies
+        // and --omit=dev silently leaves them out of a published global install.
+        '--save-prod',
         '--prefix',
         packageRoot,
         ...OPTIONAL_RUNTIME_PACKAGES,

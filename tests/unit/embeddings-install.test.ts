@@ -23,6 +23,7 @@ test('optional runtime installation uses npm directly on macOS', () => {
   assert.equal(invocation.args.includes('--no-save'), true);
   assert.equal(invocation.args.includes('--package-lock=false'), true);
   assert.equal(invocation.args.includes('--omit=dev'), true);
+  assert.equal(invocation.args.includes('--save-prod'), true);
   assert.equal(invocation.args.some((arg) => arg.startsWith('--allow-scripts')), false);
   assert.equal(invocation.args[invocation.args.indexOf('--prefix') + 1], packageRoot);
   assert.equal(invocation.cwd, packageRoot);
