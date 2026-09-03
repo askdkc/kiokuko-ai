@@ -49,7 +49,6 @@
     "test:benchmark": "npm run build && node scripts/run-retrieval-benchmark.mjs",
     "test:e2e:opencode": "npm run build && node scripts/run-opencode-enno-e2e.mjs",
     "test:e2e:opencode:host": "npm run build && node scripts/run-opencode-host-e2e.mjs",
-    "test:e2e:opencode:live": "npm run build && node scripts/run-opencode-enno-e2e.mjs",
     "sampledb:generate": "node --import tsx tests/fixtures/sample-database.ts tests/sampledb/kiokuko-ai.sqlite",
     "test:sampledb": "npm run build && node --import tsx tests/ci/verify-sample-database.ts",
     "pack:check": "npm pack --dry-run",
