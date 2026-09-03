@@ -22,7 +22,6 @@ test('a rejected gated query and a durable query for the same hash do not share 
     const opened = service.openRun({
       idempotencyKey: 'gated-flight-open',
       request: {
-        apiVersion: '1',
         workspace: 'gated-flight',
         client: { kind: 'opencode' as const },
         task: {
@@ -88,7 +87,6 @@ test('broker snapshots a plain gate decision and rejects an accessor that can fl
     const opened = new OpenCodeTaskRunDriver(database, { now: () => now }).openRun({
       idempotencyKey: 'gate-accessor-open',
       request: {
-        apiVersion: '1',
         workspace: 'gate-accessor',
         client: { kind: 'opencode' as const },
         task: {
@@ -143,7 +141,6 @@ test('gated rejection writes no delivery when memory changes during the decision
     const opened = service.openRun({
       idempotencyKey: 'gate-reject-open',
       request: {
-        apiVersion: '1',
         workspace: 'gate-reject',
         client: { kind: 'opencode' as const },
         task: {
@@ -202,7 +199,6 @@ test('gated approval rejects a catalog mutation after ranking', async () => {
     const opened = service.openRun({
       idempotencyKey: 'gate-approve-open',
       request: {
-        apiVersion: '1',
         workspace: 'gate-approve',
         client: { kind: 'opencode' as const },
         task: {
@@ -259,7 +255,6 @@ test('delivery commit rejects a selected revision that advances after the gate a
     const opened = service.openRun({
       idempotencyKey: 'gate-revision-race-open',
       request: {
-        apiVersion: '1',
         workspace: 'gate-revision-race',
         client: { kind: 'opencode' as const },
         task: {
@@ -329,7 +324,6 @@ test('delivery return rejects a selected revision changed by the queue after the
     const opened = new OpenCodeTaskRunDriver(database, { now: () => now }).openRun({
       idempotencyKey: 'gate-post-write-race-open',
       request: {
-        apiVersion: '1',
         workspace,
         client: { kind: 'opencode' as const },
         task: {
@@ -395,7 +389,6 @@ test('delivery commit rejects a same-revision search-signal mutation after ranki
     const opened = new OpenCodeTaskRunDriver(database, { now: () => now }).openRun({
       idempotencyKey: 'gate-signal-race-open',
       request: {
-        apiVersion: '1',
         workspace: 'gate-signal-race',
         client: { kind: 'opencode' as const },
         task: {
@@ -453,7 +446,6 @@ test('broker rechecks after a gate assertion and rolls back its in-transaction c
     const opened = new OpenCodeTaskRunDriver(database, { now: () => now }).openRun({
       idempotencyKey: 'gate-assertion-race-open',
       request: {
-        apiVersion: '1',
         workspace,
         client: { kind: 'opencode' as const },
         task: {
@@ -511,7 +503,6 @@ test('delivery commit rejects a concurrent delivery-history insertion that chang
     const opened = new OpenCodeTaskRunDriver(database, { now: () => now }).openRun({
       idempotencyKey: 'gate-history-race-open',
       request: {
-        apiVersion: '1',
         workspace,
         client: { kind: 'opencode' as const },
         task: {
@@ -587,7 +578,6 @@ test('a delivery rejected after a queued history write is never replayed as an a
     const opened = new OpenCodeTaskRunDriver(database, { now: () => now }).openRun({
       idempotencyKey: 'post-queue-history-open',
       request: {
-        apiVersion: '1',
         workspace,
         client: { kind: 'opencode' as const },
         task: {
@@ -680,7 +670,6 @@ test('rejects the retired custom delivery writer before it can bypass broker-own
     const opened = new OpenCodeTaskRunDriver(database, { now: () => now }).openRun({
       idempotencyKey: 'retired-writer-open',
       request: {
-        apiVersion: '1',
         workspace: 'retired-writer',
         client: { kind: 'opencode' as const },
         task: {

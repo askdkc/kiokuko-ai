@@ -1607,7 +1607,6 @@ test('doctor and ledger inspect detect the same corrupt nudge row without exposi
     const opened = service.openRun({
       idempotencyKey: 'doctor-nudge-open',
       request: {
-        apiVersion: '1',
         workspace: 'project:doctor-nudge',
         client: { kind: 'doctor-test' },
         task: { title: 'doctor nudge', query: 'doctor nudge', profileHints: { taskType: 'build', target: 'src', expected: 'healthy' } },
@@ -1653,7 +1652,6 @@ test('runtime reads, ledger inspect, doctor, and archive export reject unsorted 
     const opened = service.openRun({
       idempotencyKey: 'unsorted-nudge-open',
       request: {
-        apiVersion: '1',
         workspace: 'project:unsorted-nudge-ids',
         client: { kind: 'unsorted-nudge-test' },
         task: { title: 'unsorted nudge', query: 'unsorted nudge', profileHints: { taskType: 'build', target: 'src', expected: 'healthy' } },
@@ -1767,7 +1765,7 @@ test('doctor adds content-free ledger and stale runtime findings', async () => {
     const opened = service.openRun({
       idempotencyKey: 'doctor-open',
       request: {
-        apiVersion: '1', workspace: 'project:doctor', client: { kind: 'doctor-test' },
+        workspace: 'project:doctor', client: { kind: 'doctor-test' },
         task: { title: 'doctor', query: 'doctor', profileHints: { taskType: 'build', target: 'src', expected: 'healthy' } },
         captureProfile: 'standard', coverage: { run: 'complete', tool: 'complete', command: 'complete', file: 'complete', approval: 'complete' }, metadata: {},
       },

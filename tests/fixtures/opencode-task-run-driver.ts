@@ -15,7 +15,6 @@ interface OpenInput {
     readonly capabilities?: JsonValue;
     readonly parentRunId?: string;
     readonly startedAt?: string;
-    readonly apiVersion?: '1';
     readonly captureProfile?: unknown;
     readonly coverage?: unknown;
   };
@@ -28,7 +27,6 @@ interface AnswerInput {
     readonly questionId: keyof TaskProfile;
     readonly value: string;
     readonly capabilities?: JsonValue;
-    readonly apiVersion?: '1';
   };
 }
 

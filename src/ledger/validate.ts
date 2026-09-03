@@ -105,9 +105,8 @@ export function validateTaskInput(value: unknown): TaskInput {
 
 export function validateAnswerInput(value: unknown): AnswerInput {
   const input = object(value, 'answer');
-  knownFields(input, ['apiVersion', 'questionId', 'value'], 'answer');
+  knownFields(input, ['questionId', 'value'], 'answer');
   return {
-    apiVersion: enumValue(input.apiVersion, ['1'] as const, 'answer.apiVersion'),
     questionId: nonEmptyString(input.questionId, 'answer.questionId', MAX_ID_LENGTH),
     value: jsonValue(input.value, 'answer.value'),
   };

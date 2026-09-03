@@ -253,9 +253,8 @@ function boundedStringArray(value: unknown, max: number): string[] {
 function normalizeInput(input: unknown): ContextBrokerQueryInput {
   if (typeof input !== 'object' || input === null || Array.isArray(input)) invalid();
   const value = input as Record<string, unknown>;
-  const allowed = new Set(['apiVersion', 'workspace', 'runId', 'task', 'taskProfile', 'recommendedTags', 'changedPaths', 'errorSignatures', 'limit', 'characterBudget']);
+  const allowed = new Set(['workspace', 'runId', 'task', 'taskProfile', 'recommendedTags', 'changedPaths', 'errorSignatures', 'limit', 'characterBudget']);
   if (Object.keys(value).some((key) => !allowed.has(key))) invalid();
-  if (value.apiVersion !== undefined && value.apiVersion !== '1') invalid();
   if (value.workspace !== undefined && (typeof value.workspace !== 'string' || value.workspace.length === 0 || value.workspace.length > 256)) invalid();
   if (value.runId === undefined && value.workspace === undefined) invalid();
   if (value.runId !== undefined && (typeof value.runId !== 'string' || value.runId.length === 0 || value.runId.length > 256)) invalid();

@@ -59,7 +59,6 @@ test('binds scoped replay to semantic query and projection state, then rejects a
     const opened = service.openRun({
       idempotencyKey: 'semantic-scoped-replay-run',
       request: {
-        apiVersion: '1',
         workspace: project.workspace,
         client: { kind: 'semantic-scoped-replay-test' },
         task: {

@@ -127,7 +127,6 @@ async function fixture(target = 'budget sentinel', expected = 'bounded context')
   const opened = service.openRun({
     idempotencyKey: 'scoped-budget-run',
     request: {
-      apiVersion: '1',
       workspace: project.workspace,
       client: { kind: 'scoped-budget-test' },
       task: {

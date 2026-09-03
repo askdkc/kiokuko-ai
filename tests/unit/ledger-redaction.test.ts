@@ -86,7 +86,7 @@ test('omits non-allowlisted environment values and bounds stream previews', () =
 test('task, profile hints, and answers are sanitized recursively without raw values', () => {
   const task = sanitizeTask({ title: 'Task', query: `password = hidden-secret-value-12345`, profileHints: { taskType: 'build', target: '/tmp/kiokuko-workspace/src/a.ts', expected: 'pass', constraints: null } }, options);
   const profile = sanitizeProfileHints({ taskType: 'build', target: '/home/alice/src/a.ts', expected: 'pass', constraints: { token: 'hidden-token-value-12345' } }, options);
-  const answer = sanitizeAnswer({ apiVersion: '1', questionId: 'target', value: '/tmp/kiokuko-workspace/src/a.ts' }, options);
+  const answer = sanitizeAnswer({ questionId: 'target', value: '/tmp/kiokuko-workspace/src/a.ts' }, options);
 
   assert.equal(json(task.value).includes('hidden-secret-value-12345'), false);
   assert.equal(json(profile.value).includes('hidden-token-value-12345'), false);

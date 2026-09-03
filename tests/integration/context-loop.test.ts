@@ -42,7 +42,7 @@ function open(service: OpenCodeTaskRunDriver, workspace: string, hints: Record<s
   return service.openRun({
     idempotencyKey: `open-${workspace}`,
     request: {
-      apiVersion: '1', workspace,
+      workspace,
       client: { kind: 'context-test' },
       task: { title: 'Implement local context', query: 'Implement local context', profileHints: hints },
       captureProfile: 'standard',
@@ -146,13 +146,13 @@ test('needs_answer broker fails closed when intake finalizes after preparation',
           const withTarget = service.answerIntake({
             runId: opened.runId,
             idempotencyKey: 'needs-answer-race-target',
-            request: { apiVersion: '1', questionId: 'target', value: 'src/race.ts' },
+            request: { questionId: 'target', value: 'src/race.ts' },
           });
           assert.equal(withTarget.currentQuestion?.id, 'expected');
           const finalized = service.answerIntake({
             runId: opened.runId,
             idempotencyKey: 'needs-answer-race-expected',
-            request: { apiVersion: '1', questionId: 'expected', value: 'focused tests pass' },
+            request: { questionId: 'expected', value: 'focused tests pass' },
           });
           assert.equal(finalized.intakeStatus, 'ready');
           return { persist: false, value: 'stale-needs-answer' as const };
@@ -178,7 +178,6 @@ test('active intake derives current tags without rejecting its intentionally sta
     const opened = service.openRun({
       idempotencyKey: 'open-active-derived-tags',
       request: {
-        apiVersion: '1',
         workspace: 'active-derived-tags',
         client: { kind: 'context-test' },
         task: { title: 'Opaque request', query: 'Opaque request', profileHints: {} },
@@ -191,7 +190,7 @@ test('active intake derives current tags without rejecting its intentionally sta
     const answered = service.answerIntake({
       runId: opened.runId,
       idempotencyKey: 'answer-active-derived-tags-task-type',
-      request: { apiVersion: '1', questionId: 'taskType', value: 'build' },
+      request: { questionId: 'taskType', value: 'build' },
     });
     assert.equal(answered.intakeStatus, 'needs_answer');
     assert.equal(answered.currentQuestion?.id, 'target');

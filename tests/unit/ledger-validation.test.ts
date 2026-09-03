@@ -74,8 +74,8 @@ test('validates run coverage and immutable task/profile/answer shapes', () => {
   assert.throws(() => validateRunInput(run({ coverage: { run: 'complete', unexpected: 'best_effort' } })), /coverage|unknown|invalid/i);
   assert.doesNotThrow(() => validateTaskInput({ title: 'Task', query: 'Query', profileHints: { taskType: 'build', target: null, expected: null, constraints: null } }));
   assert.doesNotThrow(() => validateProfileHints({ taskType: 'build', target: null, expected: null, constraints: null }));
-  assert.doesNotThrow(() => validateAnswerInput({ apiVersion: '1', questionId: 'target', value: 'src/index.ts' }));
-  assert.throws(() => validateAnswerInput({ apiVersion: '1', questionId: 'target', value: 'src/index.ts', ignored: true }), /unknown|invalid/i);
+  assert.doesNotThrow(() => validateAnswerInput({ questionId: 'target', value: 'src/index.ts' }));
+  assert.throws(() => validateAnswerInput({ questionId: 'target', value: 'src/index.ts', ignored: true }), /unknown|invalid/i);
 });
 
 test('rejects event payloads over the sanitized 64 KiB bound and batches over 200 events', () => {
@@ -109,7 +109,7 @@ test('accepts sanitized snapshots exactly at the 64 KiB boundary', () => {
   assert.equal(Buffer.byteLength(canonicalJson(profile), 'utf8'), MAX_EVENT_PAYLOAD_BYTES);
   assert.doesNotThrow(() => sanitizeProfileHints(profile, options));
 
-  const answer = bounded((value) => ({ apiVersion: '1', questionId: 'target', value }));
+  const answer = bounded((value) => ({ questionId: 'target', value }));
   assert.equal(Buffer.byteLength(canonicalJson(answer), 'utf8'), MAX_EVENT_PAYLOAD_BYTES);
   assert.doesNotThrow(() => sanitizeAnswer(answer, options));
 
@@ -122,7 +122,7 @@ test('task, profile hints, and answers share the sanitization boundary', () => {
   const options = { workspace: '/tmp/workspace', home: '/home/tester' };
   assert.doesNotThrow(() => sanitizeTask({ title: 'Task', query: 'Query', profileHints: { taskType: 'build', target: 'src/index.ts', expected: 'pass', constraints: null } }, options));
   assert.doesNotThrow(() => sanitizeProfileHints({ taskType: 'build', target: 'src/index.ts', expected: 'pass', constraints: null }, options));
-  assert.doesNotThrow(() => sanitizeAnswer({ apiVersion: '1', questionId: 'target', value: '/tmp/workspace/src/index.ts' }, options));
+  assert.doesNotThrow(() => sanitizeAnswer({ questionId: 'target', value: '/tmp/workspace/src/index.ts' }, options));
 });
 
 test('rejects task, profile, and answer snapshots over the sanitized 64 KiB bound', () => {
@@ -138,6 +138,6 @@ test('rejects task, profile, and answer snapshots over the sanitized 64 KiB boun
     taskType: 'build', target: null, expected: null, constraints: oversized,
   }, options), /64|sanitized|size|bytes/i);
   assert.throws(() => sanitizeAnswer({
-    apiVersion: '1', questionId: 'target', value: oversized,
+    questionId: 'target', value: oversized,
   }, options), /64|sanitized|size|bytes/i);
 });
