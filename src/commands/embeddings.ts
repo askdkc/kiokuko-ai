@@ -41,6 +41,10 @@ const OPTIONAL_RUNTIME_PACKAGES = [
   '@huggingface/transformers@4.2.0',
   'sqlite-vec@0.1.9',
 ] as const;
+const OPTIONAL_RUNTIME_IMPORTS = [
+  '@huggingface/hub',
+  '@huggingface/transformers',
+] as const;
 const OPTIONAL_RUNTIME_SCRIPT_ARGS = ['--allow-scripts=onnxruntime-node,sharp,protobufjs'] as const;
 const OPTIONAL_RUNTIME_INSTALL_ARGS = [
   'install',
@@ -71,6 +75,7 @@ export function optionalRuntimeInstallInvocation(
         'install',
         '--no-save',
         '--package-lock=false',
+        '--omit=dev',
         '--prefix',
         packageRoot,
         ...OPTIONAL_RUNTIME_PACKAGES,
@@ -120,12 +125,29 @@ export interface EmbeddingsCommandDependencies {
   readonly setupGlobalClients?: (options: SetupOptions) => Promise<Pick<SetupResult, 'clients' | 'projectAgentFiles'>>;
 }
 
-async function checkOptionalRuntime(): Promise<void> {
+export async function checkOptionalRuntime(packageRoot = runningPackageRoot()): Promise<void> {
   try {
-    await Promise.all([
-      import('@huggingface/hub'),
-      import('@huggingface/transformers'),
-    ]);
+    await new Promise<void>((resolve, reject) => {
+      const source = `await Promise.all(${JSON.stringify(OPTIONAL_RUNTIME_IMPORTS)}.map((name) => import(name)));`;
+      const child = spawn(process.execPath, ['--input-type=module', '--eval', source], {
+        cwd: packageRoot,
+        stdio: ['ignore', 'ignore', 'pipe'],
+      });
+      let stderr = '';
+      child.stderr.setEncoding('utf8');
+      child.stderr.on('data', (chunk: string) => {
+        if (stderr.length < 16_384) stderr += chunk;
+      });
+      child.once('error', reject);
+      child.once('exit', (code, signal) => {
+        if (code === 0) {
+          resolve();
+          return;
+        }
+        const detail = stderr.trim();
+        reject(new Error(detail || (signal === null ? `exit code ${code ?? 'unknown'}` : `signal ${signal}`)));
+      });
+    });
   } catch (error) {
     const cause = error instanceof Error ? `: ${error.message}` : '';
     throw new KiokukoError(
