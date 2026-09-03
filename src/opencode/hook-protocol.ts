@@ -67,6 +67,9 @@ export const openCodeHookResponseSchema = z.object({
 export type OpenCodeHookRequest = z.infer<typeof openCodeHookRequestSchema>;
 export type OpenCodeHookResponse = z.infer<typeof openCodeHookResponseSchema>;
 export type OpenCodeHookCode = z.infer<typeof hookCodeSchema>;
+export type OpenCodeHookResponseParseResult =
+  | { ok: true; value: OpenCodeHookResponse }
+  | { ok: false; reason: 'invalid_response' | 'version_mismatch' | 'unsafe_continuation' };
 
 export function parseOpenCodeHookRequest(value: unknown): OpenCodeHookRequest {
   const parsed = openCodeHookRequestSchema.safeParse(value);
@@ -82,11 +85,45 @@ export function parseOpenCodeHookRequest(value: unknown): OpenCodeHookRequest {
   return parsed.data;
 }
 
-export function parseOpenCodeHookResponse(value: unknown): OpenCodeHookResponse | undefined {
+function responseContractIsConsistent(value: OpenCodeHookResponse): boolean {
+  if (value.disposition === 'continue') {
+    return value.code === 'continue' && value.continue === true
+      && value.runId !== null && value.status !== null && value.directive !== null
+      && value.reason !== null && value.warning === null && value.resumeToken !== null
+      && value.routeEpoch !== null;
+  }
+  if (value.continue !== false || value.reason !== null || value.resumeToken !== null || value.executionLease !== null) return false;
+  if (value.disposition === 'retry') {
+    return ['adapter_unavailable', 'runtime_unavailable', 'cli_unavailable', 'spawn_failed', 'timeout', 'hook_failed']
+      .includes(value.code) && value.runId === null && value.status === null
+      && value.directive === null && value.routeEpoch === null;
+  }
+  if (value.code === 'continuation_limit') {
+    return value.runId !== null && value.status !== null && value.directive === null && value.routeEpoch !== null;
+  }
+  if (value.code === 'no_active_run' || value.code === 'ambiguous_run') {
+    return value.runId === null && value.status === null && value.directive === null && value.routeEpoch === null;
+  }
+  return ['invalid_response', 'version_mismatch', 'unsafe_continuation'].includes(value.code)
+    && value.runId === null && value.status === null && value.directive === null && value.routeEpoch === null;
+}
+
+export function inspectOpenCodeHookResponse(value: unknown): OpenCodeHookResponseParseResult {
+  if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+    const candidate = value as Record<string, unknown>;
+    if (typeof candidate.protocolVersion === 'number' && typeof candidate.packageVersion === 'string'
+      && (candidate.protocolVersion !== OPENCODE_HOOK_PROTOCOL_VERSION || candidate.packageVersion !== PACKAGE_VERSION)) {
+      return { ok: false, reason: 'version_mismatch' };
+    }
+  }
   const parsed = openCodeHookResponseSchema.safeParse(value);
-  if (!parsed.success || parsed.data.packageVersion !== PACKAGE_VERSION) return undefined;
-  if (findSecretInValue(parsed.data) !== undefined) return undefined;
-  if (parsed.data.disposition === 'continue' && parsed.data.continue !== true) return undefined;
-  if (parsed.data.disposition !== 'continue' && parsed.data.continue === true) return undefined;
-  return parsed.data;
+  if (!parsed.success) return { ok: false, reason: 'invalid_response' };
+  if (findSecretInValue(parsed.data) !== undefined) return { ok: false, reason: 'unsafe_continuation' };
+  if (!responseContractIsConsistent(parsed.data)) return { ok: false, reason: 'invalid_response' };
+  return { ok: true, value: parsed.data };
+}
+
+export function parseOpenCodeHookResponse(value: unknown): OpenCodeHookResponse | undefined {
+  const result = inspectOpenCodeHookResponse(value);
+  return result.ok ? result.value : undefined;
 }

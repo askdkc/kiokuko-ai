@@ -27,11 +27,14 @@ registration action.
 
 ## OpenCode boundary and public errors
 
-OpenCode receives only the `session.idle` continuation hook. The hook invokes
-the package-owned Kiokuko CLI through a bounded subprocess and accepts output
-only after trusted-path validation, a successful exit, exact response-shape
+OpenCode continuation starts from `session.idle`, then revalidates the root
+session, repository directory, and completed assistant terminal through the
+injected client. The hook invokes only the package-owned Kiokuko CLI through a
+bounded, cancellable subprocess and accepts output after executable and package
+identity checks, a successful exit, exact disposition/code validation, version
 validation, and secret screening. Workspace-local binaries and ambient PATH
-fallbacks are not eligible execution sources.
+fallbacks are not eligible execution sources. Prompt API completion is not
+delivery proof; the deterministic message ID must appear in messages read-back.
 
 Normal public tool failures use `isError: true` with an allowlisted message plus
 `structuredContent.code` and `structuredContent.retryable`; only `BACKPRESSURE` may

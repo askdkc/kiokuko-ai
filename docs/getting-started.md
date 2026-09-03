@@ -56,7 +56,9 @@ kiokuko-ai embeddings status --json
 
 `--replace` switches from another active embedding profile. `--dry-run` performs no
 download or mutation; `--json` is suitable for automation and fails closed on an
-unmanaged MCP identity.
+unmanaged MCP identity. Non-dry-run embedding setup acquires its setup lock before
+checking or installing optional runtime packages, so concurrent setup processes do
+not run package installation or client/database mutations in parallel.
 
 ## Web UI and clients
 

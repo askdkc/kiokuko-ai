@@ -1,11 +1,11 @@
-import { lstat } from 'node:fs/promises';
+import { lstat, readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { findSecretInValue } from '../memory/secrets.js';
 import { PACKAGE_VERSION } from '../package-version.js';
 import {
   OPENCODE_HOOK_PROTOCOL_VERSION,
-  parseOpenCodeHookResponse,
+  inspectOpenCodeHookResponse,
 } from './hook-protocol.js';
 
 export const KIOKUKO_HOOK_TIMEOUT_MS = 10_000;
@@ -56,7 +56,8 @@ export type HookFailureReason =
   | 'hook_failed'
   | 'invalid_response'
   | 'version_mismatch'
-  | 'unsafe_continuation';
+  | 'unsafe_continuation'
+  | 'cancelled';
 
 export type HookDecision =
   | { kind: 'continue'; text: string }
@@ -67,8 +68,11 @@ export interface HookEffectDependencies {
   env?: NodeJS.ProcessEnv;
   spawn?: BunRuntime['spawn'];
   lstat?: typeof lstat;
+  readFile?: typeof readFile;
   runtime?: OpenCodeRuntimeInvocation;
   runtimeFailure?: HookFailureReason;
+  signal?: AbortSignal;
+  timeoutMs?: number;
 }
 
 function boundedString(value: unknown, maximum: number): string | undefined {
@@ -99,25 +103,38 @@ async function trustedFile(filePath: string, check: typeof lstat): Promise<boole
   }
 }
 
+async function packageIdentityMatches(cliScript: string, read: typeof readFile): Promise<boolean> {
+  try {
+    const packagePath = path.resolve(path.dirname(cliScript), '..', '..', 'package.json');
+    const value = JSON.parse(await read(packagePath, 'utf8')) as { name?: unknown; version?: unknown };
+    return value.name === 'kiokuko-ai' && value.version === PACKAGE_VERSION;
+  } catch {
+    return false;
+  }
+}
+
 async function trustedInvocation(
   dependencies: HookEffectDependencies,
-): Promise<readonly string[] | undefined> {
+): Promise<{ argv?: readonly string[]; failure?: 'cli_unavailable' | 'version_mismatch' }> {
   const check = dependencies.lstat ?? lstat;
+  const read = dependencies.readFile ?? readFile;
   const runtime = dependencies.runtime;
   if (runtime !== undefined) {
-    if (runtime.protocolVersion !== OPENCODE_HOOK_PROTOCOL_VERSION || runtime.packageVersion !== PACKAGE_VERSION) return undefined;
-    if (!await trustedFile(runtime.nodeExecutable, check) || !await trustedFile(runtime.cliScript, check)) return undefined;
-    return [runtime.nodeExecutable, runtime.cliScript];
+    if (runtime.protocolVersion !== OPENCODE_HOOK_PROTOCOL_VERSION || runtime.packageVersion !== PACKAGE_VERSION) {
+      return { failure: 'version_mismatch' };
+    }
+    if (!await trustedFile(runtime.nodeExecutable, check) || !await trustedFile(runtime.cliScript, check)) {
+      return { failure: 'cli_unavailable' };
+    }
+    if (!await packageIdentityMatches(runtime.cliScript, read)) return { failure: 'version_mismatch' };
+    return { argv: [runtime.nodeExecutable, runtime.cliScript] };
   }
-
-  const env = dependencies.env ?? process.env;
-  const legacy = boundedString(env.KIOKUKO_BIN, 4_096);
-  if (legacy !== undefined && await trustedFile(legacy, check)) return [legacy];
 
   const nodeExecutable = process.execPath;
   const cliScript = packageOwnedCli();
-  if (!await trustedFile(nodeExecutable, check) || !await trustedFile(cliScript, check)) return undefined;
-  return [nodeExecutable, cliScript];
+  if (!await trustedFile(nodeExecutable, check) || !await trustedFile(cliScript, check)) return { failure: 'cli_unavailable' };
+  if (!await packageIdentityMatches(cliScript, read)) return { failure: 'version_mismatch' };
+  return { argv: [nodeExecutable, cliScript] };
 }
 
 async function readBounded(stream: ReadableStream<Uint8Array>): Promise<string> {
@@ -147,8 +164,9 @@ async function settleChild(child: BunChild): Promise<void> {
 }
 
 function decisionFromOutput(value: unknown): HookDecision {
-  const response = parseOpenCodeHookResponse(value);
-  if (response === undefined) return { kind: 'failure', retryable: false, reason: 'invalid_response' };
+  const parsed = inspectOpenCodeHookResponse(value);
+  if (!parsed.ok) return { kind: 'failure', retryable: false, reason: parsed.reason };
+  const response = parsed.value;
   if (response.disposition === 'continue') {
     if (response.reason === null || response.reason.length === 0 || findSecretInValue(response.reason) !== undefined) {
       return { kind: 'failure', retryable: false, reason: 'unsafe_continuation' };
@@ -178,6 +196,27 @@ function decisionFromOutput(value: unknown): HookDecision {
   }
 }
 
+function abortRace(signal: AbortSignal | undefined, child?: BunChild): {
+  promise: Promise<never>;
+  cleanup(): void;
+} | undefined {
+  if (signal === undefined) return undefined;
+  let abort = (): void => undefined;
+  const promise = new Promise<never>((_, reject) => {
+    abort = (): void => {
+      try { child?.kill(); } catch { /* cleanup is best-effort after cancellation */ }
+      reject(new Error('cancelled'));
+    };
+    if (signal.aborted) abort();
+    else signal.addEventListener('abort', abort, { once: true });
+  });
+  return { promise, cleanup: () => signal.removeEventListener('abort', abort) };
+}
+
+function isAborted(signal: AbortSignal | undefined): boolean {
+  return signal?.aborted === true;
+}
+
 /** Run the OpenCode hook through one argv-only, time-bounded subprocess. */
 export async function runKiokukoHook(
   input: HookEffectInput,
@@ -190,13 +229,16 @@ export async function runKiokukoHook(
     || findSecretInValue({ sessionId, terminalMessageId, cwd }) !== undefined) {
     return { kind: 'failure', retryable: false, reason: 'unsafe_continuation' };
   }
+  if (isAborted(dependencies.signal)) return { kind: 'failure', retryable: true, reason: 'cancelled' };
   if (dependencies.runtimeFailure !== undefined) {
     return { kind: 'failure', retryable: false, reason: dependencies.runtimeFailure };
   }
   const spawn = dependencies.spawn ?? runtimeSpawn();
   if (spawn === undefined) return { kind: 'failure', retryable: true, reason: 'runtime_unavailable' };
   const invocation = await trustedInvocation(dependencies);
-  if (invocation === undefined) return { kind: 'failure', retryable: true, reason: 'cli_unavailable' };
+  if (invocation.argv === undefined) {
+    return { kind: 'failure', retryable: invocation.failure !== 'version_mismatch', reason: invocation.failure ?? 'cli_unavailable' };
+  }
   const payload = JSON.stringify({
     protocolVersion: OPENCODE_HOOK_PROTOCOL_VERSION,
     packageVersion: PACKAGE_VERSION,
@@ -204,16 +246,26 @@ export async function runKiokukoHook(
     terminalMessageId,
     cwd,
   });
-  let child: BunChild;
+  let child: BunChild | undefined;
   try {
-    child = spawn([...invocation, 'enno', 'hook', '--client', 'opencode', '--input-json', '-'], {
+    const spawned = spawn([...invocation.argv, 'enno', 'hook', '--client', 'opencode', '--input-json', '-'], {
       stdin: 'pipe', stdout: 'pipe', stderr: 'pipe', cwd,
     });
-    await child.stdin.write(payload);
-    await child.stdin.end();
+    child = spawned;
+    const write = Promise.resolve(spawned.stdin.write(payload)).then(() => spawned.stdin.end());
+    const cancellation = abortRace(dependencies.signal, spawned);
+    try {
+      await (cancellation === undefined ? write : Promise.race([write, cancellation.promise]));
+    } finally {
+      cancellation?.cleanup();
+    }
   } catch {
+    try { child?.kill(); } catch { /* preserve the public spawn failure */ }
+    if (child !== undefined) await settleChild(child);
+    if (isAborted(dependencies.signal)) return { kind: 'failure', retryable: true, reason: 'cancelled' };
     return { kind: 'failure', retryable: true, reason: 'spawn_failed' };
   }
+  if (child === undefined) return { kind: 'failure', retryable: true, reason: 'spawn_failed' };
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const stdout = readBounded(child.stdout);
@@ -223,12 +275,19 @@ export async function runKiokukoHook(
       timer = setTimeout(() => {
         child.kill();
         reject(new Error('timeout'));
-      }, KIOKUKO_HOOK_TIMEOUT_MS);
+      }, dependencies.timeoutMs ?? KIOKUKO_HOOK_TIMEOUT_MS);
     });
-    const [output, , code] = await Promise.race([
-      Promise.all([stdout, stderr, exitCode]),
-      timeout,
-    ]) as [string, string, number];
+    const work = Promise.all([stdout, stderr, exitCode]);
+    const cancellation = abortRace(dependencies.signal, child);
+    let settled;
+    try {
+      settled = await Promise.race(
+        cancellation === undefined ? [work, timeout] : [work, timeout, cancellation.promise],
+      );
+    } finally {
+      cancellation?.cleanup();
+    }
+    const [output, , code] = settled as [string, string, number];
     if (code !== 0) return { kind: 'failure', retryable: true, reason: 'hook_failed' };
     try {
       return decisionFromOutput(JSON.parse(output));
@@ -236,7 +295,9 @@ export async function runKiokukoHook(
       return { kind: 'failure', retryable: false, reason: 'invalid_response' };
     }
   } catch (error) {
+    try { child.kill(); } catch { /* the bounded settle below remains authoritative */ }
     if (error instanceof Error && error.message === 'timeout') return { kind: 'failure', retryable: true, reason: 'timeout' };
+    if (error instanceof Error && error.message === 'cancelled') return { kind: 'failure', retryable: true, reason: 'cancelled' };
     return { kind: 'failure', retryable: true, reason: 'hook_failed' };
   } finally {
     if (timer !== undefined) clearTimeout(timer);

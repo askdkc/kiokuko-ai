@@ -51,7 +51,7 @@ kiokuko-ai embeddings status --json
 ```
 
 `--replace`は別のembedding profileから切り替える指定です。`--dry-run`はdownloadと変更を行わず、`--json`は自動化向けで
-unmanaged MCP identityをfail closedします。
+unmanaged MCP identityをfail closedします。dry-run以外ではoptional runtimeの確認・導入前にsetup lockを取得するため、複数のsetup processがpackage導入やclient・database変更を並行実行しません。
 
 ## Web UIとclient
 

@@ -24,6 +24,10 @@ execution lease; expired leases can be reclaimed safely. Ambiguous active runs a
 not rerouted. Before OpenCode compacts an active session, the plugin adds the latest
 successful exact run identity, revision, route epoch, and execution lease to the
 compaction context so automatic continuation does not have to reconstruct them.
+The plugin revalidates root-session, directory, and completed-terminal evidence,
+single-flights each session, and confirms deterministic continuation prompts by
+messages read-back. API acceptance alone is not reported as delivery, and the
+read-back also prevents duplicate delivery after plugin reload.
 
 Final Review first runs approved verifiers with shell disabled and repository-relative
 paths. Evidence is bound to the contract revision, mutation revision, verifier

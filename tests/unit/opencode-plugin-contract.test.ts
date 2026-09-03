@@ -7,7 +7,10 @@ import { PACKAGE_VERSION } from '../../src/package-version.js';
 
 test('OpenCode plugin entrypoint exposes a loadable named plugin', async () => {
   const hooks = await KiokukoPlugin({
-    client: {} as never,
+    client: {
+      session: { list: async () => ({ data: [] }), status: async () => ({ data: {} }) },
+      app: { log: async () => ({ data: true }) },
+    } as never,
     project: {} as never,
     directory: '/repo',
     worktree: '/repo',
@@ -25,6 +28,7 @@ test('OpenCode plugin entrypoint exposes a loadable named plugin', async () => {
   assert.equal(typeof hooks.event, 'function');
   assert.equal(typeof hooks['tool.execute.after'], 'function');
   assert.equal(typeof hooks['experimental.session.compacting'], 'function');
+  await hooks.dispose?.();
 });
 
 test('package boundary points OpenCode loader at the plugin dist entrypoint and keeps the CLI bin', async () => {

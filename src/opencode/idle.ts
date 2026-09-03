@@ -10,9 +10,10 @@ import {
   type HookEffectDependencies,
   type OpenCodeRuntimeInvocation,
 } from './hook-effect.js';
-import { OpenCodeIdleState, MAX_IDLE_RETRIES } from './idle-state.js';
+import { MAX_IDLE_ENTRIES, OpenCodeIdleState } from './idle-state.js';
 
 type OpenCodeClient = PluginInput['client'];
+export const KIOKUKO_OPENCODE_API_TIMEOUT_MS = 10_000;
 
 interface IdleMessage {
   info?: { id?: unknown };
@@ -25,6 +26,10 @@ export interface IdleContinuationDependencies {
   reconciliationState?: OpenCodeIdleReconciliationState;
   runtime?: OpenCodeRuntimeInvocation;
   runtimeFailure?: HookFailureReason;
+  flights?: OpenCodeSessionFlights;
+  signal?: AbortSignal;
+  active?: () => boolean;
+  apiTimeoutMs?: number;
 }
 
 export interface OpenCodeIdleReconciliationState {
@@ -53,7 +58,8 @@ function terminalId(messages: unknown): string | undefined {
   if (!Array.isArray(messages) || messages.length === 0) return undefined;
   const last = messages[messages.length - 1] as IdleMessage | undefined;
   const id = last?.info?.id;
-  return typeof id === 'string' && id.length > 0 && id.length <= 256 ? id : undefined;
+  return completedAssistantMessage(last)
+    && typeof id === 'string' && id.length > 0 && id.length <= 256 ? id : undefined;
 }
 
 function containsMessage(messages: unknown, messageId: string): boolean {
@@ -61,15 +67,58 @@ function containsMessage(messages: unknown, messageId: string): boolean {
   return messages.some((message) => eventObject(eventObject(message)?.info)?.id === messageId);
 }
 
-function promptMessageId(sessionId: string, terminalMessageId: string): string {
+export function openCodeIdleKey(directory: string, sessionId: string, terminalMessageId: string): string {
+  return JSON.stringify([directory, sessionId, terminalMessageId]);
+}
+
+function sessionFlightKey(directory: string, sessionId: string): string {
+  return JSON.stringify([directory, sessionId]);
+}
+
+function promptMessageId(directory: string, sessionId: string, terminalMessageId: string): string {
   const digest = createHash('sha256')
     .update('kiokuko-opencode-prompt-v1\0', 'utf8')
+    .update(directory, 'utf8')
+    .update('\0', 'utf8')
     .update(sessionId, 'utf8')
     .update('\0', 'utf8')
     .update(terminalMessageId, 'utf8')
     .digest('hex')
     .slice(0, 32);
   return `msg_kiokuko_${digest}`;
+}
+
+/** Aggregate work per repository/session while allowing unrelated sessions to proceed in parallel. */
+export class OpenCodeSessionFlights {
+  private readonly tails = new Map<string, Promise<void>>();
+  private readonly exact = new Map<string, Promise<void>>();
+
+  run(sessionKey: string, logicalKey: string, operation: () => Promise<void>): Promise<void> {
+    const exactKey = JSON.stringify([sessionKey, logicalKey]);
+    const existing = this.exact.get(exactKey);
+    if (existing !== undefined) return existing;
+    const predecessor = this.tails.get(sessionKey) ?? Promise.resolve();
+    const current = predecessor.catch(() => undefined).then(operation).finally(() => {
+      if (this.exact.get(exactKey) === current) this.exact.delete(exactKey);
+      if (this.tails.get(sessionKey) === current) this.tails.delete(sessionKey);
+    });
+    this.exact.set(exactKey, current);
+    this.tails.set(sessionKey, current);
+    return current;
+  }
+}
+
+function isActive(dependencies: IdleContinuationDependencies): boolean {
+  return dependencies.signal?.aborted !== true && dependencies.active?.() !== false;
+}
+
+function requestSignal(dependencies: IdleContinuationDependencies): { signal?: AbortSignal } {
+  const timeout = AbortSignal.timeout(dependencies.apiTimeoutMs ?? KIOKUKO_OPENCODE_API_TIMEOUT_MS);
+  return {
+    signal: dependencies.signal === undefined
+      ? timeout
+      : AbortSignal.any([dependencies.signal, timeout]),
+  };
 }
 
 async function safeLog(
@@ -93,7 +142,17 @@ function hookDependencies(dependencies: IdleContinuationDependencies): HookEffec
   return {
     ...(dependencies.runtime === undefined ? {} : { runtime: dependencies.runtime }),
     ...(dependencies.runtimeFailure === undefined ? {} : { runtimeFailure: dependencies.runtimeFailure }),
+    ...(dependencies.signal === undefined ? {} : { signal: dependencies.signal }),
   };
+}
+
+async function readSessionMessages(
+  client: OpenCodeClient,
+  sessionId: string,
+  dependencies: IdleContinuationDependencies,
+): Promise<unknown> {
+  const messages = await client.session.messages({ path: { id: sessionId }, ...requestSignal(dependencies) });
+  return responseData(messages);
 }
 
 async function sendPendingPrompt(
@@ -103,85 +162,99 @@ async function sendPendingPrompt(
   state: OpenCodeIdleState,
   dependencies: IdleContinuationDependencies,
 ): Promise<void> {
-  const pending = state.markPromptAttempt(key);
-  if (pending === undefined) return;
+  const pending = state.claimPrompt(key);
+  if (pending === undefined || !isActive(dependencies)) return;
+  let preflightRead = false;
+  try {
+    const messages = await readSessionMessages(client, sessionId, dependencies);
+    if (!isActive(dependencies)) return;
+    preflightRead = true;
+    if (containsMessage(messages, pending.messageId)) {
+      state.markCompleted(key, 'reconciled', { state: 'prompt_in_flight', messageId: pending.messageId });
+      await safeLog(dependencies.log, 'OpenCode continuation reconciled', 'prompt_reconciled');
+      return;
+    }
+  } catch {
+    if (!isActive(dependencies)) return;
+  }
+  if (!preflightRead && pending.deliveryAttempts > 0) {
+    state.markPromptUnconfirmed(key, pending);
+    await safeLog(dependencies.log, 'OpenCode continuation prompt read-back was unavailable', 'prompt_readback_unavailable');
+    return;
+  }
+  const attempted = state.markPromptAttempt(key, pending);
+  if (attempted === undefined || !isActive(dependencies)) return;
   try {
     await client.session.prompt({
       path: { id: sessionId },
       body: { messageID: pending.messageId, parts: [{ type: 'text', text: pending.text }] },
+      ...requestSignal(dependencies),
     });
-    state.markCompleted(key, 'continued');
   } catch {
-    try {
-      const messages = await client.session.messages({ path: { id: sessionId } });
-      if (containsMessage((messages as { data?: unknown }).data, pending.messageId)) {
-        state.markCompleted(key, 'reconciled');
-        await safeLog(dependencies.log, 'OpenCode continuation reconciled', 'prompt_reconciled');
-        return;
-      }
-    } catch {
-      // Keep the pending prompt for an event-driven retry.
+    // An error is ambiguous: the host may still have accepted the message.
+  }
+  if (!isActive(dependencies)) return;
+  try {
+    const messages = await readSessionMessages(client, sessionId, dependencies);
+    if (!isActive(dependencies)) return;
+    if (containsMessage(messages, attempted.messageId)) {
+      state.markCompleted(key, 'continued', { state: 'prompt_in_flight', messageId: attempted.messageId });
+      return;
     }
-    await safeLog(dependencies.log, 'OpenCode continuation prompt was not confirmed', 'prompt_not_confirmed');
-    if (pending.promptAttempts >= MAX_IDLE_RETRIES) {
-      state.markQuarantined(key, 'prompt_retry_exhausted');
-      await safeLog(dependencies.log, 'OpenCode continuation prompt retry exhausted', 'prompt_retry_exhausted', pending.promptAttempts);
-    }
+  } catch {
+    // Keep the prompt pending; a later retry must read back before resending.
+  }
+  state.markPromptUnconfirmed(key, attempted);
+  await safeLog(dependencies.log, 'OpenCode continuation prompt was not confirmed', 'prompt_not_confirmed');
+  if (state.get(key)?.state === 'quarantined') {
+    await safeLog(dependencies.log, 'OpenCode continuation prompt retry exhausted', 'prompt_retry_exhausted', attempted.deliveryAttempts);
   }
 }
 
 function handleDecision(
   decision: HookDecision,
   key: string,
+  directory: string,
+  sessionId: string,
+  terminalMessageId: string,
+  hookAttempts: number,
   state: OpenCodeIdleState,
   dependencies: IdleContinuationDependencies,
 ): Promise<void> | undefined {
   if (decision.kind === 'continue') {
-    const current = state.get(key);
-    if (current?.state !== 'in_flight') return undefined;
-    const [sessionId, terminalMessageId] = key.split('\0', 2);
-    if (sessionId === undefined || terminalMessageId === undefined) return undefined;
-    state.markPendingPrompt(key, promptMessageId(sessionId, terminalMessageId), decision.text);
+    state.markPendingPrompt(key, hookAttempts, promptMessageId(directory, sessionId, terminalMessageId), decision.text);
     return undefined;
   }
   if (decision.kind === 'stop') {
-    state.markCompleted(key, 'stopped');
+    state.markCompleted(key, 'stopped', { state: 'in_flight', hookAttempts });
     return safeLog(dependencies.log, 'OpenCode continuation stopped', decision.reason);
   }
   if (decision.retryable) {
-    const current = state.get(key);
-    const attempts = current?.state === 'in_flight' ? current.attempts : MAX_IDLE_RETRIES;
-    state.markRetryableFailure(key, attempts, decision.reason);
+    state.markHookFailure(key, hookAttempts, decision.reason);
     return safeLog(
       dependencies.log,
       'OpenCode continuation failed open',
-      attempts >= MAX_IDLE_RETRIES ? 'retry_exhausted' : decision.reason,
-      attempts,
+      state.get(key)?.state === 'quarantined' ? 'retry_exhausted' : decision.reason,
+      hookAttempts,
     );
   }
-  state.markQuarantined(key, decision.reason);
+  state.markHookQuarantined(key, hookAttempts, decision.reason);
   return safeLog(dependencies.log, 'OpenCode continuation quarantined', decision.reason);
 }
 
-/** Handle one normalized OpenCode session.idle lifecycle event. */
-export async function handleOpenCodeIdle(
+async function handleNormalizedOpenCodeIdle(
   client: OpenCodeClient,
   directory: string,
   event: unknown,
-  dependencies: IdleContinuationDependencies = {},
+  sessionId: string,
+  dependencies: IdleContinuationDependencies,
 ): Promise<void> {
   const state = dependencies.state ?? new OpenCodeIdleState();
-  let envelope;
-  try {
-    envelope = normalizeOpenCodeEvent({ event, directory });
-  } catch {
-    await safeLog(dependencies.log, 'OpenCode idle event ignored', 'invalid_event');
-    return;
-  }
-  if (envelope.kind !== 'session.idle') return;
-  const sessionId = envelope.sessionId;
+  if (!isActive(dependencies)) return;
   const requestedTerminal = eventMessageId(event);
-  const provisionalKey = requestedTerminal === undefined ? undefined : `${sessionId}\0${requestedTerminal}`;
+  const provisionalKey = requestedTerminal === undefined
+    ? undefined
+    : openCodeIdleKey(directory, sessionId, requestedTerminal);
   const provisional = provisionalKey === undefined ? undefined : state.begin(provisionalKey);
   if (provisional?.kind === 'ignored') return;
   if (provisional?.kind === 'capacity_exceeded') {
@@ -189,28 +262,46 @@ export async function handleOpenCodeIdle(
     return;
   }
   try {
-    const session = await client.session.get({ path: { id: sessionId } });
-    const sessionData = (session as { data?: { id?: string; parentID?: string } }).data;
+    const session = await client.session.get({ path: { id: sessionId }, ...requestSignal(dependencies) });
+    if (!isActive(dependencies)) return;
+    const sessionData = (session as { data?: { id?: string; parentID?: string; directory?: string } }).data;
     if (sessionData?.parentID !== undefined) {
-      if (provisionalKey !== undefined && provisional?.kind === 'run_hook') state.release(provisionalKey);
+      if (provisionalKey !== undefined && provisional?.kind === 'run_hook') {
+        state.release(provisionalKey, provisional.hookAttempts);
+      }
       await safeLog(dependencies.log, 'OpenCode child session ignored', 'child_session');
       return;
     }
-    if (sessionData === undefined) throw new Error('session_lookup_failed');
-    const messages = await client.session.messages({ path: { id: sessionId } });
-    const messageData = (messages as { data?: unknown }).data;
+    if (sessionData?.id !== sessionId || sessionData.directory !== directory) {
+      if (provisionalKey !== undefined && provisional?.kind === 'run_hook') {
+        state.release(provisionalKey, provisional.hookAttempts);
+      }
+      await safeLog(dependencies.log, 'OpenCode session identity was inconsistent', 'session_identity_mismatch');
+      return;
+    }
+    const messageData = await readSessionMessages(client, sessionId, dependencies);
+    if (!isActive(dependencies)) return;
+    if (requestedTerminal !== undefined
+      && containsMessage(messageData, promptMessageId(directory, sessionId, requestedTerminal))) {
+      state.markCompleted(provisionalKey!, 'reconciled');
+      return;
+    }
     const terminal = terminalId(messageData);
     if (terminal === undefined) {
-      if (provisionalKey !== undefined && provisional?.kind === 'run_hook') state.release(provisionalKey);
+      if (provisionalKey !== undefined && provisional?.kind === 'run_hook') {
+        state.release(provisionalKey, provisional.hookAttempts);
+      }
       await safeLog(dependencies.log, 'OpenCode idle event ignored', 'terminal_evidence_missing');
       return;
     }
     if (requestedTerminal !== undefined && requestedTerminal !== terminal) {
-      if (provisionalKey !== undefined && provisional?.kind === 'run_hook') state.release(provisionalKey);
+      if (provisionalKey !== undefined && provisional?.kind === 'run_hook') {
+        state.release(provisionalKey, provisional.hookAttempts);
+      }
       await safeLog(dependencies.log, 'OpenCode stale idle event ignored', 'stale_event');
       return;
     }
-    const key = `${sessionId}\0${terminal}`;
+    const key = openCodeIdleKey(directory, sessionId, terminal);
     const started = provisional ?? state.begin(key);
     if (started.kind === 'ignored') return;
     if (started.kind === 'capacity_exceeded') {
@@ -228,16 +319,41 @@ export async function handleOpenCodeIdle(
     } catch {
       decision = { kind: 'failure', retryable: true, reason: 'hook_failed' };
     }
-    await handleDecision(decision, key, state, dependencies);
-    if (decision.kind === 'continue') {
-      await sendPendingPrompt(client, sessionId, key, state, dependencies);
-    }
+    if (!isActive(dependencies)) return;
+    await handleDecision(decision, key, directory, sessionId, terminal, started.hookAttempts, state, dependencies);
+    if (decision.kind === 'continue') await sendPendingPrompt(client, sessionId, key, state, dependencies);
   } catch {
+    if (!isActive(dependencies)) return;
     if (provisionalKey !== undefined && provisional?.kind === 'run_hook') {
-      state.markRetryableFailure(provisionalKey, provisional.attempts, 'lifecycle_error');
+      state.markHookFailure(provisionalKey, provisional.hookAttempts, 'lifecycle_error');
     }
     await safeLog(dependencies.log, 'OpenCode continuation failed open', 'lifecycle_error');
   }
+}
+
+/** Handle one normalized OpenCode session.idle lifecycle event. */
+export async function handleOpenCodeIdle(
+  client: OpenCodeClient,
+  directory: string,
+  event: unknown,
+  dependencies: IdleContinuationDependencies = {},
+): Promise<void> {
+  let envelope;
+  try {
+    envelope = normalizeOpenCodeEvent({ event, directory });
+  } catch {
+    await safeLog(dependencies.log, 'OpenCode idle event ignored', 'invalid_event');
+    return;
+  }
+  if (envelope.kind !== 'session.idle') return;
+  const operation = () => handleNormalizedOpenCodeIdle(client, directory, event, envelope.sessionId, dependencies);
+  return dependencies.flights === undefined
+    ? operation()
+    : dependencies.flights.run(
+      sessionFlightKey(directory, envelope.sessionId),
+      eventMessageId(event) ?? envelope.eventIdentity,
+      operation,
+    );
 }
 
 function responseData(value: unknown): unknown {
@@ -270,9 +386,10 @@ export async function reconcileOpenCodeIdle(
   if (typeof sessionApi.list !== 'function' || typeof sessionApi.status !== 'function') return;
 
   const [sessionsResponse, statusesResponse] = await Promise.all([
-    sessionApi.list({ query: { directory } }),
-    sessionApi.status({ query: { directory } }),
+    sessionApi.list({ query: { directory }, ...requestSignal(dependencies) }),
+    sessionApi.status({ query: { directory }, ...requestSignal(dependencies) }),
   ]);
+  if (!isActive(dependencies)) return;
   const sessions = responseData(sessionsResponse);
   const statuses = responseData(statusesResponse);
   if (!Array.isArray(sessions)) return;
@@ -282,15 +399,22 @@ export async function reconcileOpenCodeIdle(
     const id = record?.id;
     if (record?.parentID !== undefined || record?.directory !== directory
       || typeof id !== 'string' || id.length === 0) continue;
+    if (rootSessions.size >= MAX_IDLE_ENTRIES) continue;
     const time = eventObject(record.time);
     const updated = typeof time?.updated === 'number' && Number.isSafeInteger(time.updated) ? time.updated : undefined;
     rootSessions.set(id, { updated });
   }
   const rootSessionIds = new Set(rootSessions.keys());
+  const reconciliationState = dependencies.reconciliationState ?? { sessionUpdates: new Map(), retrySessionIds: new Set<string>() };
+  for (const sessionId of reconciliationState.sessionUpdates.keys()) {
+    if (!rootSessionIds.has(sessionId)) reconciliationState.sessionUpdates.delete(sessionId);
+  }
+  for (const sessionId of reconciliationState.retrySessionIds) {
+    if (!rootSessionIds.has(sessionId)) reconciliationState.retrySessionIds.delete(sessionId);
+  }
   const statusEntries = eventObject(statuses);
   if (statusEntries === undefined) return;
   const statusSessionIds = new Set(Object.keys(statusEntries));
-  const reconciliationState = dependencies.reconciliationState ?? { sessionUpdates: new Map(), retrySessionIds: new Set<string>() };
   const changedSessionIds = new Set<string>();
   for (const [sessionId, session] of rootSessions) {
     if (session.updated === undefined) continue;
@@ -298,18 +422,19 @@ export async function reconcileOpenCodeIdle(
     reconciliationState.sessionUpdates.set(sessionId, session.updated);
   }
   const candidateSessionIds = statusSessionIds.size > 0
-    ? [...statusSessionIds]
+    ? [...statusSessionIds].filter((sessionId) => rootSessionIds.has(sessionId)).slice(0, MAX_IDLE_ENTRIES)
     : [...rootSessions.entries()]
       .filter(([sessionId]) => changedSessionIds.has(sessionId) || reconciliationState.retrySessionIds.has(sessionId))
       .sort((left, right) => (right[1].updated ?? 0) - (left[1].updated ?? 0))
       .map(([sessionId]) => sessionId);
 
   for (const sessionId of candidateSessionIds) {
+    if (!isActive(dependencies)) return;
     const status = statusEntries[sessionId];
     let fallbackTerminal: string | undefined;
     if (!rootSessionIds.has(sessionId) || (statusSessionIds.size > 0 && eventObject(status)?.type !== 'idle')) continue;
     if (statusSessionIds.size === 0) {
-      const messagesResponse = await client.session.messages({ path: { id: sessionId } });
+      const messagesResponse = await client.session.messages({ path: { id: sessionId }, ...requestSignal(dependencies) });
       const messages = responseData(messagesResponse);
       if (!Array.isArray(messages) || !completedAssistantMessage(messages[messages.length - 1])) continue;
       fallbackTerminal = terminalId(messages);
@@ -320,8 +445,8 @@ export async function reconcileOpenCodeIdle(
       properties: { sessionID: sessionId, ...(fallbackTerminal === undefined ? {} : { messageID: fallbackTerminal }) },
     }, dependencies);
     if (fallbackTerminal !== undefined && dependencies.reconciliationState !== undefined) {
-      const state = dependencies.state?.get(`${sessionId}\0${fallbackTerminal}`);
-      if (state?.state === 'retryable_failure' || state?.state === 'pending_prompt') {
+      const state = dependencies.state?.get(openCodeIdleKey(directory, sessionId, fallbackTerminal));
+      if (state?.state === 'retryable_failure' || state?.state === 'pending_prompt' || state?.state === 'prompt_in_flight') {
         dependencies.reconciliationState.retrySessionIds.add(sessionId);
       } else {
         dependencies.reconciliationState.retrySessionIds.delete(sessionId);
