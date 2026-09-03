@@ -2,6 +2,7 @@ import type { Plugin } from '@opencode-ai/plugin';
 import { createOpenCodeIdleHandler, reconcileOpenCodeIdle, type IdleContinuationDependencies } from './idle.js';
 import { OpenCodeIdleState } from './idle-state.js';
 import { parseOpenCodePluginOptions } from './runtime-invocation.js';
+import { OpenCodeCompactionState } from './compaction.js';
 
 /**
  * OpenCode's plugin entrypoint.
@@ -12,6 +13,7 @@ import { parseOpenCodePluginOptions } from './runtime-invocation.js';
 export const KiokukoPlugin: Plugin = async ({ client, directory }, options) => {
   const runtime = options === undefined ? undefined : parseOpenCodePluginOptions(options);
   const state = new OpenCodeIdleState();
+  const compactionState = new OpenCodeCompactionState();
   const reconciliationState = { sessionUpdates: new Map<string, number>(), retrySessionIds: new Set<string>() };
   const idleDependencies: IdleContinuationDependencies = {
     state,
@@ -33,6 +35,12 @@ export const KiokukoPlugin: Plugin = async ({ client, directory }, options) => {
   void reconcile();
   return {
     event,
+    'tool.execute.after': async ({ tool, sessionID }, output) => {
+      compactionState.observe(sessionID, tool, output.output);
+    },
+    'experimental.session.compacting': async ({ sessionID }, output) => {
+      compactionState.appendContext(sessionID, output.context);
+    },
     dispose: async () => {
       clearInterval(timer);
     },

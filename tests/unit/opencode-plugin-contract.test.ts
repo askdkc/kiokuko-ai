@@ -15,9 +15,16 @@ test('OpenCode plugin entrypoint exposes a loadable named plugin', async () => {
     serverUrl: new URL('http://127.0.0.1:4096'),
     $: {} as never,
   });
-  assert.deepEqual(Object.keys(hooks).sort(), ['dispose', 'event']);
+  assert.deepEqual(Object.keys(hooks).sort(), [
+    'dispose',
+    'event',
+    'experimental.session.compacting',
+    'tool.execute.after',
+  ]);
   assert.equal(typeof hooks.dispose, 'function');
   assert.equal(typeof hooks.event, 'function');
+  assert.equal(typeof hooks['tool.execute.after'], 'function');
+  assert.equal(typeof hooks['experimental.session.compacting'], 'function');
 });
 
 test('package boundary points OpenCode loader at the plugin dist entrypoint and keeps the CLI bin', async () => {

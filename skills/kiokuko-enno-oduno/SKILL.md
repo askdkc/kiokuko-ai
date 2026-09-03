@@ -102,6 +102,8 @@ Retain and send the exact values returned for the run:
 
 Prefer the returned opaque resume token over reconstructing full identity. It is short-lived and binds the run, canonical repository, client kind, client session, and route epoch. Do not persist it externally or reuse it after rerouting. A route change increments the epoch and invalidates prior tokens. An active WorkUnit execution lease blocks rerouting until release or expiry.
 
+Before OpenCode compacts an active session, the Kiokuko plugin adds the latest successful run ID, exact workspace ID, orchestration ID, contract revision, route epoch, and execution lease to the compaction context. Preserve those supplied values verbatim in the summary. Never replace the workspace ID with a filesystem path or guess a missing revision. Preserve a newer same-session resume token from the conversation when one exists.
+
 Treat a host client session ID as optional routing metadata, not authorization ownership. Local processes running as the same OS user with access to the canonical repository are trusted to continue its run; do not add PID, process-ancestry, executable, or signing proof. If the current token or route does not match, let the supported adapter atomically reroute only the single unambiguous active run in the canonical repository. Never select a repository-wide latest run or guess between multiple active runs. Reaching one session's continuation limit stops only that session and leaves the run active for another local project client. Reject a mismatched or stale token, lease, epoch, run, workspace, orchestration identity, revision, receipt, or terminal state.
 
 ## User confirmation

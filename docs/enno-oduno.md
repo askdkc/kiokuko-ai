@@ -21,7 +21,9 @@ If the plan environment is missing or changed, recovery pauses before discovery,
 plan persistence, or implementation. The user chooses continue, review, restart, or
 cancel. Continuation uses a short-lived route-epoch-bound resume token and one-owner
 execution lease; expired leases can be reclaimed safely. Ambiguous active runs are
-not rerouted.
+not rerouted. Before OpenCode compacts an active session, the plugin adds the latest
+successful exact run identity, revision, route epoch, and execution lease to the
+compaction context so automatic continuation does not have to reconstruct them.
 
 Final Review first runs approved verifiers with shell disabled and repository-relative
 paths. Evidence is bound to the contract revision, mutation revision, verifier
