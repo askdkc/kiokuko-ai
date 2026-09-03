@@ -1,4 +1,4 @@
--- Kiokuko v0.2.0-alpha.1 initial schema; migration metadata is created by the runtime.
+-- Kiokuko v0.1.6 initial schema; migration metadata is created by the runtime.
 
 PRAGMA application_id = 0x4B494F4B;
 PRAGMA user_version = 1;
@@ -1331,7 +1331,7 @@ BEGIN
           <> (SELECT workspace FROM akinator_sessions WHERE id = NEW.session_id);
 END;
 
--- Initial singleton state for a fresh v0.2.0-alpha.1 installation.
+-- Initial singleton state for a fresh v0.1.6 installation.
 INSERT INTO external_skill_generation_clock (singleton, value)
 VALUES (1, 0);
 

@@ -1,6 +1,6 @@
 # Database
 
-`v0.2.0-alpha.1` intentionally resets the alpha database contract. It has one
+`v0.1.6` intentionally resets the database contract. It has one
 fresh schema migration: `migrations/001_initial.sql`, with `user_version = 1`.
 
 An absent path or an empty SQLite file is initialized with that migration.
