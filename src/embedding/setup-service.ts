@@ -5,7 +5,7 @@ import { KiokukoError } from '../errors.js';
 import { readEntry } from '../memory/entries.js';
 import { buildCanonicalEmbeddingDocument, renderEmbeddingProviderInput } from './document.js';
 import { claimEmbeddingJobs, failEmbeddingJob, finalizeEmbeddingJob, listEmbeddingJobs } from './jobs.js';
-import { acquireEmbeddingSetupLock } from './setup-lock.js';
+import { acquireEmbeddingSetupLock, type EmbeddingSetupLock, withEmbeddingSetupLock } from './setup-lock.js';
 import { installEmbeddingModel, type InstalledModel } from './model-installation.js';
 import { LOCAL_SMALL_PRESET } from './presets/local-small.js';
 import { createLocalEmbeddingProfile } from './profile.js';
@@ -43,6 +43,7 @@ export interface EmbeddingSetupOptions extends PathEnvironment {
   readonly backendId?: string;
   readonly now?: () => string;
   readonly onProgress?: (progress: ModelDownloadProgress) => void;
+  readonly setupLock?: EmbeddingSetupLock;
 }
 
 function now(options: EmbeddingSetupOptions): string {
@@ -170,8 +171,9 @@ export async function runEmbeddingSetup(
     };
   }
   if (!input.confirmed) throw new KiokukoError('USAGE_ERROR', 'Embedding setup requires explicit confirmation');
-  const lock = await acquireEmbeddingSetupLock(options);
-  try {
+  const ownsLock = options.setupLock === undefined;
+  const lock = options.setupLock ?? await acquireEmbeddingSetupLock(options);
+  const execute = async (): Promise<EmbeddingSetupResult> => {
     const finalDirectory = (await import('../config/paths.js')).getEmbeddingPresetDirectory(LOCAL_SMALL_PRESET.id, LOCAL_SMALL_PRESET.revision, options);
     if (input.offline && !(await installationExists(finalDirectory))) throw new KiokukoError('SERVICE_UNAVAILABLE', 'The pinned local embedding model is not installed for offline setup');
     const installed = await (options.installer ?? installEmbeddingModel)(LOCAL_SMALL_PRESET, {
@@ -218,10 +220,9 @@ export async function runEmbeddingSetup(
       profile: { profileId: profile.profileId, generation: activation.generation, activated: activation.activated },
       embeddings: { eligible, completed: drain.completed, failed: drain.failed, blocked: drain.blocked, remaining: drain.remaining },
       backend: options.backendId ?? 'javascript',
-       semanticEnabled: finalState === 'ready',
+      semanticEnabled: finalState === 'ready',
       restartRequired: true,
     };
-  } finally {
-    await lock.release();
-  }
+  };
+  return ownsLock ? withEmbeddingSetupLock(lock, execute) : execute();
 }

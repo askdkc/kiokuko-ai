@@ -36,6 +36,7 @@ function command(database: ReturnType<typeof openConnection>, output: string[], 
   readonly setupInput?: NodeJS.ReadableStream;
   readonly setupOutput?: NodeJS.WritableStream;
   readonly setupGlobalClients?: (options: SetupOptions) => Promise<Pick<SetupResult, 'clients' | 'projectAgentFiles'>>;
+  readonly acquireSetupLock?: EmbeddingsCommandDependencies['acquireSetupLock'];
 } = {}): Command {
   const cli = new Command();
   cli.exitOverride();
@@ -50,6 +51,7 @@ function command(database: ReturnType<typeof openConnection>, output: string[], 
     ...(options.pathEnvironment === undefined ? {} : { pathEnvironment: options.pathEnvironment }),
     ...(options.setupInput === undefined ? {} : { setupInput: options.setupInput }),
     ...(options.setupOutput === undefined ? {} : { setupOutput: options.setupOutput }),
+    ...(options.acquireSetupLock === undefined ? {} : { acquireSetupLock: options.acquireSetupLock }),
     setupGlobalClients: setup,
     output: (json, operation, data, message) => {
       output.push(json ? JSON.stringify({ operation, data }) : message);
@@ -77,6 +79,7 @@ test('embedding setup checks optional runtime before opening the database', asyn
       optionalRuntimeInstaller: async () => {
         throw new Error('installer failed');
       },
+      acquireSetupLock: async () => ({ path: '/test/setup.lock', release: async () => undefined }),
       output: (json, operation, data, message) => {
         output.push(json ? JSON.stringify({ operation, data }) : message);
       },
@@ -91,6 +94,40 @@ test('embedding setup checks optional runtime before opening the database', asyn
     assert.equal(databaseCalls, 0);
     assert.deepEqual(output, []);
   } finally {
+    database.close();
+  }
+});
+
+test('embedding setup lock serializes optional runtime installation before client or database mutation', async () => {
+  const database = await temporaryDatabase('embedding-cli-concurrent-runtime');
+  const dataDirectory = await mkdtemp(path.join(tmpdir(), 'kiokuko-embedding-cli-concurrent-data-'));
+  let installerCalls = 0;
+  let releaseInstaller!: () => void;
+  let installerStarted!: () => void;
+  const started = new Promise<void>((resolve) => { installerStarted = resolve; });
+  const gate = new Promise<void>((resolve) => { releaseInstaller = resolve; });
+  const options = {
+    pathEnvironment: { env: { KIOKUKO_DATA_DIR: dataDirectory } },
+    optionalRuntimeChecker: async () => { throw new Error('runtime missing'); },
+    optionalRuntimeInstaller: async () => {
+      installerCalls += 1;
+      installerStarted();
+      await gate;
+      throw new Error('fixture install failed');
+    },
+  };
+  try {
+    const first = command(database, [], options).parseAsync(['node', 'kiokuko-ai', 'embeddings', 'setup']);
+    await started;
+    await assert.rejects(
+      () => command(database, [], options).parseAsync(['node', 'kiokuko-ai', 'embeddings', 'setup']),
+      (error: unknown) => error instanceof KiokukoError && error.code === 'CONFLICT',
+    );
+    releaseInstaller();
+    await assert.rejects(first, (error: unknown) => error instanceof KiokukoError && error.code === 'SERVICE_UNAVAILABLE');
+    assert.equal(installerCalls, 1);
+  } finally {
+    releaseInstaller?.();
     database.close();
   }
 });

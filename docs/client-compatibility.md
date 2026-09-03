@@ -42,9 +42,17 @@ dry-run modes. Interactive setup asks before replacing it.
 
 ## Plugin hooks
 
-The npm plugin registers one OpenCode hook:
+The npm plugin uses OpenCode's event, tool-result, and compaction hooks. The
+`session.idle` event is evidence, not authority: the plugin re-reads the session
+and messages, excludes child sessions and other directories, and requires a
+completed assistant terminal before running the bounded Enno-Oduno gate.
 
-- `session.idle` runs the bounded Enno-Oduno continuation gate;
+Reconciliation covers a missing event stream. Work is single-flighted per
+repository/session while unrelated sessions remain parallel. Continuation prompts
+use a deterministic message ID; an API success is not considered delivered until
+the message appears in read-back. The same read-back is the durable restart receipt,
+so a plugin reload does not depend only on its in-memory state. Disposal stops new
+work, aborts supported SDK/subprocess operations, and drains callbacks.
 
 The plugin uses OpenCode's injected client and repository directory. It does not
 start a separate server, write configuration during a hook, or bypass MCP

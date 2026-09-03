@@ -2,77 +2,130 @@ export const MAX_IDLE_ENTRIES = 512;
 export const MAX_IDLE_RETRIES = 3;
 
 export type IdleEntry =
-  | { state: 'in_flight'; attempts: number }
-  | { state: 'retryable_failure'; attempts: number; reason: string }
-  | { state: 'pending_prompt'; messageId: string; text: string; promptAttempts: number }
+  | { state: 'in_flight'; hookAttempts: number }
+  | { state: 'retryable_failure'; hookAttempts: number; reason: string }
+  | { state: 'pending_prompt'; messageId: string; text: string; deliveryAttempts: number }
+  | { state: 'prompt_in_flight'; messageId: string; text: string; deliveryAttempts: number }
   | { state: 'completed'; outcome: 'continued' | 'stopped' | 'reconciled' }
   | { state: 'quarantined'; reason: string };
 
 export type IdleBeginResult =
-  | { kind: 'run_hook'; attempts: number }
-  | { kind: 'send_pending'; entry: Extract<IdleEntry, { state: 'pending_prompt' }> }
+  | { kind: 'run_hook'; hookAttempts: number }
+  | { kind: 'send_pending' }
   | { kind: 'ignored' }
   | { kind: 'capacity_exceeded' };
 
-/** Own one OpenCode plugin instance's lifecycle state and bounded replay policy. */
+export interface PromptClaim {
+  readonly messageId: string;
+  readonly text: string;
+  readonly deliveryAttempts: number;
+}
+
+/** Own one OpenCode plugin instance's lifecycle state and compare-and-set transitions. */
 export class OpenCodeIdleState {
   private readonly entries = new Map<string, IdleEntry>();
 
   begin(key: string): IdleBeginResult {
     const existing = this.entries.get(key);
-    if (existing?.state === 'in_flight') return { kind: 'ignored' };
+    if (existing?.state === 'in_flight' || existing?.state === 'prompt_in_flight') return { kind: 'ignored' };
     if (existing?.state === 'pending_prompt') {
-      if (existing.promptAttempts >= MAX_IDLE_RETRIES) {
+      if (existing.deliveryAttempts >= MAX_IDLE_RETRIES) {
         this.entries.set(key, { state: 'quarantined', reason: 'prompt_retry_exhausted' });
         return { kind: 'ignored' };
       }
-      return { kind: 'send_pending', entry: existing };
+      return { kind: 'send_pending' };
     }
     if (existing?.state === 'completed' || existing?.state === 'quarantined') return { kind: 'ignored' };
 
-    const attempts = existing?.state === 'retryable_failure' ? existing.attempts + 1 : 1;
+    const hookAttempts = existing?.state === 'retryable_failure' ? existing.hookAttempts + 1 : 1;
     if (existing === undefined && !this.reserveEntry()) return { kind: 'capacity_exceeded' };
-    this.entries.set(key, { state: 'in_flight', attempts });
-    return { kind: 'run_hook', attempts };
+    this.entries.set(key, { state: 'in_flight', hookAttempts });
+    return { kind: 'run_hook', hookAttempts };
   }
 
-  markRetryableFailure(key: string, attempts: number, reason: string): void {
-    if (attempts >= MAX_IDLE_RETRIES) {
+  markHookFailure(key: string, hookAttempts: number, reason: string): boolean {
+    const current = this.entries.get(key);
+    if (current?.state !== 'in_flight' || current.hookAttempts !== hookAttempts) return false;
+    if (hookAttempts >= MAX_IDLE_RETRIES) {
       this.entries.set(key, { state: 'quarantined', reason: 'retry_exhausted' });
-      return;
+      return true;
     }
-    this.entries.set(key, { state: 'retryable_failure', attempts, reason });
+    this.entries.set(key, { state: 'retryable_failure', hookAttempts, reason });
+    return true;
   }
 
-  markPendingPrompt(key: string, messageId: string, text: string): void {
+  markPendingPrompt(key: string, hookAttempts: number, messageId: string, text: string): boolean {
     const current = this.entries.get(key);
-    const promptAttempts = current?.state === 'pending_prompt' ? current.promptAttempts : 0;
-    this.entries.set(key, { state: 'pending_prompt', messageId, text, promptAttempts });
+    if (current?.state !== 'in_flight' || current.hookAttempts !== hookAttempts) return false;
+    this.entries.set(key, { state: 'pending_prompt', messageId, text, deliveryAttempts: 0 });
+    return true;
   }
 
-  markPromptAttempt(key: string): Extract<IdleEntry, { state: 'pending_prompt' }> | undefined {
+  claimPrompt(key: string): PromptClaim | undefined {
     const current = this.entries.get(key);
-    if (current?.state !== 'pending_prompt') return undefined;
-    const updated = { ...current, promptAttempts: current.promptAttempts + 1 };
-    this.entries.set(key, updated);
-    return updated;
+    if (current?.state !== 'pending_prompt' || current.deliveryAttempts >= MAX_IDLE_RETRIES) return undefined;
+    const claim: PromptClaim = {
+      messageId: current.messageId,
+      text: current.text,
+      deliveryAttempts: current.deliveryAttempts,
+    };
+    this.entries.set(key, { ...current, state: 'prompt_in_flight' });
+    return claim;
   }
 
-  markCompleted(key: string, outcome: Extract<IdleEntry, { state: 'completed' }>['outcome']): void {
+  markPromptAttempt(key: string, claim: PromptClaim): PromptClaim | undefined {
+    const current = this.entries.get(key);
+    if (current?.state !== 'prompt_in_flight' || current.messageId !== claim.messageId
+      || current.deliveryAttempts !== claim.deliveryAttempts) return undefined;
+    const attempted = { ...claim, deliveryAttempts: claim.deliveryAttempts + 1 };
+    this.entries.set(key, { state: 'prompt_in_flight', ...attempted });
+    return attempted;
+  }
+
+  markPromptUnconfirmed(key: string, claim: PromptClaim): boolean {
+    const current = this.entries.get(key);
+    if (current?.state !== 'prompt_in_flight' || current.messageId !== claim.messageId
+      || current.deliveryAttempts !== claim.deliveryAttempts) return false;
+    if (claim.deliveryAttempts >= MAX_IDLE_RETRIES) {
+      this.entries.set(key, { state: 'quarantined', reason: 'prompt_retry_exhausted' });
+      return true;
+    }
+    this.entries.set(key, { state: 'pending_prompt', ...claim });
+    return true;
+  }
+
+  markCompleted(
+    key: string,
+    outcome: Extract<IdleEntry, { state: 'completed' }>['outcome'],
+    expected?: { state: 'in_flight'; hookAttempts: number } | { state: 'prompt_in_flight'; messageId: string },
+  ): boolean {
+    const current = this.entries.get(key);
+    if (expected?.state === 'in_flight'
+      && (current?.state !== 'in_flight' || current.hookAttempts !== expected.hookAttempts)) return false;
+    if (expected?.state === 'prompt_in_flight'
+      && (current?.state !== 'prompt_in_flight' || current.messageId !== expected.messageId)) return false;
+    if (expected === undefined && current?.state === 'completed') return true;
     this.entries.set(key, { state: 'completed', outcome });
+    return true;
   }
 
-  markQuarantined(key: string, reason: string): void {
+  markHookQuarantined(key: string, hookAttempts: number, reason: string): boolean {
+    const current = this.entries.get(key);
+    if (current?.state !== 'in_flight' || current.hookAttempts !== hookAttempts) return false;
     this.entries.set(key, { state: 'quarantined', reason });
+    return true;
   }
 
   get(key: string): IdleEntry | undefined {
     return this.entries.get(key);
   }
 
-  /** Release a provisional claim when the host proves that the event is stale or a child session. */
-  release(key: string): void {
-    if (this.entries.get(key)?.state === 'in_flight') this.entries.delete(key);
+  /** Release only the exact provisional hook claim proved stale by the host. */
+  release(key: string, hookAttempts: number): boolean {
+    const current = this.entries.get(key);
+    if (current?.state !== 'in_flight' || current.hookAttempts !== hookAttempts) return false;
+    this.entries.delete(key);
+    return true;
   }
 
   private reserveEntry(): boolean {

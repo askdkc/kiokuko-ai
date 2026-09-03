@@ -20,6 +20,10 @@ kiokuko-ai skills refresh <skill-id>
 
 Web UIではmappingの確認・無効化だけを行い、install、script、MCP登録は行いません。
 
+## OpenCode境界
+
+OpenCodeの継続は`session.idle`を入口にしますが、eventだけを信頼せず、injected clientからroot session、repository directory、完了済みassistant terminalを再検証します。hook subprocessはpackage所有のNode/CLI identity、protocol/package version、終了状態、厳密な応答shape、secret不在を確認し、timeoutまたはdisposeでは停止します。prompt APIの完了だけを配送証拠にせず、決定的message IDがmessages read-backに現れた場合だけ配送済みとします。
+
 ## MCP extensionと公開エラー
 
 client extensionは成功・エラーMCP resultを検査・置換できるため、trusted computing baseの一部です。extensionが偽造できないoriginal-result identifierとmodified flagなしには、

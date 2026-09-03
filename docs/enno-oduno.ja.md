@@ -14,7 +14,8 @@ Zenkiは変更を責務と理由が1つのWorkUnitへ分割し、Gokiは承認�
 確認画面にはscope、除外、完了条件、Skill、expertise、command、timeoutを利用者の言語で表示します。内部IDやraw JSONは表示しません。
 
 plan環境が欠落・変更した場合、discovery、plan保存、実装の前に停止し、continue/review/restart/cancelを選びます。継続は短命のroute-epoch-bound resume tokenと
-単一ownerのexecution leaseを使い、期限切れleaseだけ安全に回収できます。曖昧なrunはrerouteしません。
+単一ownerのexecution leaseを使い、期限切れleaseだけ安全に回収できます。曖昧なrunはrerouteしません。OpenCodeがactive sessionをcompactionする前に、pluginは直近の成功した正確なrun identity、revision、route epoch、execution leaseをcompaction contextへ追加し、自動継続時の再構築や推測を防ぎます。
+pluginはroot session、directory、完了済みassistant terminalを再検証し、session単位でsingle-flightします。continuation promptは決定的message IDを使い、APIの成功だけでは配送済みにせずmessages read-backで確認します。このread-backはplugin reload後の重複配送も防ぎます。
 
 Final Reviewはshell無効・repository相対pathでverifierを実行し、contract/mutation revision、verifier仕様、repository stateにevidenceを束縛します。
 完全なpass evidenceだけを`enno_finish`が受理します。失敗時はGokiへ直接戻らず、Zenkiが新revisionで再計画します。受理後はread-only meditationで削除候補を記録するだけです。

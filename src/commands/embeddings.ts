@@ -23,6 +23,7 @@ import type {
 } from '../embedding/types.js';
 import { successEnvelope } from '../serialization/envelope.js';
 import { runEmbeddingSetup } from '../embedding/setup-service.js';
+import { acquireEmbeddingSetupLock, type EmbeddingSetupLock, withEmbeddingSetupLock } from '../embedding/setup-lock.js';
 import type { ModelDownloader } from '../embedding/model-download.js';
 import type { InstalledModel } from '../embedding/model-installation.js';
 import type { PathEnvironment } from '../config/paths.js';
@@ -127,6 +128,7 @@ export interface EmbeddingsCommandDependencies {
   readonly setupInput?: NodeJS.ReadableStream;
   readonly setupOutput?: NodeJS.WritableStream;
   readonly setupGlobalClients?: (options: SetupOptions) => Promise<Pick<SetupResult, 'clients' | 'projectAgentFiles'>>;
+  readonly acquireSetupLock?: (options?: PathEnvironment) => Promise<EmbeddingSetupLock>;
 }
 
 export async function checkOptionalRuntime(packageRoot = runningPackageRoot()): Promise<void> {
@@ -403,36 +405,46 @@ export function registerEmbeddingsCommands(cli: Command, dependencies: Embedding
     }) => {
       const dryRun = options.dryRun === true;
       const confirmed = true;
-      if (!dryRun) await ensureOptionalRuntime(dependencies);
       const skillDiscoveryMode = options.skillDiscovery === undefined
         ? undefined
         : parseSetupSkillDiscoveryMode(options.skillDiscovery);
-      const setup = await runSetupFlow<Pick<SetupResult, 'clients' | 'projectAgentFiles'>>({
-        ...(dependencies.pathEnvironment === undefined ? {} : { environment: dependencies.pathEnvironment }),
-        command: options.command,
-        dryRun,
-        standardSkills: options.standardSkills,
-        ...(skillDiscoveryMode === undefined ? {} : { skillDiscoveryMode }),
-        ...(options.ennoOduno === undefined ? {} : { ennoOduno: parseEnnoSetupMode(options.ennoOduno) }),
-        json: options.json === true,
-        ...(dependencies.setupInput === undefined ? {} : { input: dependencies.setupInput }),
-        ...(dependencies.setupOutput === undefined ? {} : { output: dependencies.setupOutput }),
-      }, {
-        ...(dependencies.setupGlobalClients === undefined ? {} : { setupGlobalClients: dependencies.setupGlobalClients }),
-      });
-      const embeddingData = await dependencies.withDatabase((database, backend) => runEmbeddingSetup(database, {
-        presetId: options.preset,
-        confirmed,
-        dryRun,
-        offline: options.offline === true,
-        replace: options.replace === true,
-      }, {
-        ...(dependencies.pathEnvironment === undefined ? {} : dependencies.pathEnvironment),
-        ...(dependencies.modelDownloader === undefined ? {} : { downloader: dependencies.modelDownloader }),
-        ...(dependencies.modelInstaller === undefined ? {} : { installer: dependencies.modelInstaller }),
-        ...(dependencies.provider === undefined ? {} : { provider: dependencies.provider }),
-        ...(backend === undefined ? {} : { backendId: backend.id }),
-      }));
+      const setupLock = dryRun
+        ? undefined
+        : await (dependencies.acquireSetupLock ?? acquireEmbeddingSetupLock)(dependencies.pathEnvironment);
+      const executeSetup = async () => {
+        if (!dryRun) await ensureOptionalRuntime(dependencies);
+        const setup = await runSetupFlow<Pick<SetupResult, 'clients' | 'projectAgentFiles'>>({
+          ...(dependencies.pathEnvironment === undefined ? {} : { environment: dependencies.pathEnvironment }),
+          command: options.command,
+          dryRun,
+          standardSkills: options.standardSkills,
+          ...(skillDiscoveryMode === undefined ? {} : { skillDiscoveryMode }),
+          ...(options.ennoOduno === undefined ? {} : { ennoOduno: parseEnnoSetupMode(options.ennoOduno) }),
+          json: options.json === true,
+          ...(dependencies.setupInput === undefined ? {} : { input: dependencies.setupInput }),
+          ...(dependencies.setupOutput === undefined ? {} : { output: dependencies.setupOutput }),
+        }, {
+          ...(dependencies.setupGlobalClients === undefined ? {} : { setupGlobalClients: dependencies.setupGlobalClients }),
+        });
+        const embeddingData = await dependencies.withDatabase((database, backend) => runEmbeddingSetup(database, {
+          presetId: options.preset,
+          confirmed,
+          dryRun,
+          offline: options.offline === true,
+          replace: options.replace === true,
+        }, {
+          ...(dependencies.pathEnvironment === undefined ? {} : dependencies.pathEnvironment),
+          ...(dependencies.modelDownloader === undefined ? {} : { downloader: dependencies.modelDownloader }),
+          ...(dependencies.modelInstaller === undefined ? {} : { installer: dependencies.modelInstaller }),
+          ...(dependencies.provider === undefined ? {} : { provider: dependencies.provider }),
+          ...(backend === undefined ? {} : { backendId: backend.id }),
+          ...(setupLock === undefined ? {} : { setupLock }),
+        }));
+        return { setup, embeddingData };
+      };
+      const { setup, embeddingData } = setupLock === undefined
+        ? await executeSetup()
+        : await withEmbeddingSetupLock(setupLock, executeSetup);
       const data = {
         ...embeddingData,
         projectSetup: {

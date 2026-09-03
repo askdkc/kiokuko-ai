@@ -7,7 +7,10 @@ import { PACKAGE_VERSION } from '../../src/package-version.js';
 
 test('OpenCode plugin entrypoint exposes a loadable named plugin', async () => {
   const hooks = await KiokukoPlugin({
-    client: {} as never,
+    client: {
+      session: { list: async () => ({ data: [] }), status: async () => ({ data: {} }) },
+      app: { log: async () => ({ data: true }) },
+    } as never,
     project: {} as never,
     directory: '/repo',
     worktree: '/repo',
@@ -15,9 +18,17 @@ test('OpenCode plugin entrypoint exposes a loadable named plugin', async () => {
     serverUrl: new URL('http://127.0.0.1:4096'),
     $: {} as never,
   });
-  assert.deepEqual(Object.keys(hooks).sort(), ['dispose', 'event']);
+  assert.deepEqual(Object.keys(hooks).sort(), [
+    'dispose',
+    'event',
+    'experimental.session.compacting',
+    'tool.execute.after',
+  ]);
   assert.equal(typeof hooks.dispose, 'function');
   assert.equal(typeof hooks.event, 'function');
+  assert.equal(typeof hooks['tool.execute.after'], 'function');
+  assert.equal(typeof hooks['experimental.session.compacting'], 'function');
+  await hooks.dispose?.();
 });
 
 test('package boundary points OpenCode loader at the plugin dist entrypoint and keeps the CLI bin', async () => {
