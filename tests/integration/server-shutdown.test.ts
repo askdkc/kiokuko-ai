@@ -150,16 +150,21 @@ test('close drains an HTTP request admitted before shutdown even when its body f
       databaseCloses += 1;
     }),
     initializeDatabase: () => undefined,
-    v1: async () => {
-      handlerStarted.resolve();
-      if (enqueueWrite === undefined) throw new Error('enqueueWrite was not initialized');
-      await enqueueWrite(async () => {
-        writeStarted.resolve();
-        await releaseWrite.promise;
-        writes += 1;
-        writeSettled.resolve();
-      });
-      return { ok: true };
+    applicationFactory: ({ enqueueWrite: admittedWrite }) => (request, response) => {
+      void (async () => {
+        for await (const _chunk of request) {
+          // The lifecycle assertion deliberately waits for the complete body.
+        }
+        handlerStarted.resolve();
+        await admittedWrite(async () => {
+          writeStarted.resolve();
+          await releaseWrite.promise;
+          writes += 1;
+          writeSettled.resolve();
+        });
+        response.writeHead(200, { 'content-type': 'application/json' });
+        response.end('{"ok":true}');
+      })().catch((error: unknown) => response.destroy(error as Error));
     },
   });
 
@@ -173,7 +178,7 @@ test('close drains an HTTP request admitted before shutdown even when its body f
     socket = await connectRawSocket(port);
     const responsePromise = readRawResponse(socket);
     socket.write([
-      'POST /api/v1/probe HTTP/1.1',
+      'POST /shutdown-probe HTTP/1.1',
       'Host: 127.0.0.1',
       `Authorization: Bearer ${capabilityToken}`,
       'Content-Type: application/json',

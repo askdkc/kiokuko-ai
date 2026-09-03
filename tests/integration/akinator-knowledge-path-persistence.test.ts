@@ -4,7 +4,7 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { prepareAgentTask } from '../../src/akinator/agent-task.js';
+import { prepareOpenCodeTask } from '../../src/akinator/opencode-task.js';
 import { recordKnowledgePathsInTransaction } from '../../src/akinator/knowledge-path.js';
 import { initializeDatabase } from '../../src/commands/init.js';
 import type { SqliteDatabase, SqliteRow, SqliteStatement, SqliteValue } from '../../src/db/adapter.js';
@@ -53,7 +53,7 @@ test('reasoning-path persistence rejects duplicate identities, path-id collision
   await initializeDatabase({ databasePath });
   const database = openConnection(databasePath);
   try {
-    const prepared = await prepareAgentTask(database, {
+    const prepared = await prepareOpenCodeTask(database, {
       requestId: 'knowledge-path-persistence',
       cwd: root,
       task: 'SQLite migration failuresを安全に復旧する',
@@ -63,7 +63,7 @@ test('reasoning-path persistence rejects duplicate identities, path-id collision
         expected: '復旧テストが成功しschemaが一致する',
         constraints: '適用済みmigrationを破壊しない',
       },
-      client: { kind: 'test', sessionId: 'knowledge-path-persistence' },
+      client: { kind: 'opencode' as const, sessionId: 'knowledge-path-persistence' },
     });
     const checkpoint = await checkpointScopedMemory(database, {
       cwd: root,

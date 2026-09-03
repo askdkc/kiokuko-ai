@@ -35,7 +35,7 @@ import { recordEntry, updateCandidateEntry } from '../../src/memory/entries.js';
 import { linkEntries, promoteEntry, supersedeEntry } from '../../src/memory/lifecycle.js';
 import { createBackup } from '../../src/commands/backup.js';
 import { runDoctor } from '../../src/commands/doctor.js';
-import { AgentGatewayService } from '../../src/gateway/agent-service.js';
+import { OpenCodeTaskRunDriver } from '../fixtures/opencode-task-run-driver.js';
 import { createRuntimeDescriptor, writeRuntimeDescriptor } from '../../src/server/runtime-descriptor.js';
 import { readNudgeHistory, recordNudgeDeliveryInTransaction } from '../../src/context/nudge-store.js';
 import { exportLedgerArchive } from '../../src/ledger/archive.js';
@@ -1603,7 +1603,7 @@ test('doctor and ledger inspect detect the same corrupt nudge row without exposi
   const data = await database('doctor-nudge-integrity');
   const sentinel = 'corrupt-nudge-secret-sentinel';
   try {
-    const service = new AgentGatewayService(data.db, { now: () => '2026-08-20T00:00:00.000Z' });
+    const service = new OpenCodeTaskRunDriver(data.db, { now: () => '2026-08-20T00:00:00.000Z' });
     const opened = service.openRun({
       idempotencyKey: 'doctor-nudge-open',
       request: {
@@ -1649,7 +1649,7 @@ test('doctor and ledger inspect detect the same corrupt nudge row without exposi
 test('runtime reads, ledger inspect, doctor, and archive export reject unsorted nudge IDs consistently', async () => {
   const data = await database('unsorted-nudge-ids');
   try {
-    const service = new AgentGatewayService(data.db, { now: () => '2026-08-20T00:00:00.000Z' });
+    const service = new OpenCodeTaskRunDriver(data.db, { now: () => '2026-08-20T00:00:00.000Z' });
     const opened = service.openRun({
       idempotencyKey: 'unsorted-nudge-open',
       request: {
@@ -1763,7 +1763,7 @@ test('doctor adds content-free ledger and stale runtime findings', async () => {
   const runtimeDescriptorPath = path.join(runtimeHome, 'server.json');
   const secretToken = 'b'.repeat(64);
   try {
-    const service = new AgentGatewayService(data.db, { now: () => '2026-08-20T00:00:00.000Z' });
+    const service = new OpenCodeTaskRunDriver(data.db, { now: () => '2026-08-20T00:00:00.000Z' });
     const opened = service.openRun({
       idempotencyKey: 'doctor-open',
       request: {

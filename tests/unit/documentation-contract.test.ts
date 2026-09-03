@@ -12,7 +12,7 @@ async function readRepositoryFile(relativePath: string): Promise<string> {
 test('documented OpenCode MCP command matches the published CLI bin', async () => {
   const [packageText, ...documentation] = await Promise.all([
     readRepositoryFile('package.json'),
-    readRepositoryFile('docs/client-compatibility.md'),
+    readRepositoryFile('docs/opencode-integration.md'),
     readRepositoryFile('docs/getting-started.md'),
     readRepositoryFile('docs/getting-started.ja.md'),
   ]);

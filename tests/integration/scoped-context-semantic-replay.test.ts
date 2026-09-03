@@ -4,7 +4,7 @@ import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { AgentGatewayService } from '../../src/gateway/agent-service.js';
+import { OpenCodeTaskRunDriver } from '../fixtures/opencode-task-run-driver.js';
 import { queryScopedContext, queryScopedContextGated } from '../../src/context/scoped-broker.js';
 import { openConnection } from '../../src/db/connection.js';
 import { migrateDatabase } from '../../src/db/migrate.js';
@@ -49,7 +49,7 @@ test('binds scoped replay to semantic query and projection state, then rejects a
     migrateDatabase(database);
     const project = await resolveProjectWorkspace(database, root);
     assert.ok(project);
-    const service = new AgentGatewayService(database, { now: () => timestamp });
+    const service = new OpenCodeTaskRunDriver(database, { now: () => timestamp });
     const taskProfile = {
       taskType: 'build' as const,
       target: 'semantic scoped replay',

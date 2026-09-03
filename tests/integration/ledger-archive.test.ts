@@ -59,7 +59,7 @@ function seedCompleteGraph(database: ReturnType<typeof openConnection>, workspac
     runId,
     workspace,
     protocolVersion: '1',
-    client: { kind: 'generic', version: '1.0.0', sessionId },
+    client: { kind: 'opencode' as const, version: '1.0.0', sessionId },
     captureProfile: 'standard',
     coverage: { run: 'complete', tool: 'best_effort', command: 'declared', file: 'unavailable', approval: 'unavailable' },
     task: { title: 'Archive run', query: 'Archive graph', profileHints: { taskType: 'build', target: 'src', expected: 'pass', constraints: null } },
@@ -110,7 +110,7 @@ function rebuildArchive(content: string, mutate: (lines: Array<Record<string, un
 function seedSingleRun(database: ReturnType<typeof openConnection>, workspace = 'workspace:validation') {
   const store = new LedgerStore(database, { now: () => fixedNow });
   store.createRun({
-    runId: `${workspace}-run`, workspace, protocolVersion: '1', client: { kind: 'generic' }, captureProfile: 'minimal',
+    runId: `${workspace}-run`, workspace, protocolVersion: '1', client: { kind: 'opencode' as const }, captureProfile: 'minimal',
     coverage: { run: 'declared', tool: 'unavailable', command: 'unavailable', file: 'unavailable', approval: 'unavailable' },
     task: { title: 'Validation', query: 'Validate archive', profileHints: { taskType: 'build', target: null, expected: null, constraints: null } }, startedAt: fixedNow,
   });
@@ -166,7 +166,7 @@ test('exports runs and events with stable allowlisted records and canonical stor
       runId: 'run-archive-1',
       workspace: 'workspace:archive',
       protocolVersion: '1',
-      client: { kind: 'generic', version: '1.0.0' },
+      client: { kind: 'opencode' as const, version: '1.0.0' },
       captureProfile: 'standard',
       coverage: { run: 'complete', tool: 'best_effort', command: 'declared', file: 'unavailable', approval: 'unavailable' },
       task: { title: 'Archive', query: 'Export', profileHints: { taskType: 'build', target: null, expected: 'pass', constraints: null } },
@@ -208,7 +208,7 @@ test('imports a ledger graph transactionally and re-imports identical rows as no
     const store = new LedgerStore(source, { now: () => '2026-08-20T00:00:00.000Z' });
     store.createRun({
       runId: 'run-import-1', workspace: 'workspace:import', protocolVersion: '1',
-      client: { kind: 'generic' }, captureProfile: 'minimal',
+      client: { kind: 'opencode' as const }, captureProfile: 'minimal',
       coverage: { run: 'declared', tool: 'unavailable', command: 'unavailable', file: 'unavailable', approval: 'unavailable' },
       task: { title: 'Import', query: 'Round trip', profileHints: { taskType: 'build', target: null, expected: null, constraints: null } },
       startedAt: '2026-08-20T00:00:00.000Z',
@@ -240,7 +240,7 @@ function seedNudgeRateLimitArchive(database: ReturnType<typeof openConnection>, 
     runId,
     workspace,
     protocolVersion: '1',
-    client: { kind: 'generic' },
+    client: { kind: 'opencode' as const },
     captureProfile: 'minimal',
     coverage: { run: 'declared', tool: 'unavailable', command: 'unavailable', file: 'unavailable', approval: 'unavailable' },
     task: { title: 'Nudge limits', query: 'Validate nudge limits', profileHints: { taskType: 'build', target: null, expected: null, constraints: null } },
@@ -357,7 +357,7 @@ test('archives the complete linked ledger graph without curated memory bodies or
     });
     const unrelated = new LedgerStore(source, { now: () => fixedNow });
     unrelated.createRun({
-      runId: 'unrelated-run', workspace: 'workspace:other', protocolVersion: '1', client: { kind: 'generic' }, captureProfile: 'minimal',
+      runId: 'unrelated-run', workspace: 'workspace:other', protocolVersion: '1', client: { kind: 'opencode' as const }, captureProfile: 'minimal',
       coverage: { run: 'declared', tool: 'unavailable', command: 'unavailable', file: 'unavailable', approval: 'unavailable' },
       task: { title: 'Other', query: 'Other', profileHints: { taskType: 'build', target: null, expected: null, constraints: null } }, startedAt: fixedNow,
     });
@@ -449,7 +449,7 @@ test('round-trips ecosystem delivery feedback without rewriting the source works
     });
     store.createRun({
       runId: 'run-ecosystem-archive', workspace: runWorkspace, protocolVersion: '1',
-      client: { kind: 'generic', sessionId }, captureProfile: 'minimal',
+      client: { kind: 'opencode' as const, sessionId }, captureProfile: 'minimal',
       coverage: { run: 'declared', tool: 'unavailable', command: 'unavailable', file: 'unavailable', approval: 'unavailable' },
       task: { title: 'Ecosystem archive', query: 'Round trip ecosystem context', profileHints: { taskType: 'build', target: null, expected: null, constraints: null } },
       startedAt: fixedNow,

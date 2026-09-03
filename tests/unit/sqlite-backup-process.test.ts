@@ -22,7 +22,7 @@ import { openConnection } from '../../src/db/connection.js';
 import {
   createSerializedBackupArtifact,
   requirePosixBackupOpenFlags,
-} from '../../src/db/upgrade-backup.js';
+} from '../../src/db/serialized-backup.js';
 import { KiokukoError } from '../../src/errors.js';
 
 const execFile = promisify(execFileCallback);

@@ -21,8 +21,6 @@ import { openConnection } from './db/connection.js';
 import { errorEnvelope, successEnvelope } from './serialization/envelope.js';
 import { KiokukoError, exitCodeFor } from './errors.js';
 import { startWebServer } from './web/server.js';
-import { registerServerCommands, type ServerCommandDependencies } from './commands/server.js';
-import { registerAgentCommand, type AgentCommandDependencies } from './commands/agent.js';
 import { registerLedgerCommands } from './commands/ledger.js';
 import type { SqliteDatabase } from './db/adapter.js';
 import { answerAkinator, startAkinator } from './akinator/orchestrator.js';
@@ -340,8 +338,6 @@ function configureRecallCommand(command: Command, dependencies: CliDependencies)
 }
 
 export interface CliDependencies {
-  readonly server?: ServerCommandDependencies;
-  readonly agent?: AgentCommandDependencies;
   readonly skills?: SkillsCommandDependencies;
   readonly setupEnvironment?: PathEnvironment;
   readonly setupInput?: NodeJS.ReadableStream;
@@ -354,34 +350,6 @@ export interface CliDependencies {
   readonly embeddingProvider?: EmbeddingProvider;
   readonly embeddingBackend?: VectorSearchBackend;
 }
-
-const CALL_OPERATIONS = [
-  'init',
-  'use',
-  'record',
-  'curator',
-  'curator_globalize',
-  'guide_start',
-  'guide_answer',
-  'promote',
-  'supersede',
-  'link',
-  'purge',
-  'export',
-  'import',
-  'backup',
-  'doctor',
-] as const;
-
-type CallOperation = (typeof CALL_OPERATIONS)[number];
-
-interface CallRequest {
-  apiVersion: '1';
-  operation: CallOperation;
-  arguments: Record<string, unknown>;
-}
-
-const SUPPORTED_CALL_OPERATIONS = new Set<string>(CALL_OPERATIONS);
 
 function snapshotPlainJsonObject(value: unknown, message: string): Record<string, unknown> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
@@ -408,445 +376,9 @@ function snapshotPlainJsonObject(value: unknown, message: string): Record<string
   return result;
 }
 
-function assertExactCallArguments(
-  args: Record<string, unknown>,
-  operation: CallOperation,
-  allowed: readonly string[],
-  required: readonly string[] = [],
-): void {
-  const allowedFields = new Set(allowed);
-  for (const field of Object.keys(args)) {
-    if (!allowedFields.has(field)) {
-      throw new KiokukoError('VALIDATION_ERROR', `Unknown ${operation} argument: ${field}`);
-    }
-  }
-  for (const field of required) {
-    if (!Object.hasOwn(args, field)) {
-      throw new KiokukoError('VALIDATION_ERROR', `${operation}.${field} is required`);
-    }
-  }
-}
-
-function requiredStringArgument(
-  args: Record<string, unknown>,
-  operation: CallOperation,
-  field: string,
-): string {
-  const value = args[field];
-  if (typeof value !== 'string' || value.trim().length === 0) {
-    throw new KiokukoError('VALIDATION_ERROR', `${operation}.${field} must be a non-empty string`);
-  }
-  return value;
-}
-
-function optionalStringArgument(
-  args: Record<string, unknown>,
-  operation: CallOperation,
-  field: string,
-): string | undefined {
-  return Object.hasOwn(args, field) ? requiredStringArgument(args, operation, field) : undefined;
-}
-
-function requiredPathArgument(
-  args: Record<string, unknown>,
-  operation: CallOperation,
-  field: string,
-): string {
-  const value = requiredStringArgument(args, operation, field);
-  if (CONTROL_CHARACTERS.test(value) || Buffer.byteLength(value, 'utf8') > MAX_CALL_PATH_BYTES) {
-    throw new KiokukoError(
-      'VALIDATION_ERROR',
-      `${operation}.${field} must be a bounded path without control characters`,
-    );
-  }
-  return value;
-}
-
-function optionalPathArgument(
-  args: Record<string, unknown>,
-  operation: CallOperation,
-  field: string,
-): string | undefined {
-  return Object.hasOwn(args, field) ? requiredPathArgument(args, operation, field) : undefined;
-}
-
-function requiredBooleanArgument(
-  args: Record<string, unknown>,
-  operation: CallOperation,
-  field: string,
-): boolean {
-  const value = args[field];
-  if (typeof value !== 'boolean') {
-    throw new KiokukoError('VALIDATION_ERROR', `${operation}.${field} must be a boolean`);
-  }
-  return value;
-}
-
-function optionalBooleanArgument(
-  args: Record<string, unknown>,
-  operation: CallOperation,
-  field: string,
-): boolean | undefined {
-  return Object.hasOwn(args, field) ? requiredBooleanArgument(args, operation, field) : undefined;
-}
-
-function requiredPositiveIntegerArgument(
-  args: Record<string, unknown>,
-  operation: CallOperation,
-  field: string,
-): number {
-  const value = args[field];
-  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 1) {
-    throw new KiokukoError('VALIDATION_ERROR', `${operation}.${field} must be a positive integer`);
-  }
-  return value;
-}
-
-function validateUseCallArguments(args: Record<string, unknown>): UseOptions {
-  const operation = 'use';
-  assertExactCallArguments(args, operation, [
-    'cwd',
-    'root',
-    'workspace',
-    'agentFile',
-    'dryRun',
-    'noAgentFile',
-    'forceRebind',
-    'allowDirectory',
-    'databasePath',
-    'migrationsDirectory',
-    'repositoryId',
-  ]);
-  const result: UseOptions = {};
-  const cwd = optionalPathArgument(args, operation, 'cwd');
-  const root = optionalPathArgument(args, operation, 'root');
-  const workspace = optionalStringArgument(args, operation, 'workspace');
-  const agentFile = optionalPathArgument(args, operation, 'agentFile');
-  const databasePath = optionalPathArgument(args, operation, 'databasePath');
-  const migrationsDirectory = optionalPathArgument(args, operation, 'migrationsDirectory');
-  const repositoryId = optionalStringArgument(args, operation, 'repositoryId');
-  const dryRun = optionalBooleanArgument(args, operation, 'dryRun');
-  const noAgentFile = optionalBooleanArgument(args, operation, 'noAgentFile');
-  const forceRebind = optionalBooleanArgument(args, operation, 'forceRebind');
-  const allowDirectory = optionalBooleanArgument(args, operation, 'allowDirectory');
-  if (cwd !== undefined) result.cwd = cwd;
-  if (root !== undefined) result.root = root;
-  if (workspace !== undefined) result.workspace = workspace;
-  if (agentFile !== undefined) result.agentFile = agentFile;
-  if (databasePath !== undefined) result.databasePath = databasePath;
-  if (migrationsDirectory !== undefined) result.migrationsDirectory = migrationsDirectory;
-  if (repositoryId !== undefined) result.repositoryId = repositoryId;
-  if (dryRun !== undefined) result.dryRun = dryRun;
-  if (noAgentFile !== undefined) result.noAgentFile = noAgentFile;
-  if (forceRebind !== undefined) result.forceRebind = forceRebind;
-  if (allowDirectory !== undefined) result.allowDirectory = allowDirectory;
-  return result;
-}
-
-function validateRecordCallArguments(args: Record<string, unknown>): RecordEntryInput {
-  return validateRecordInput(args);
-}
-
-function validateCuratorCallArguments(args: Record<string, unknown>): {
-  workspace?: string;
-  cwd?: string;
-  limit?: number;
-  entryId?: string;
-  yes?: boolean;
-} {
-  const operation = 'curator';
-  assertExactCallArguments(args, operation, ['workspace', 'cwd', 'limit', 'entryId', 'yes']);
-  const workspace = optionalStringArgument(args, operation, 'workspace');
-  const cwd = optionalPathArgument(args, operation, 'cwd');
-  const entryId = optionalStringArgument(args, operation, 'entryId');
-  const yes = optionalBooleanArgument(args, operation, 'yes');
-  const limit = Object.hasOwn(args, 'limit')
-    ? requiredPositiveIntegerArgument(args, operation, 'limit')
-    : undefined;
-  if (limit !== undefined && limit > 50) {
-    throw new KiokukoError('VALIDATION_ERROR', 'curator.limit must be an integer between 1 and 50');
-  }
-  return {
-    ...(workspace === undefined ? {} : { workspace }),
-    ...(cwd === undefined ? {} : { cwd }),
-    ...(limit === undefined ? {} : { limit }),
-    ...(entryId === undefined ? {} : { entryId }),
-    ...(yes === undefined ? {} : { yes }),
-  };
-}
-
-function validateCuratorGlobalizeCallArguments(args: Record<string, unknown>): {
-  workspace: string;
-  entryId: string;
-  expectedRevision: number;
-  actor?: string;
-} {
-  const operation = 'curator_globalize';
-  assertExactCallArguments(
-    args,
-    operation,
-    ['workspace', 'entryId', 'expectedRevision', 'actor'],
-    ['workspace', 'entryId', 'expectedRevision'],
-  );
-  const actor = optionalStringArgument(args, operation, 'actor');
-  return {
-    workspace: requiredStringArgument(args, operation, 'workspace'),
-    entryId: requiredStringArgument(args, operation, 'entryId'),
-    expectedRevision: requiredPositiveIntegerArgument(args, operation, 'expectedRevision'),
-    ...(actor === undefined ? {} : { actor }),
-  };
-}
-
-function validateGuideStartCallArguments(args: Record<string, unknown>): {
-  workspace: string;
-  task: string;
-} {
-  const operation = 'guide_start';
-  assertExactCallArguments(args, operation, ['workspace', 'task'], ['workspace', 'task']);
-  return {
-    workspace: requiredStringArgument(args, operation, 'workspace'),
-    task: requiredStringArgument(args, operation, 'task'),
-  };
-}
-
-function validateGuideAnswerCallArguments(args: Record<string, unknown>): {
-  workspace: string;
-  sessionId: string;
-  questionId: 'taskType' | 'target' | 'expected' | 'constraints';
-  value: string;
-} {
-  const operation = 'guide_answer';
-  assertExactCallArguments(
-    args,
-    operation,
-    ['workspace', 'sessionId', 'questionId', 'value'],
-    ['workspace', 'sessionId', 'questionId', 'value'],
-  );
-  const questionId = requiredStringArgument(args, operation, 'questionId');
-  if (!['taskType', 'target', 'expected', 'constraints'].includes(questionId)) {
-    throw new KiokukoError('VALIDATION_ERROR', 'guide_answer.questionId is unsupported');
-  }
-  return {
-    workspace: requiredStringArgument(args, operation, 'workspace'),
-    sessionId: requiredStringArgument(args, operation, 'sessionId'),
-    questionId: questionId as 'taskType' | 'target' | 'expected' | 'constraints',
-    value: requiredStringArgument(args, operation, 'value'),
-  };
-}
-
-function validatePromoteCallArguments(args: Record<string, unknown>): {
-  workspace: string;
-  entryId: string;
-  expectedRevision: number;
-} {
-  const operation = 'promote';
-  assertExactCallArguments(
-    args,
-    operation,
-    ['workspace', 'entryId', 'expectedRevision'],
-    ['workspace', 'entryId', 'expectedRevision'],
-  );
-  return {
-    workspace: requiredStringArgument(args, operation, 'workspace'),
-    entryId: requiredStringArgument(args, operation, 'entryId'),
-    expectedRevision: requiredPositiveIntegerArgument(args, operation, 'expectedRevision'),
-  };
-}
-
-function validateSupersedeCallArguments(args: Record<string, unknown>): {
-  workspace: string;
-  oldEntryId: string;
-  replacementEntryId: string;
-  expectedRevision: number;
-} {
-  const operation = 'supersede';
-  assertExactCallArguments(
-    args,
-    operation,
-    ['workspace', 'oldEntryId', 'replacementEntryId', 'expectedRevision'],
-    ['workspace', 'oldEntryId', 'replacementEntryId', 'expectedRevision'],
-  );
-  return {
-    workspace: requiredStringArgument(args, operation, 'workspace'),
-    oldEntryId: requiredStringArgument(args, operation, 'oldEntryId'),
-    replacementEntryId: requiredStringArgument(args, operation, 'replacementEntryId'),
-    expectedRevision: requiredPositiveIntegerArgument(args, operation, 'expectedRevision'),
-  };
-}
-
-function validateLinkCallArguments(args: Record<string, unknown>): {
-  workspace: string;
-  fromEntryId: string;
-  toEntryId: string;
-  relation: 'supports' | 'contradicts' | 'derived_from' | 'related_to';
-  actor?: string;
-  now?: string;
-} {
-  const operation = 'link';
-  assertExactCallArguments(
-    args,
-    operation,
-    ['workspace', 'fromEntryId', 'toEntryId', 'relation', 'actor', 'now'],
-    ['workspace', 'fromEntryId', 'toEntryId', 'relation'],
-  );
-  const relation = requiredStringArgument(args, operation, 'relation');
-  if (!['supports', 'contradicts', 'derived_from', 'related_to'].includes(relation)) {
-    throw new KiokukoError('VALIDATION_ERROR', 'link.relation is unsupported');
-  }
-  const actor = optionalStringArgument(args, operation, 'actor');
-  const now = optionalStringArgument(args, operation, 'now');
-  return {
-    workspace: requiredStringArgument(args, operation, 'workspace'),
-    fromEntryId: requiredStringArgument(args, operation, 'fromEntryId'),
-    toEntryId: requiredStringArgument(args, operation, 'toEntryId'),
-    relation: relation as 'supports' | 'contradicts' | 'derived_from' | 'related_to',
-    ...(actor === undefined ? {} : { actor }),
-    ...(now === undefined ? {} : { now }),
-  };
-}
-
-function validatePurgeCallArguments(args: Record<string, unknown>): {
-  workspace: string;
-  entryId: string;
-  confirm: boolean;
-} {
-  const operation = 'purge';
-  assertExactCallArguments(
-    args,
-    operation,
-    ['workspace', 'entryId', 'confirm'],
-    ['workspace', 'entryId', 'confirm'],
-  );
-  return {
-    workspace: requiredStringArgument(args, operation, 'workspace'),
-    entryId: requiredStringArgument(args, operation, 'entryId'),
-    confirm: requiredBooleanArgument(args, operation, 'confirm'),
-  };
-}
-
-function parseCallRequest(request: unknown): CallRequest {
-  const value = snapshotPlainJsonObject(request, 'Request must be a JSON object');
-  const fields = Object.keys(value).sort();
-  if (fields.length !== 3
-    || fields[0] !== 'apiVersion'
-    || fields[1] !== 'arguments'
-    || fields[2] !== 'operation') {
-    throw new KiokukoError(
-      'VALIDATION_ERROR',
-      'Request must contain exactly apiVersion, operation, and arguments',
-    );
-  }
-  if (value.apiVersion !== '1') {
-    throw new KiokukoError('VALIDATION_ERROR', 'apiVersion must be "1"');
-  }
-  if (typeof value.operation !== 'string' || value.operation.length === 0) {
-    throw new KiokukoError('VALIDATION_ERROR', 'operation must be a non-empty string');
-  }
-  const args = snapshotPlainJsonObject(value.arguments, 'arguments must be a JSON object');
-  if (!SUPPORTED_CALL_OPERATIONS.has(value.operation)) {
-    throw new KiokukoError('VALIDATION_ERROR', `Unknown operation: ${value.operation}`);
-  }
-  return {
-    apiVersion: '1',
-    operation: value.operation as CallOperation,
-    arguments: args,
-  };
-}
-
-async function dispatchRequest(request: CallRequest): Promise<unknown> {
-  const args = request.arguments;
-  const operation = request.operation;
-  if (operation === 'init') {
-    assertExactCallArguments(args, operation, []);
-    return initializeDatabase();
-  }
-  if (operation === 'use') return useRepository(validateUseCallArguments(args));
-  if (operation === 'record') {
-    const input = validateRecordCallArguments(args);
-    return withDatabase((database) => recordEntry(database, input));
-  }
-  if (operation === 'curator') {
-    const input = validateCuratorCallArguments(args);
-    return withDatabase((database) => runCuratorCommand(database, { ...input, json: true }));
-  }
-  if (operation === 'curator_globalize') {
-    const input = validateCuratorGlobalizeCallArguments(args);
-    return withDatabase((database) => globalizeCuratorCandidate(database, input));
-  }
-  if (operation === 'guide_start') {
-    const input = validateGuideStartCallArguments(args);
-    return withDatabase((database) => startAkinator(database, input));
-  }
-  if (operation === 'guide_answer') {
-    const input = validateGuideAnswerCallArguments(args);
-    return withDatabase((database) => answerAkinator(database, input));
-  }
-  if (operation === 'promote') {
-    const input = validatePromoteCallArguments(args);
-    return withDatabase((database) => promoteEntry(database, input));
-  }
-  if (operation === 'supersede') {
-    const input = validateSupersedeCallArguments(args);
-    return withDatabase((database) => supersedeEntry(database, input));
-  }
-  if (operation === 'link') {
-    const input = validateLinkCallArguments(args);
-    return withDatabase((database) => {
-      linkEntries(database, input);
-      return { linked: true };
-    });
-  }
-  if (operation === 'purge') {
-    const input = validatePurgeCallArguments(args);
-    return withDatabase((database) => {
-      purgeEntry(database, input);
-      return { purged: true };
-    });
-  }
-  if (operation === 'export') {
-    assertExactCallArguments(args, operation, ['workspace', 'output']);
-    if (!Object.hasOwn(args, 'output')) {
-      throw new KiokukoError('VALIDATION_ERROR', 'export output is required');
-    }
-    const workspace = requiredStringArgument(args, operation, 'workspace');
-    const output = requiredPathArgument(args, operation, 'output');
-    return withDatabase((database) => writeExport(database, { workspace, output }));
-  }
-  if (operation === 'import') {
-    assertExactCallArguments(args, operation, ['input', 'workspace', 'dryRun']);
-    if (!Object.hasOwn(args, 'input')) {
-      throw new KiokukoError('VALIDATION_ERROR', 'import input is required');
-    }
-    const input = requiredPathArgument(args, operation, 'input');
-    const workspace = optionalStringArgument(args, operation, 'workspace');
-    const dryRun = optionalBooleanArgument(args, operation, 'dryRun');
-    const importOptions: Parameters<typeof importWorkspace>[1] = {
-      input,
-      ...(workspace === undefined ? {} : { workspace }),
-      ...(dryRun === undefined ? {} : { dryRun }),
-    };
-    return dryRun === true
-      ? importWorkspace(undefined, importOptions)
-      : withDatabase((database) => importWorkspace(database, importOptions));
-  }
-  if (operation === 'backup') {
-    assertExactCallArguments(args, operation, ['output']);
-    if (!Object.hasOwn(args, 'output')) {
-      throw new KiokukoError('VALIDATION_ERROR', 'backup output is required');
-    }
-    const output = requiredPathArgument(args, operation, 'output');
-    return createBackup(output);
-  }
-  if (operation === 'doctor') {
-    assertExactCallArguments(args, operation, []);
-    return runDoctor();
-  }
-  throw new KiokukoError('INTEGRITY_ERROR', 'Supported call operation has no dispatcher');
-}
-
 export function buildCli(dependencies: CliDependencies = {}): Command {
   const cli = new Command();
-  cli.name('kiokuko-ai').description('Model-agnostic external memory for AI coding agents').version(PACKAGE_VERSION);
+  cli.name('kiokuko-ai').description('External memory for OpenCode').version(PACKAGE_VERSION);
   cli.exitOverride();
   cli.configureOutput({ outputError: () => undefined });
 
@@ -893,7 +425,7 @@ export function buildCli(dependencies: CliDependencies = {}): Command {
       const projectSummary = data.projectAgentFiles.length === 0
         ? ''
         : ` Registered project instructions: ${projectChanged} changed, ${projectUnchanged} unchanged, ${projectSkipped} skipped, ${projectFailed} failed.`;
-      const clientLabel = data.clients.join(', ');
+      const clientLabel = data.client;
       const message = options.dryRun
         ? `Kiokuko setup plan for ${clientLabel}: ${changed} file${changed === 1 ? '' : 's'} would change.${projectSummary}`
         : `Now you are ready to use Kiokuko! Kiokuko configured for ${clientLabel} (${changed} file${changed === 1 ? '' : 's'} changed).${projectSummary} ${data.nextStep}`;
@@ -1062,8 +594,6 @@ export function buildCli(dependencies: CliDependencies = {}): Command {
     if (!data.ok) process.exitCode = 8;
   });
 
-  registerServerCommands(cli, dependencies.server);
-  registerAgentCommand(cli, dependencies.agent);
   registerLedgerCommands(cli, { withDatabase });
   registerSkillsCommands(cli, dependencies.skills ?? { withDatabase });
   registerEnnoCommand(cli, { withDatabase });
@@ -1112,18 +642,12 @@ export function buildCli(dependencies: CliDependencies = {}): Command {
     humanOrJson(options.json, 'import', data, `${data.count} records inspected`);
   });
 
-  cli.command('call').description('Process one management JSON request; memory reads are not supported').requiredOption('--input-json <file>').option('--json').action(async (options: { inputJson: string }) => {
-    const request = parseCallRequest(await readJsonInput(options.inputJson));
-    const data = await dispatchRequest(request);
-    emit(successEnvelope(request.operation, data));
-  });
-
   return cli;
 }
 
 function operationFor(argv: string[]): string {
   const command = argv[2] ?? 'unknown';
-  if (['server', 'agent', 'skills', 'embeddings'].includes(command) && argv[3] !== undefined && !argv[3].startsWith('-')) return `${command}.${argv[3]}`;
+  if (['skills', 'embeddings'].includes(command) && argv[3] !== undefined && !argv[3].startsWith('-')) return `${command}.${argv[3]}`;
   return command;
 }
 
@@ -1133,16 +657,8 @@ function commanderDiagnostic(error: CommanderError): string {
 }
 
 export async function runCli(argv: string[] = process.argv, dependencies: CliDependencies = {}): Promise<number> {
-  let serveStarted = false;
-  const serverDependencies: ServerCommandDependencies = {
-    ...(dependencies.server ?? {}),
-    onServeStarted: () => {
-      serveStarted = true;
-      dependencies.server?.onServeStarted?.();
-    },
-  };
-  const cli = buildCli({ ...dependencies, server: serverDependencies });
-  const jsonRequested = argv.includes('--json') || argv.includes('call');
+  const cli = buildCli(dependencies);
+  const jsonRequested = argv.includes('--json');
   const operation = operationFor(argv);
   try {
     await cli.parseAsync(argv);
@@ -1159,7 +675,7 @@ export async function runCli(argv: string[] = process.argv, dependencies: CliDep
       return 2;
     }
     const envelope = errorEnvelope(operation, error);
-    if (jsonRequested && !(serveStarted && operation === 'serve')) emit(envelope);
+    if (jsonRequested) emit(envelope);
     else process.stderr.write(`${envelope.error.message}\n`);
     return exitCodeFor(error);
   }

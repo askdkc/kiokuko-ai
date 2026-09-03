@@ -41,7 +41,7 @@ function seedIntake(database: ReturnType<typeof openConnection>): void {
     INSERT INTO ledger_runs (
       run_id, workspace, client_kind, protocol_version, capture_profile, coverage_json,
       status, metadata_json, last_sequence, started_at, created_at, updated_at
-    ) VALUES (?, ?, 'generic', '1', 'standard', '{}', 'intake', '{}', 0, ?, ?, ?)
+    ) VALUES (?, ?, 'opencode', '1', 'standard', '{}', 'intake', '{}', 0, ?, ?, ?)
   `).run('run-intake-feedback-1', workspace, now, now, now);
   insertAkinatorAnswer(database, {
     workspace,

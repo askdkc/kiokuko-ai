@@ -26,7 +26,6 @@ import {
   type RuntimeDescriptorView,
 } from './runtime-descriptor.js';
 import { WriteQueue, type WriteQueueState } from './write-queue.js';
-import type { V1RouteHandler } from './router.js';
 import {
   createEmbeddingRuntime,
   type EmbeddingRuntimeOptions,
@@ -57,7 +56,7 @@ export interface HttpApplicationContext {
   readonly database: SqliteDatabase;
   readonly embeddingRuntime: EmbeddingRuntime;
   enqueueWrite<T>(operation: () => T | PromiseLike<T>): Promise<T>;
-  createAuthenticatedApp(v1?: V1RouteHandler): RequestListener;
+  createAuthenticatedApp(): RequestListener;
 }
 
 export type HttpApplicationFactory = (context: HttpApplicationContext) => RequestListener;
@@ -97,7 +96,6 @@ export interface HttpServerOptions extends PathEnvironment {
   readonly startedAt?: string;
   readonly capabilityToken?: string;
   readonly app?: RequestListener;
-  readonly v1?: V1RouteHandler;
   readonly applicationFactory?: HttpApplicationFactory;
   readonly dependencies?: HttpServerDependencies;
   readonly initializeDatabase?: DatabaseInitializer;
@@ -150,8 +148,8 @@ function validateCapabilityToken(token: string): string {
 }
 
 function validateApplicationComposition(options: HttpServerOptions): void {
-  if (options.applicationFactory !== undefined && (options.app !== undefined || options.v1 !== undefined)) {
-    invalid('applicationFactory cannot be combined with app or v1');
+  if (options.applicationFactory !== undefined && options.app !== undefined) {
+    invalid('applicationFactory cannot be combined with app');
   }
 }
 
@@ -441,13 +439,12 @@ export async function startHttpServer(options: HttpServerOptions = {}): Promise<
       ?? options.createEmbeddingWorker
       ?? ((runtime: EmbeddingRuntime) => createEmbeddingWorker({ runtime }));
     if (runtime.profileId !== null) embeddingWorker = createWorker(runtime);
-    const createAuthenticatedApp = (v1?: V1RouteHandler): RequestListener => createApp({
+    const createAuthenticatedApp = (): RequestListener => createApp({
       expectedToken: capabilityToken,
       readiness: () => ready && !closing,
-      ...(v1 === undefined ? {} : { v1 }),
     });
     const application = options.applicationFactory === undefined
-      ? options.app ?? createAuthenticatedApp(options.v1)
+      ? options.app ?? createAuthenticatedApp()
       : options.applicationFactory({
         database,
         embeddingRuntime: runtime,

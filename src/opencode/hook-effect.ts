@@ -248,7 +248,7 @@ export async function runKiokukoHook(
   });
   let child: BunChild | undefined;
   try {
-    const spawned = spawn([...invocation.argv, 'enno', 'hook', '--client', 'opencode', '--input-json', '-'], {
+    const spawned = spawn([...invocation.argv, 'enno', 'hook', '--input-json', '-'], {
       stdin: 'pipe', stdout: 'pipe', stderr: 'pipe', cwd,
     });
     child = spawned;

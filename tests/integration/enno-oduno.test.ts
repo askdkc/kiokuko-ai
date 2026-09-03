@@ -4,7 +4,7 @@ import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { prepareAgentTask } from '../../src/akinator/agent-task.js';
+import { prepareOpenCodeTask } from '../../src/akinator/opencode-task.js';
 import { initializeDatabase } from '../../src/commands/init.js';
 import { openConnection } from '../../src/db/connection.js';
 import { withImmediateTransaction } from '../../src/db/transaction.js';
@@ -90,7 +90,7 @@ function verifier(_root: string, id: string) {
 
 function submitPreparedIdeal(
   database: ReturnType<typeof openConnection>,
-  prepared: Awaited<ReturnType<typeof prepareAgentTask>>,
+  prepared: Awaited<ReturnType<typeof prepareOpenCodeTask>>,
   idempotencyKey: string,
   advisory?: {
     advisoryRoundDigest: string;
@@ -158,7 +158,7 @@ async function plannedExecution(
   const clientVersion = options.clientVersion;
   const sessionId = `${client}-${requestId}`;
   const clientIdentity = options.clientIdentity ?? 'bound';
-  const prepared = await prepareAgentTask(database, {
+  const prepared = await prepareOpenCodeTask(database, {
     requestId, cwd: root, task: 'Repair the add function',
     profileHints: { taskType: 'debug', target: 'src/add.js', expected: 'tests pass', constraints: null },
     capabilities,
@@ -415,7 +415,7 @@ test('a receipt reused after the Enno state changes fails closed', async () => {
       .update(terminalMessageId, 'utf8')
       .digest('hex');
     database.prepare(`
-      INSERT INTO enno_client_continuation_receipts (
+      INSERT INTO enno_opencode_continuation_receipts (
         run_id, client_kind, source_session_id, source_terminal_hash,
         contract_revision, mutation_revision, attempts, directive_digest, route_epoch, created_at
       ) VALUES (?, 'opencode', ?, ?, 999, 999, 0, ?, 0, ?)
@@ -432,7 +432,7 @@ test('a receipt reused after the Enno state changes fails closed', async () => {
 
 function databaseCount(database: ReturnType<typeof openConnection>, runId: string): number {
   return Number(database.prepare(`
-    SELECT COUNT(*) AS count FROM enno_client_continuation_receipts
+    SELECT COUNT(*) AS count FROM enno_opencode_continuation_receipts
     WHERE run_id = ? AND client_kind = 'opencode'
   `).get<{ count: number }>(runId)?.count ?? 0);
 }
@@ -530,7 +530,7 @@ test('an active WorkUnit lease prevents automatic rerouting to another local cli
 test('Goki cannot start before Oduno derives the ideal and Zenki submits a plan', async () => {
   const { root, database } = await fixture();
   try {
-    const prepared = await prepareAgentTask(database, {
+    const prepared = await prepareOpenCodeTask(database, {
       requestId: 'goki-before-plan',
       cwd: root,
       task: 'Repair the add function',
@@ -583,7 +583,7 @@ test('Goki cannot start before Oduno derives the ideal and Zenki submits a plan'
 test('a missing plan environment catalog returns a recoverable choice without consuming the run', async () => {
   const { root, database } = await fixture();
   try {
-    const prepared = await prepareAgentTask(database, {
+    const prepared = await prepareOpenCodeTask(database, {
       requestId: 'plan-environment-missing', cwd: root, task: 'Repair the add function',
       profileHints: { taskType: 'debug', target: 'src/add.js', expected: 'tests pass', constraints: null },
       capabilities, client: { kind: 'opencode', sessionId: 'opencode-plan-environment-missing' }, skillDiscoveryMode: 'off',
@@ -624,7 +624,7 @@ test('a missing plan environment catalog returns a recoverable choice without co
       .get<{ status: string }>(identity.runId)?.status, 'active');
     assert.equal(database.prepare("SELECT COUNT(*) AS count FROM enno_operation_receipts WHERE run_id = ? AND operation = 'plan_submit'")
       .get<{ count: number }>(identity.runId)?.count, 0);
-    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM agent_task_skill_discovery_attempts WHERE run_id = ? AND phase = 'zenki'")
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM task_skill_discovery_attempts WHERE run_id = ? AND phase = 'zenki'")
       .get<{ count: number }>(identity.runId)?.count, 0);
     assert.equal(database.prepare('SELECT COUNT(*) AS count FROM enno_advisory_rounds WHERE run_id = ?')
       .get<{ count: number }>(identity.runId)?.count, 0);
@@ -646,7 +646,7 @@ test('a changed environment waits for a choice and explicit planning cancellatio
   const { root, database } = await fixture();
   try {
     const sessionId = 'opencode-plan-environment-changed';
-    const prepared = await prepareAgentTask(database, {
+    const prepared = await prepareOpenCodeTask(database, {
       requestId: 'plan-environment-changed', cwd: root, task: 'Repair the add function',
       profileHints: { taskType: 'debug', target: 'src/add.js', expected: 'tests pass', constraints: null },
       capabilities, client: { kind: 'opencode', sessionId }, skillDiscoveryMode: 'off',
@@ -704,7 +704,7 @@ test('a changed environment waits for a choice and explicit planning cancellatio
     assert.equal(database.prepare('SELECT status FROM ledger_runs WHERE run_id = ?')
       .get<{ status: string }>(identity.runId)?.status, 'cancelled');
 
-    const restarted = await prepareAgentTask(database, {
+    const restarted = await prepareOpenCodeTask(database, {
       requestId: 'plan-environment-restarted', cwd: root, task: 'Repair the add function',
       profileHints: { taskType: 'debug', target: 'src/add.js', expected: 'tests pass', constraints: null },
       capabilities, client: { kind: 'opencode', sessionId }, skillDiscoveryMode: 'off',
@@ -722,7 +722,7 @@ test('a changed environment waits for a choice and explicit planning cancellatio
 test('a legacy plan ended by a lost environment catalog returns restart choices without opening another run', async () => {
   const { root, database } = await fixture();
   try {
-    const prepared = await prepareAgentTask(database, {
+    const prepared = await prepareOpenCodeTask(database, {
       requestId: 'legacy-plan-environment-ended', cwd: root, task: 'Repair the add function',
       profileHints: { taskType: 'debug', target: 'src/add.js', expected: 'tests pass', constraints: null },
       capabilities, client: { kind: 'opencode', sessionId: 'opencode-legacy-plan-ended' }, skillDiscoveryMode: 'off',
@@ -798,7 +798,7 @@ test('a legacy plan ended by a lost environment catalog returns restart choices 
 test('persisted WorkUnits validate the complete dependency graph during read-back', async () => {
   const { root, database } = await fixture();
   try {
-    const prepared = await prepareAgentTask(database, {
+    const prepared = await prepareOpenCodeTask(database, {
       requestId: 'stored-work-unit-dependencies', cwd: root, task: 'Build a dependent module pair',
       profileHints: { taskType: 'debug', target: 'src/prepare.js', expected: 'tests pass', constraints: null },
       capabilities, client: { kind: 'opencode', sessionId: 'opencode-stored-dependencies' }, skillDiscoveryMode: 'off',
@@ -864,7 +864,7 @@ test('Zenki discovery uses a new plan digest and only the remaining run budget a
       { kind: 'skill', name: 'memory-reasoning' },
       { kind: 'skill', name: 'svelte' },
     ];
-    const prepared = await prepareAgentTask(database, {
+    const prepared = await prepareOpenCodeTask(database, {
       requestId: 'zenki-discovery-budget', cwd: root, task: 'Repair a Svelte component',
       profileHints: { taskType: 'debug', target: 'src/component.ts', expected: 'tests pass', constraints: null },
       capabilities: discoveryCapabilities, client: { kind: 'opencode', sessionId: 'opencode-zenki-discovery-budget' },
@@ -967,7 +967,7 @@ test('Zenki discovery uses a new plan digest and only the remaining run budget a
       SELECT phase, request_digest AS requestDigest,
              reserved_query_count AS reservedQueries, consumed_query_count AS consumedQueries,
              reserved_selection_count AS reservedSelections, consumed_selection_count AS consumedSelections
-      FROM agent_task_skill_discovery_attempts WHERE run_id = ? ORDER BY rowid
+      FROM task_skill_discovery_attempts WHERE run_id = ? ORDER BY rowid
     `).all<{ phase: string; requestDigest: string; reservedQueries: number; consumedQueries: number; reservedSelections: number; consumedSelections: number }>(identity.runId)
       .map((row) => ({ ...row }));
     assert.equal(attempts.length, 3);
@@ -991,7 +991,7 @@ test('Zenki preserves the run-wide budget after a failed discovery attempt', asy
       { kind: 'skill', name: 'memory-reasoning' },
       { kind: 'skill', name: 'svelte' },
     ];
-    const prepared = await prepareAgentTask(testFixture.database, {
+    const prepared = await prepareOpenCodeTask(testFixture.database, {
       requestId,
       cwd: testFixture.root,
       task: 'Repair a Svelte component',
@@ -1038,7 +1038,7 @@ test('Zenki preserves the run-wide budget after a failed discovery attempt', asy
       skillRequirements: plan.skillRequirements,
     });
     const insertFailedAttempt = (requestDigest: string) => testFixture.database.prepare(`
-      INSERT INTO agent_task_skill_discovery_attempts (
+      INSERT INTO task_skill_discovery_attempts (
         run_id, phase, request_digest,
         reserved_query_count, reserved_selection_count,
         consumed_query_count, consumed_selection_count,
@@ -1063,7 +1063,7 @@ test('Zenki preserves the run-wide budget after a failed discovery attempt', asy
         SELECT request_digest AS requestDigest, state,
                reserved_query_count AS reservedQueries, consumed_query_count AS consumedQueries,
                reserved_selection_count AS reservedSelections, consumed_selection_count AS consumedSelections
-        FROM agent_task_skill_discovery_attempts
+        FROM task_skill_discovery_attempts
         WHERE run_id = ? AND phase = 'zenki' ORDER BY request_digest
     `).all(context.identity.runId).map((row) => ({ ...row })), [
         {
@@ -1091,7 +1091,7 @@ test('Zenki preserves the run-wide budget after a failed discovery attempt', asy
 test('Zenki cannot submit a code WorkUnit without a selected expert fragment', async () => {
   const { root, database } = await fixture();
   try {
-    const prepared = await prepareAgentTask(database, {
+    const prepared = await prepareOpenCodeTask(database, {
       requestId: 'missing-code-expert', cwd: root, task: 'Build a module',
       profileHints: { taskType: 'build', target: 'src/module.js', expected: 'tests pass', constraints: null },
       capabilities, client: { kind: 'opencode', sessionId: 'opencode-missing-expert' }, skillDiscoveryMode: 'off',
@@ -1130,7 +1130,7 @@ test('Zenki cannot submit a code WorkUnit without a selected expert fragment', a
 test('Oduno ideal requires one contribution for every Akinator-discovered Skill before Zenki starts', async () => {
   const { root, database } = await fixture();
   try {
-    const prepared = await prepareAgentTask(database, {
+    const prepared = await prepareOpenCodeTask(database, {
       requestId: 'ideal-skill-coverage', cwd: root, task: 'Repair the add function with discovered guidance',
       profileHints: { taskType: 'debug', target: 'src/add.js', expected: 'tests pass', constraints: null },
       capabilities, client: { kind: 'opencode', sessionId: 'opencode-ideal-coverage' }, skillDiscoveryMode: 'off',
@@ -1205,7 +1205,7 @@ test('Oduno ideal requires one contribution for every Akinator-discovered Skill 
 test('fake agent completes the Enno-Zenki-Goki loop in ledger order with fresh verifier evidence', async () => {
   const { root, database } = await fixture();
   try {
-    const prepared = await prepareAgentTask(database, {
+    const prepared = await prepareOpenCodeTask(database, {
       requestId: 'enno-happy-path', cwd: root, task: 'Fix the incorrect add function and make tests pass',
       profileHints: { taskType: 'debug', target: 'src/add.js', expected: 'node --test passes', constraints: 'Do not change the API' },
       capabilities, client: { kind: 'opencode', sessionId: 'opencode-session-1' }, skillDiscoveryMode: 'off',
@@ -1508,7 +1508,7 @@ function confirmationProjectionPlanInput(
 test('a needs_confirmation plan presents a complete user-facing confirmation projection', async () => {
   const { root, database } = await fixture();
   try {
-    const prepared = await prepareAgentTask(database, {
+    const prepared = await prepareOpenCodeTask(database, {
       requestId: 'confirmation-projection', cwd: root, task: 'Repair the add function',
       profileHints: { taskType: 'debug', target: 'src/add.js', expected: 'tests pass', constraints: null },
       capabilities, client: { kind: 'opencode', sessionId: 'opencode-confirmation' }, skillDiscoveryMode: 'off',
@@ -1582,7 +1582,7 @@ test('a needs_confirmation plan presents a complete user-facing confirmation pro
 test('revise returns to Zenki for a fresh projection and cancel terminates without one', async () => {
   const { root, database } = await fixture();
   try {
-    const prepared = await prepareAgentTask(database, {
+    const prepared = await prepareOpenCodeTask(database, {
       requestId: 'confirmation-revise-cancel', cwd: root, task: 'Repair the add function',
       profileHints: { taskType: 'debug', target: 'src/add.js', expected: 'tests pass', constraints: null },
       capabilities, client: { kind: 'opencode', sessionId: 'opencode-revision' }, skillDiscoveryMode: 'off',
@@ -1624,7 +1624,7 @@ test('revise returns to Zenki for a fresh projection and cancel terminates witho
 test('an all-explicit plan skips confirmation and carries no projection', async () => {
   const { root, database } = await fixture();
   try {
-    const prepared = await prepareAgentTask(database, {
+    const prepared = await prepareOpenCodeTask(database, {
       requestId: 'explicit-skips-confirmation', cwd: root, task: 'Repair the add function',
       profileHints: { taskType: 'debug', target: 'src/add.js', expected: 'tests pass', constraints: null },
       capabilities, client: { kind: 'opencode', sessionId: 'opencode-explicit' }, skillDiscoveryMode: 'off',
@@ -1649,7 +1649,7 @@ test('an all-explicit plan skips confirmation and carries no projection', async 
 test('mixed UI, code, test, docs, and operations WorkUnits route experts and Skills locally', async () => {
   const { root, database } = await fixture();
   try {
-    const prepared = await prepareAgentTask(database, {
+    const prepared = await prepareOpenCodeTask(database, {
       requestId: 'enno-code-ui-skills', cwd: root, task: 'Build an accessible settings panel',
       profileHints: { taskType: 'build', target: 'src/Settings.tsx', expected: 'UI tests pass', constraints: null },
       capabilities, client: { kind: 'opencode', sessionId: 'opencode-code-ui' }, skillDiscoveryMode: 'off',
@@ -1765,7 +1765,7 @@ test('an Enno plan blocks when the exact local kiokuko-soul capability is absent
       { kind: 'skill', name: 'kiokuko_soul', description: 'A non-canonical alias must not satisfy the master contract.' },
       ...capabilities.filter((capability) => capability.name !== 'kiokuko-soul'),
     ];
-    const prepared = await prepareAgentTask(database, {
+    const prepared = await prepareOpenCodeTask(database, {
       requestId: 'enno-missing-soul', cwd: root, task: 'Repair the add function',
       profileHints: { taskType: 'debug', target: 'src/add.js', expected: 'tests pass', constraints: null },
       capabilities: capabilitiesWithoutSoul,
@@ -1803,7 +1803,7 @@ test('an Enno plan blocks when the exact local kiokuko-soul capability is absent
 test('run identity rejects cross-run progress while trusted repository routing crosses sessions and clients', async () => {
   const { root, database } = await fixture();
   try {
-    const prepared = await prepareAgentTask(database, {
+    const prepared = await prepareOpenCodeTask(database, {
       requestId: 'enno-session-binding', cwd: root, task: 'Build a small module',
       profileHints: { taskType: 'build', target: 'src/module.js', expected: 'tests pass', constraints: null },
       capabilities, client: { kind: 'opencode', sessionId: 'opencode-owner' }, skillDiscoveryMode: 'off',

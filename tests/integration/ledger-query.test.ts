@@ -22,7 +22,7 @@ async function setup() {
 function runInput(overrides: Record<string, unknown> = {}) {
   return {
     runId: 'run-1', workspace: 'workspace-a', protocolVersion: '1',
-    client: { kind: 'generic', version: '1.0.0', sessionId: 'source-session' },
+    client: { kind: 'opencode' as const, version: '1.0.0', sessionId: 'source-session' },
     captureProfile: 'standard',
     coverage: { run: 'complete', tool: 'best_effort', command: 'declared', file: 'unavailable', approval: 'unavailable' },
     task: { title: 'Task', query: 'Run tests', profileHints: { taskType: 'build', target: null, expected: 'pass', constraints: null } },
@@ -55,7 +55,7 @@ test('lists only runs belonging to the requested workspace', async () => {
 
     assert.deepEqual(result.items.map((run) => run.runId), ['run-1']);
     assert.equal(result.items[0]?.workspace, 'workspace-a');
-    assert.equal(result.items[0]?.client.kind, 'generic');
+    assert.equal(result.items[0]?.client.kind, 'opencode');
     assert.equal(result.items[0]?.createdAt, now);
     assert.equal(result.nextCursor, null);
   } finally {
@@ -300,19 +300,19 @@ test('rejects malformed, wrong-version, and unknown-field run cursors with fixed
   }
 });
 
-test('binds client and status filters as values, including punctuation and SQL-like text', async () => {
+test('binds the OpenCode and status filters as values, including SQL-like text', async () => {
   const database = await setup();
   try {
     const store = new LedgerStore(database, { now: () => now });
     store.createRun(runInput());
-    store.createRun(runInput({ runId: 'run-2', client: { kind: 'other-client' } }));
+    store.createRun(runInput({ runId: 'run-2' }));
     store.updateRunStatus('run-2', 'completed', now);
     const beforeRuns = database.prepare('SELECT COUNT(*) AS count FROM ledger_runs').get<{ count: number }>()?.count;
     const beforeEvents = database.prepare('SELECT COUNT(*) AS count FROM ledger_events').get<{ count: number }>()?.count;
 
-    const filtered = listLedgerRuns(database, { workspace: 'workspace-a', client: 'generic', status: 'intake' });
+    const filtered = listLedgerRuns(database, { workspace: 'workspace-a', client: 'opencode', status: 'intake' });
     const completed = listLedgerRuns(database, { workspace: 'workspace-a', status: 'completed' });
-    const injectionLike = listLedgerRuns(database, { workspace: 'workspace-a', client: "generic' OR 1=1 --" });
+    const injectionLike = listLedgerRuns(database, { workspace: 'workspace-a', client: "opencode' OR 1=1 --" });
 
     assert.deepEqual(filtered.items.map((run) => run.runId), ['run-1']);
     assert.deepEqual(completed.items.map((run) => run.runId), ['run-2']);

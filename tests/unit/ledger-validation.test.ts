@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { KiokukoError } from '../../src/errors.js';
 import {
   validateAnswerInput,
   validateEventBatch,
@@ -33,7 +34,7 @@ function run(overrides: Record<string, unknown> = {}): Record<string, unknown> {
     runId: 'run-1',
     workspace: '/tmp/workspace',
     protocolVersion: '1',
-    client: { kind: 'generic', version: '1.0.0', sessionId: 'session-1' },
+    client: { kind: 'opencode' as const, version: '1.0.0', sessionId: 'session-1' },
     captureProfile: 'standard',
     coverage: {
       run: 'complete',
@@ -66,6 +67,10 @@ test('rejects unknown enums and non-canonical timestamps', () => {
 
 test('validates run coverage and immutable task/profile/answer shapes', () => {
   assert.doesNotThrow(() => validateRunInput(run()));
+  assert.throws(
+    () => validateRunInput(run({ client: { kind: 'codex' } })),
+    (error: unknown) => error instanceof KiokukoError && error.code === 'UNSUPPORTED_CLIENT',
+  );
   assert.throws(() => validateRunInput(run({ coverage: { run: 'complete', unexpected: 'best_effort' } })), /coverage|unknown|invalid/i);
   assert.doesNotThrow(() => validateTaskInput({ title: 'Task', query: 'Query', profileHints: { taskType: 'build', target: null, expected: null, constraints: null } }));
   assert.doesNotThrow(() => validateProfileHints({ taskType: 'build', target: null, expected: null, constraints: null }));

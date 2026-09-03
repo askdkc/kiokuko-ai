@@ -6,13 +6,14 @@ import { rollbackFailedTransaction } from '../db/transaction.js';
 import { readEntry, updateCandidateEntry, type EntryRecord } from '../memory/entries.js';
 import { searchEntries } from '../memory/retrieval.js';
 import { compareCanonicalStrings, ENTRY_KINDS, ENTRY_STATUSES, requireWorkspace, type EntryKind, type EntryStatus } from '../serialization/validate.js';
-import { AgentGatewayService } from '../gateway/agent-service.js';
 import { ContextBroker } from '../context/broker.js';
 import { listContextFeedback, listIntakeFeedback, listRunFeedback } from '../context/feedback.js';
 import { projectLedger } from '../ledger/projection.js';
 import { readAkinatorSession, readRunIntakeLink } from '../akinator/store.js';
 import { startHttpServer, type HttpApplicationContext, type HttpServerOptions } from '../server/http.js';
-import { createAgentV1Handler } from '../server/agent-application.js';
+import { listLedgerEvents, listLedgerRuns } from '../ledger/query.js';
+import { LedgerStore } from '../ledger/store.js';
+import { evaluateProfile, profileHash } from '../akinator/domain.js';
 import { WEB_HTML } from './ui.js';
 import { curateMemoryCandidates, curatorFacets, globalizeCuratorCandidate } from '../memory/curator.js';
 import { MEMORY_CLASSES } from '../memory/structured-memory.js';
@@ -47,7 +48,7 @@ function isInvalidUtf8EncodingError(error: unknown): boolean {
 
 export type WebServerHttpOptions = Omit<
   HttpServerOptions,
-  'databasePath' | 'host' | 'port' | 'app' | 'v1' | 'applicationFactory'
+  'databasePath' | 'host' | 'port' | 'app' | 'applicationFactory'
 >;
 
 export interface WebServerOptions {
@@ -565,24 +566,36 @@ function operatorRunIdFromPath(pathname: string): string | undefined {
 
 function operatorRunList(context: HttpApplicationContext, url: URL): unknown {
   const workspace = requireWorkspace(url.searchParams.get('workspace') ?? '');
-  const service = new AgentGatewayService(context.database);
   const input: Record<string, unknown> = { workspace };
-  for (const field of ['client', 'status', 'cursor'] as const) {
+  for (const field of ['status', 'cursor'] as const) {
     const value = url.searchParams.get(field);
     if (value !== null) input[field] = value;
   }
   const limit = url.searchParams.get('limit');
   if (limit !== null) input.limit = Math.min(limitQuery(limit), 100);
-  return { workspace, ...service.listRuns(input) };
+  return { workspace, ...listLedgerRuns(context.database, input) };
 }
 
 function operatorRunDetail(context: HttpApplicationContext, runId: string): unknown {
-  const service = new AgentGatewayService(context.database);
-  const run = service.readRun({ runId });
-  const intake = service.readIntake({ runId });
-  const events = service.listEvents({ runId, limit: 100 });
+  const run = new LedgerStore(context.database).readRun(runId);
+  if (run === undefined) throw new KiokukoError('NOT_FOUND', 'Task run not found');
   const link = readRunIntakeLink(context.database, { workspace: run.workspace, runId });
   const session = readAkinatorSession(context.database, { workspace: run.workspace, sessionId: link.sessionId });
+  const evaluated = evaluateProfile(session.profile, session.questionCount);
+  const intake = {
+    runId,
+    runStatus: run.status,
+    intakeSessionId: session.id,
+    intakeStatus: evaluated.status,
+    question: evaluated.question,
+    missingFields: evaluated.missingFields,
+    recommendedTags: evaluated.recommendedTags,
+    taskProfile: session.profile,
+    profileHash: link.initialProfileHash ?? (run.status === 'active' ? profileHash(session.profile) : null),
+    context: null,
+    untrusted: true,
+  };
+  const events = listLedgerEvents(context.database, { workspace: run.workspace, runId, limit: 100 });
   const initialProfile = { ...session.profile };
   const projection = projectLedger({
     initialProfile,
@@ -859,11 +872,11 @@ async function handleRequest(
 }
 
 function isSharedServerPath(pathname: string): boolean {
-  return pathname.startsWith('/health/') || pathname === '/api/v1' || pathname.startsWith('/api/v1/');
+  return pathname === '/health/live' || pathname === '/health/ready';
 }
 
 function createWebApplication(context: HttpApplicationContext, trustedOrigin: () => string | undefined): RequestListener {
-  const sharedApplication = context.createAuthenticatedApp(createAgentV1Handler(context));
+  const sharedApplication = context.createAuthenticatedApp();
   const sessionToken = randomBytes(32).toString('base64url');
   const externalSkillRefreshFlights: ExternalSkillRefreshFlights = {
     database: context.database,

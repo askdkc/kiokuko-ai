@@ -7,7 +7,7 @@ import { CONTEXT_BROKER_POLICY_VERSION, ContextBroker, type ContextBrokerPersist
 import { recordContextDelivery, type ContextDeliveryInput } from '../../src/context/delivery.js';
 import { openConnection } from '../../src/db/connection.js';
 import { migrateDatabase } from '../../src/db/migrate.js';
-import { AgentGatewayService } from '../../src/gateway/agent-service.js';
+import { OpenCodeTaskRunDriver } from '../fixtures/opencode-task-run-driver.js';
 import { recordEntry, updateCandidateEntry } from '../../src/memory/entries.js';
 
 const migrations = path.resolve(import.meta.dirname, '../../migrations');
@@ -18,13 +18,13 @@ test('a rejected gated query and a durable query for the same hash do not share 
   const database = openConnection(path.join(directory, 'data.sqlite3'));
   migrateDatabase(database, migrations);
   try {
-    const service = new AgentGatewayService(database, { now: () => now });
+    const service = new OpenCodeTaskRunDriver(database, { now: () => now });
     const opened = service.openRun({
       idempotencyKey: 'gated-flight-open',
       request: {
         apiVersion: '1',
         workspace: 'gated-flight',
-        client: { kind: 'test' },
+        client: { kind: 'opencode' as const },
         task: {
           title: 'Implement gated flight isolation',
           query: 'Implement gated flight isolation',
@@ -85,12 +85,12 @@ test('broker snapshots a plain gate decision and rejects an accessor that can fl
   const database = openConnection(path.join(directory, 'data.sqlite3'));
   migrateDatabase(database, migrations);
   try {
-    const opened = new AgentGatewayService(database, { now: () => now }).openRun({
+    const opened = new OpenCodeTaskRunDriver(database, { now: () => now }).openRun({
       idempotencyKey: 'gate-accessor-open',
       request: {
         apiVersion: '1',
         workspace: 'gate-accessor',
-        client: { kind: 'test' },
+        client: { kind: 'opencode' as const },
         task: {
           title: 'Reject a stateful gate decision',
           query: 'Reject a stateful gate decision',
@@ -139,13 +139,13 @@ test('gated rejection writes no delivery when memory changes during the decision
   const database = openConnection(path.join(directory, 'data.sqlite3'));
   migrateDatabase(database, migrations);
   try {
-    const service = new AgentGatewayService(database, { now: () => now });
+    const service = new OpenCodeTaskRunDriver(database, { now: () => now });
     const opened = service.openRun({
       idempotencyKey: 'gate-reject-open',
       request: {
         apiVersion: '1',
         workspace: 'gate-reject',
-        client: { kind: 'test' },
+        client: { kind: 'opencode' as const },
         task: {
           title: 'Implement gated persistence',
           query: 'Implement gated persistence',
@@ -198,13 +198,13 @@ test('gated approval rejects a catalog mutation after ranking', async () => {
   const database = openConnection(path.join(directory, 'data.sqlite3'));
   migrateDatabase(database, migrations);
   try {
-    const service = new AgentGatewayService(database, { now: () => now });
+    const service = new OpenCodeTaskRunDriver(database, { now: () => now });
     const opened = service.openRun({
       idempotencyKey: 'gate-approve-open',
       request: {
         apiVersion: '1',
         workspace: 'gate-approve',
-        client: { kind: 'test' },
+        client: { kind: 'opencode' as const },
         task: {
           title: 'Implement immutable gated persistence',
           query: 'Implement immutable gated persistence',
@@ -255,13 +255,13 @@ test('delivery commit rejects a selected revision that advances after the gate a
   const database = openConnection(path.join(directory, 'data.sqlite3'));
   migrateDatabase(database, migrations);
   try {
-    const service = new AgentGatewayService(database, { now: () => now });
+    const service = new OpenCodeTaskRunDriver(database, { now: () => now });
     const opened = service.openRun({
       idempotencyKey: 'gate-revision-race-open',
       request: {
         apiVersion: '1',
         workspace: 'gate-revision-race',
-        client: { kind: 'test' },
+        client: { kind: 'opencode' as const },
         task: {
           title: 'Implement revision race rejection',
           query: 'Implement revision race rejection',
@@ -326,12 +326,12 @@ test('delivery return rejects a selected revision changed by the queue after the
   migrateDatabase(database, migrations);
   try {
     const workspace = 'gate-post-write-race';
-    const opened = new AgentGatewayService(database, { now: () => now }).openRun({
+    const opened = new OpenCodeTaskRunDriver(database, { now: () => now }).openRun({
       idempotencyKey: 'gate-post-write-race-open',
       request: {
         apiVersion: '1',
         workspace,
-        client: { kind: 'test' },
+        client: { kind: 'opencode' as const },
         task: {
           title: 'Reject post-write stale delivery',
           query: 'Reject post-write stale delivery',
@@ -392,12 +392,12 @@ test('delivery commit rejects a same-revision search-signal mutation after ranki
   const database = openConnection(path.join(directory, 'data.sqlite3'));
   migrateDatabase(database, migrations);
   try {
-    const opened = new AgentGatewayService(database, { now: () => now }).openRun({
+    const opened = new OpenCodeTaskRunDriver(database, { now: () => now }).openRun({
       idempotencyKey: 'gate-signal-race-open',
       request: {
         apiVersion: '1',
         workspace: 'gate-signal-race',
-        client: { kind: 'test' },
+        client: { kind: 'opencode' as const },
         task: {
           title: 'Implement search signal race rejection',
           query: 'Implement search signal race rejection',
@@ -450,12 +450,12 @@ test('broker rechecks after a gate assertion and rolls back its in-transaction c
   migrateDatabase(database, migrations);
   try {
     const workspace = 'gate-assertion-race';
-    const opened = new AgentGatewayService(database, { now: () => now }).openRun({
+    const opened = new OpenCodeTaskRunDriver(database, { now: () => now }).openRun({
       idempotencyKey: 'gate-assertion-race-open',
       request: {
         apiVersion: '1',
         workspace,
-        client: { kind: 'test' },
+        client: { kind: 'opencode' as const },
         task: {
           title: 'Reject gate assertion mutation',
           query: 'Reject gate assertion mutation',
@@ -508,12 +508,12 @@ test('delivery commit rejects a concurrent delivery-history insertion that chang
   migrateDatabase(database, migrations);
   try {
     const workspace = 'gate-history-race';
-    const opened = new AgentGatewayService(database, { now: () => now }).openRun({
+    const opened = new OpenCodeTaskRunDriver(database, { now: () => now }).openRun({
       idempotencyKey: 'gate-history-race-open',
       request: {
         apiVersion: '1',
         workspace,
-        client: { kind: 'test' },
+        client: { kind: 'opencode' as const },
         task: {
           title: 'Reject stale delivery history ranking',
           query: 'Reject stale delivery history ranking',
@@ -584,12 +584,12 @@ test('a delivery rejected after a queued history write is never replayed as an a
   migrateDatabase(database, migrations);
   try {
     const workspace = 'post-queue-history';
-    const opened = new AgentGatewayService(database, { now: () => now }).openRun({
+    const opened = new OpenCodeTaskRunDriver(database, { now: () => now }).openRun({
       idempotencyKey: 'post-queue-history-open',
       request: {
         apiVersion: '1',
         workspace,
-        client: { kind: 'test' },
+        client: { kind: 'opencode' as const },
         task: {
           title: 'Reject post-queue history replay',
           query: 'Reject post-queue history replay',
@@ -677,12 +677,12 @@ test('rejects the retired custom delivery writer before it can bypass broker-own
   const database = openConnection(path.join(directory, 'data.sqlite3'));
   migrateDatabase(database, migrations);
   try {
-    const opened = new AgentGatewayService(database, { now: () => now }).openRun({
+    const opened = new OpenCodeTaskRunDriver(database, { now: () => now }).openRun({
       idempotencyKey: 'retired-writer-open',
       request: {
         apiVersion: '1',
         workspace: 'retired-writer',
-        client: { kind: 'test' },
+        client: { kind: 'opencode' as const },
         task: {
           title: 'Reject retired delivery writer',
           query: 'Reject retired delivery writer',

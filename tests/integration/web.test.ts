@@ -106,7 +106,7 @@ async function fixture() {
   return { directory, databasePath, candidate, verified };
 }
 
-test('startWebServer preserves its handle and legacy health/UI routes', async () => {
+test('startWebServer preserves its handle and health and operator UI routes', async () => {
   const data = await fixture();
   const web = await startWebServer({ databasePath: data.databasePath, host: '127.0.0.1', port: 0, httpOptions: { runtimeDirectory: path.join(data.directory, 'runtime') } });
   try {
@@ -198,7 +198,7 @@ test('web memory recall returns federated origin and selection metadata', async 
   }
 });
 
-test('startWebServer composes one shared database lifetime and keeps its legacy handle projection', async () => {
+test('startWebServer composes one shared database lifetime and keeps its operator handle projection', async () => {
   const data = await fixture();
   const runtimeDirectory = path.join(data.directory, 'runtime');
   const descriptorPath = path.join(runtimeDirectory, 'server.json');
@@ -263,129 +263,7 @@ test('startWebServer composes one shared database lifetime and keeps its legacy 
   assert.equal(closed, 1);
 });
 
-test('legacy Web delegates shared health and v1 paths before legacy OPTIONS handling', async () => {
-  const data = await fixture();
-  const token = 'c'.repeat(64);
-  const web = await startWebServer({
-    databasePath: data.databasePath,
-    host: '127.0.0.1',
-    port: 0,
-    httpOptions: {
-      runtimeDirectory: path.join(data.directory, 'runtime'),
-      descriptorPath: path.join(data.directory, 'runtime', 'server.json'),
-      instanceId: '123e4567-e89b-12d3-a456-426614174122',
-      capabilityToken: token,
-    },
-  });
-  try {
-    assert.equal(JSON.stringify(web).includes(token), false);
-    const live = await fetch(`${web.url}/health/live`);
-    assert.equal(live.status, 200);
-    assert.deepEqual(await live.json(), { ok: true });
-
-    const ready = await fetch(`${web.url}/health/ready`, {
-      headers: { authorization: `Bearer ${token}` },
-    });
-    assert.equal(ready.status, 200);
-    assert.deepEqual(await ready.json(), { ok: true });
-
-    const unauthenticatedV1 = await fetch(`${web.url}/api/v1/unknown`);
-    assert.equal(unauthenticatedV1.status, 401);
-    assert.deepEqual(await unauthenticatedV1.json(), {
-      apiVersion: '1',
-      ok: false,
-      operation: 'api.v1',
-      error: {
-        code: 'AUTHENTICATION_ERROR',
-        message: 'Authorization is invalid',
-        details: {},
-      },
-    });
-
-    const preflight = await fetch(`${web.url}/api/v1/unknown`, { method: 'OPTIONS' });
-    assert.equal(preflight.status, 401);
-    assert.equal(preflight.headers.get('access-control-allow-origin'), null);
-
-    const authenticatedUnknown = await fetch(`${web.url}/api/v1/unknown`, {
-      headers: { authorization: `Bearer ${token}` },
-    });
-    assert.equal(authenticatedUnknown.status, 404);
-    assert.deepEqual(await authenticatedUnknown.json(), {
-      apiVersion: '1',
-      ok: false,
-      operation: 'api.v1',
-      error: {
-        code: 'NOT_FOUND',
-        message: 'Endpoint not found',
-        details: {},
-      },
-    });
-
-    const legacyOptions = await fetch(`${web.url}/api/workspaces`, { method: 'OPTIONS' });
-    assert.equal(legacyOptions.status, 204);
-  } finally {
-    await web.close();
-  }
-});
-
-test('legacy Web mounts the same known Agent v1 route before legacy handling', async () => {
-  const data = await fixture();
-  const capabilityToken = 'e'.repeat(64);
-  const web = await startWebServer({
-    databasePath: data.databasePath,
-    host: '127.0.0.1',
-    port: 0,
-    httpOptions: {
-      runtimeDirectory: path.join(data.directory, 'agent-runtime'),
-      descriptorPath: path.join(data.directory, 'agent-runtime', 'server.json'),
-      instanceId: '123e4567-e89b-12d3-a456-426614174123',
-      capabilityToken,
-    },
-  });
-  try {
-    const response = await fetch(`${web.url}/api/v1/agent/runs`, {
-      method: 'POST',
-      headers: {
-        authorization: `Bearer ${capabilityToken}`,
-        'content-type': 'application/json',
-        'idempotency-key': 'web-agent-open-1',
-      },
-      body: JSON.stringify({
-        apiVersion: '1',
-        workspace: 'project:web-test',
-        client: { kind: 'web-test' },
-        task: {
-          title: 'Web Agent route',
-          query: 'Implement a feature',
-          profileHints: { taskType: 'build', target: 'src/web/server.ts', expected: 'tests pass', constraints: null },
-        },
-        captureProfile: 'standard',
-        coverage: { run: 'declared', tool: 'declared', command: 'declared', file: 'declared', approval: 'unavailable' },
-        capabilities: [{ kind: 'skill', name: 'kiokuko-soul' }],
-      }),
-    });
-    const body = await response.json() as {
-      operation: string;
-      data: {
-        runStatus: string;
-        nextAction: string;
-        context: unknown;
-        capabilities: { recommendations: Array<{ name: string; required?: boolean; availability: string }> };
-      };
-    };
-    assert.equal(response.status, 200);
-    assert.equal(body.operation, 'agent.open');
-    assert.equal(body.data.runStatus, 'active');
-    assert.equal(body.data.nextAction, 'proceed');
-    assert.equal(body.data.context, null);
-    assert.ok(body.data.capabilities.recommendations.some((item) => item.name === 'memory-reasoning'
-      && item.required === true
-      && item.availability === 'missing'));
-  } finally {
-    await web.close();
-  }
-});
-test('legacy mutations admitted before close drain through the shared queue and new mutations are rejected', async () => {
+test('operator mutations admitted before close drain through the shared queue and new mutations are rejected', async () => {
   const data = await fixture();
   const runtimeDirectory = path.join(data.directory, 'runtime');
   const descriptorPath = path.join(runtimeDirectory, 'server.json');

@@ -26,7 +26,7 @@ import {
 } from './types.js';
 
 export interface TaskClientHint {
-  kind?: string;
+  kind: 'opencode';
   version?: string;
   sessionId?: string;
 }
@@ -113,10 +113,16 @@ export function identifyMcpClientKind(client: McpClientImplementation | undefine
 export function resolveTaskPrepareClient(
   explicit: TaskClientHintInput | undefined,
   runtime: McpClientImplementation | undefined,
-): TaskClientHint | undefined {
+): TaskClientHint {
   const runtimeKind = identifyMcpClientKind(runtime);
   const explicitKind = identifyEnnoClientKind(explicit?.kind);
-  if (runtimeKind !== null && explicit?.kind !== undefined && explicitKind !== runtimeKind) {
+  if (explicit?.kind !== undefined && explicitKind === null) {
+    throw new KiokukoError('UNSUPPORTED_CLIENT', 'Only OpenCode is supported');
+  }
+  if (runtime !== undefined && runtimeKind === null) {
+    throw new KiokukoError('UNSUPPORTED_CLIENT', 'Only OpenCode is supported');
+  }
+  if (runtimeKind !== null && explicitKind !== null && explicitKind !== runtimeKind) {
     throw new KiokukoError('CONFLICT', 'Explicit client identity conflicts with the MCP client');
   }
   if (runtimeKind !== null) {
@@ -127,19 +133,15 @@ export function resolveTaskPrepareClient(
       ...(explicit?.sessionId === undefined ? {} : { sessionId: explicit.sessionId }),
     };
   }
-  if (explicit !== undefined) {
+  if (explicitKind === 'opencode') {
+    const selected = explicit as TaskClientHintInput;
     return {
-      ...(explicit.kind === undefined ? {} : { kind: explicit.kind }),
-      ...(explicit.version === undefined ? {} : { version: explicit.version }),
-      ...(explicit.sessionId === undefined ? {} : { sessionId: explicit.sessionId }),
+      kind: 'opencode',
+      ...(selected.version === undefined ? {} : { version: selected.version }),
+      ...(selected.sessionId === undefined ? {} : { sessionId: selected.sessionId }),
     };
   }
-  if (runtime === undefined) return undefined;
-  const runtimeVersion = boundedVersion(runtime.version);
-  return {
-    kind: runtime.name,
-    ...(runtimeVersion === undefined ? {} : { version: runtimeVersion }),
-  };
+  throw new KiokukoError('UNSUPPORTED_CLIENT', 'OpenCode client identity is required');
 }
 
 type EvidenceRecord = Record<string, unknown>;

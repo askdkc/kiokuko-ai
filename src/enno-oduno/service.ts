@@ -7,10 +7,10 @@ import { normalizeCapabilityCatalog } from '../akinator/capabilities.js';
 import { getAkinatorContextService } from '../akinator/service.js';
 import type { AkinatorQuestion, AkinatorReasoning, TaskProfile } from '../akinator/types.js';
 import {
-  claimAgentTaskSkillDiscoveryAttempt,
-  completeAgentTaskSkillDiscoveryAttempt,
-  failAgentTaskSkillDiscoveryAttempt,
-  readAgentTaskSkillDiscoveryAttempt,
+  claimTaskSkillDiscoveryAttempt,
+  completeTaskSkillDiscoveryAttempt,
+  failTaskSkillDiscoveryAttempt,
+  readTaskSkillDiscoveryAttempt,
 } from '../akinator/skill-discovery-attempt.js';
 import {
   captureProjectManifestSnapshot,
@@ -721,15 +721,15 @@ async function discoverZenkiSkills(
       skillRequirements: plan.skillRequirements,
     }),
   };
-  const replay = readAgentTaskSkillDiscoveryAttempt(database, attempt);
+  const replay = readTaskSkillDiscoveryAttempt(database, attempt);
   if (replay !== undefined) return replay.summary;
-  const claimed = claimAgentTaskSkillDiscoveryAttempt(database, attempt, {
+  const claimed = claimTaskSkillDiscoveryAttempt(database, attempt, {
     queryBudget: ENNO_MAX_TOTAL_SKILL_QUERIES,
     selectionBudget: ENNO_MAX_EXTERNAL_SKILLS,
   });
   if (claimed.kind === 'replay') return claimed.summary;
   if (claimed.queryBudget === 0 || claimed.selectionBudget === 0) {
-    return completeAgentTaskSkillDiscoveryAttempt(database, attempt, emptyDiscovery(intake.mode), () => {
+    return completeTaskSkillDiscoveryAttempt(database, attempt, emptyDiscovery(intake.mode), () => {
       assertExpected(readEnnoSnapshot(database, identity(database, plan)), plan.expectedRevision, ['zenki_planning']);
     });
   }
@@ -746,11 +746,11 @@ async function discoverZenkiSkills(
       ...(dependencies.fetchImpl === undefined ? {} : { fetchImpl: dependencies.fetchImpl }),
       assertBeforePersist: () => assertExpected(readEnnoSnapshot(database, identity(database, plan)), plan.expectedRevision, ['zenki_planning']),
     });
-    return completeAgentTaskSkillDiscoveryAttempt(database, attempt, summary, () => {
+    return completeTaskSkillDiscoveryAttempt(database, attempt, summary, () => {
       assertExpected(readEnnoSnapshot(database, identity(database, plan)), plan.expectedRevision, ['zenki_planning']);
     });
   } catch (error) {
-    failAgentTaskSkillDiscoveryAttempt(database, attempt, error);
+    failTaskSkillDiscoveryAttempt(database, attempt, error);
   }
 }
 

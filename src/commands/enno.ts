@@ -12,10 +12,8 @@ import type { SqliteDatabase } from '../db/adapter.js';
 import {
   decideAdapterContinuation,
   ENNO_ADAPTER_WARNING,
-  ENNO_CLIENTS,
   failOpenAdapterOutput,
   renderOpenCodeDecision,
-  type EnnoClient,
 } from '../enno-oduno/adapters.js';
 import { parseOpenCodeHookRequest } from '../opencode/hook-protocol.js';
 
@@ -36,13 +34,6 @@ function parseRole(value: string): EnnoRole {
     throw new KiokukoError('VALIDATION_ERROR', `role must be one of: ${ENNO_ROLES.join(', ')}`);
   }
   return value as EnnoRole;
-}
-
-function parseClient(value: string): EnnoClient {
-  if (!ENNO_CLIENTS.includes(value as EnnoClient)) {
-    throw new KiokukoError('UNSUPPORTED_CLIENT', 'Only the OpenCode client is supported');
-  }
-  return value as EnnoClient;
 }
 
 export interface EnnoCommandDependencies {
@@ -73,10 +64,9 @@ export function registerEnnoCommand(root: Command, dependencies: EnnoCommandDepe
 
   enno.command('hook')
     .description('Evaluate one OpenCode completion event')
-    .requiredOption('--client <client>', 'opencode')
     .requiredOption('--input-json <path>', 'Strict JSON input; v1 accepts stdin (-) only')
-    .action(async (options: { client: string; inputJson: string }) => {
-      const client = parseClient(options.client);
+    .action(async (options: { inputJson: string }) => {
+      const client = 'opencode';
       if (options.inputJson !== '-') {
         process.stderr.write(`${ENNO_ADAPTER_WARNING}\n`);
         process.stdout.write(serializeRoleOutput(failOpenAdapterOutput(client)));

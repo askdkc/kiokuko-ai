@@ -67,7 +67,7 @@ test('OpenCode plugin prompts after explicit hook approval', async () => {
     assert.equal(typeof hooks.event, 'function');
     assert.equal(hooks.tool, undefined);
     await hooks.event!({ event: { type: 'session.idle', properties: { sessionID: 'plugin-session', messageID: 'plugin-terminal' } } as never });
-    assert.deepEqual(argv, [process.execPath, executable, 'enno', 'hook', '--client', 'opencode', '--input-json', '-']);
+    assert.deepEqual(argv, [process.execPath, executable, 'enno', 'hook', '--input-json', '-']);
     assert.equal(promptCount, 1);
   } finally {
     (globalThis as { Bun?: unknown }).Bun = originalBun;

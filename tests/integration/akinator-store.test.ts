@@ -74,7 +74,7 @@ function seedRun(
       run_id, workspace, client_kind, protocol_version, capture_profile, coverage_json,
       status, metadata_json, started_at, created_at, updated_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(runId, workspace, 'generic', '1', 'standard', '{}', 'intake', '{}', now, now, now);
+  `).run(runId, workspace, 'opencode', '1', 'standard', '{}', 'intake', '{}', now, now, now);
 }
 
 function withInjectedRunFailure(
@@ -240,7 +240,7 @@ test('inserts and reads a workspace-scoped run intake link with stable source an
         run_id, workspace, client_kind, protocol_version, capture_profile, coverage_json,
         status, metadata_json, started_at, created_at, updated_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run('run-link', 'workspace-a', 'generic', '1', 'standard', '{}', 'intake', '{}', now, now, now);
+    `).run('run-link', 'workspace-a', 'opencode', '1', 'standard', '{}', 'intake', '{}', now, now, now);
 
     const inserted = insertRunIntakeLink(database, {
       runId: 'run-link',
@@ -290,7 +290,7 @@ test('finalizes an intake link once and replays only the exact finalization', as
         run_id, workspace, client_kind, protocol_version, capture_profile, coverage_json,
         status, metadata_json, started_at, created_at, updated_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run('run-finalize', 'workspace-a', 'generic', '1', 'standard', '{}', 'intake', '{}', now, now, now);
+    `).run('run-finalize', 'workspace-a', 'opencode', '1', 'standard', '{}', 'intake', '{}', now, now, now);
     insertRunIntakeLink(database, {
       runId: 'run-finalize',
       sessionId: 'session-finalize',
@@ -655,7 +655,7 @@ test('uses caller-owned transactions and leaves an outer marker intact after a h
       INSERT INTO ledger_runs (
         run_id, workspace, client_kind, protocol_version, capture_profile, coverage_json,
         status, metadata_json, started_at, created_at, updated_at
-      ) VALUES ('run-transaction', 'workspace-a', 'generic', '1', 'standard', '{}', 'intake', '{}', '${now}', '${now}', '${now}');
+      ) VALUES ('run-transaction', 'workspace-a', 'opencode', '1', 'standard', '{}', 'intake', '{}', '${now}', '${now}', '${now}');
     `);
     database.exec('BEGIN IMMEDIATE');
     try {

@@ -116,8 +116,12 @@ export function validateAnswerInput(value: unknown): AnswerInput {
 function validateClient(value: unknown): ClientInput {
   const input = object(value, 'client');
   knownFields(input, ['kind', 'version', 'sessionId'], 'client');
+  const kind = nonEmptyString(input.kind, 'client.kind', MAX_ID_LENGTH);
+  if (kind !== 'opencode') {
+    throw new KiokukoError('UNSUPPORTED_CLIENT', 'Only OpenCode task runs are supported');
+  }
   return {
-    kind: nonEmptyString(input.kind, 'client.kind', MAX_ID_LENGTH),
+    kind,
     ...(input.version === undefined ? {} : { version: nonEmptyString(input.version, 'client.version', MAX_ID_LENGTH) }),
     ...(input.sessionId === undefined ? {} : { sessionId: nonEmptyString(input.sessionId, 'client.sessionId', MAX_ID_LENGTH) }),
   };

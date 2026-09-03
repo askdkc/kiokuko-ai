@@ -30,7 +30,7 @@ import { isSkillDiscoveryMode, normalizeSkillDiscoveryMode, SKILL_DISCOVERY_ENV 
 import type { SkillDiscoveryMode } from '../skills/types.js';
 import { hasCanonicalOpenCodeMcpConfig, renderOpenCodeConfig } from '../setup/opencode-config.js';
 import { resolveManagedOpenCodeRuntime } from '../opencode/runtime-invocation.js';
-import { setupMcpIdentityConflictClient } from '../setup/mcp-conflict.js';
+import { isSetupOpenCodeMcpIdentityConflict } from '../setup/mcp-conflict.js';
 import { renderGlobalInstructions } from '../setup/render.js';
 import {
   loadBundledStandardSkillFiles,
@@ -46,8 +46,6 @@ import {
   findMissingRepositoryLocations,
   removeMissingRepositoryLocations,
 } from '../repository/binding.js';
-export const SETUP_CLIENTS = ['opencode'] as const;
-export type SetupClient = 'opencode';
 export type EnnoSetupMode = 'on' | 'off';
 type SetupAction = 'created' | 'updated' | 'unchanged' | 'deleted';
 
@@ -76,7 +74,7 @@ interface PlannedFile {
   mustRemainAbsent?: readonly string[];
   action: SetupAction;
   purpose: 'mcp-config' | 'instructions' | 'standard-skill';
-  client: SetupClient;
+  client: 'opencode';
   report: boolean;
 }
 
@@ -87,7 +85,7 @@ export interface SetupOptions extends PathEnvironment {
   migrationsDirectory?: string;
   standardSkills?: boolean;
   skillDiscoveryMode?: SkillDiscoveryMode;
-  replaceConflictingMcpServers?: readonly SetupClient[];
+  replaceConflictingOpenCodeMcp?: boolean;
   ennoOduno?: EnnoSetupMode;
 }
 
@@ -102,7 +100,7 @@ export interface SetupCommandDependencies {
 
 export interface SetupResult {
   protocolVersion: 1;
-  clients: SetupClient[];
+  client: 'opencode';
   databasePath: string;
   appliedMigrations: number[];
   files: Array<Pick<PlannedFile, 'path' | 'action' | 'purpose' | 'client'>>;
@@ -146,9 +144,8 @@ async function askCommunitySkillDiscovery(prompt: SetupQuestion, output: NodeJS.
 async function askReplaceConflictingMcp(
   prompt: SetupQuestion,
   output: NodeJS.WritableStream,
-  client: SetupClient,
 ): Promise<boolean> {
-  const label = client === 'opencode' ? 'OpenCode' : client;
+  const label = 'OpenCode';
   output.write(`${label} already has a non-canonical or unmanaged Kiokuko MCP identity.\n`);
   output.write('Kiokuko can remove that identity, install the managed configuration, and continue setup.\n');
   const answer = (await prompt.question(`Replace the existing ${label} Kiokuko MCP identity and continue? [Y/n] `)).trim();
@@ -169,14 +166,13 @@ export async function promptCommunitySkillDiscovery(options: SetupPromptOptions 
 
 /** Ask before replacing a client Kiokuko MCP identity that setup does not own. */
 export async function promptReplaceConflictingMcp(
-  client: SetupClient,
   options: SetupPromptOptions = {},
 ): Promise<boolean> {
   const input = options.input ?? stdin;
   const output = options.output ?? stdout;
   const prompt = createInterface({ input, output });
   try {
-    return await askReplaceConflictingMcp(prompt, output, client);
+    return await askReplaceConflictingMcp(prompt, output);
   } finally {
     prompt.close();
   }
@@ -194,12 +190,12 @@ export interface SetupFlowOptions {
   readonly output?: NodeJS.WritableStream;
 }
 
-export interface SetupFlowDependencies<T extends { clients: SetupClient[]; projectAgentFiles: ProjectAgentRefreshResult[] }> {
-  readonly setupGlobalClients?: (options: SetupOptions) => Promise<T>;
+export interface SetupFlowDependencies<T extends { client: 'opencode'; projectAgentFiles: ProjectAgentRefreshResult[] }> {
+  readonly setupOpenCode?: (options: SetupOptions) => Promise<T>;
 }
 
 /** Run the OpenCode conflict-confirmation and setup flow. */
-export async function runSetupFlow<T extends { clients: SetupClient[]; projectAgentFiles: ProjectAgentRefreshResult[] } = SetupResult>(
+export async function runSetupFlow<T extends { client: 'opencode'; projectAgentFiles: ProjectAgentRefreshResult[] } = SetupResult>(
   options: SetupFlowOptions = {},
   dependencyOverrides: SetupFlowDependencies<T> = {},
 ): Promise<T> {
@@ -209,7 +205,7 @@ export async function runSetupFlow<T extends { clients: SetupClient[]; projectAg
     ?? (Object.prototype.hasOwnProperty.call(setupProcessEnvironment, SKILL_DISCOVERY_ENV)
       ? normalizeSkillDiscoveryMode(setupProcessEnvironment[SKILL_DISCOVERY_ENV])
       : undefined);
-  // v0.1.0 setup is deliberately deterministic: the npm plugin targets
+  // Setup is deliberately deterministic: the npm plugin targets
   // OpenCode regardless of which executables happen to be on PATH.
   const input = options.input ?? stdin;
   const output = options.output ?? stdout;
@@ -228,39 +224,24 @@ export async function runSetupFlow<T extends { clients: SetupClient[]; projectAg
     ...(skillDiscoveryMode === undefined ? {} : { skillDiscoveryMode }),
     ...(options.ennoOduno === undefined ? {} : { ennoOduno: options.ennoOduno }),
   };
-  const runSetup = dependencyOverrides.setupGlobalClients
-    ?? (setupGlobalClients as unknown as (options: SetupOptions) => Promise<T>);
-  const replacementClients = new Set<SetupClient>();
+  const runSetup = dependencyOverrides.setupOpenCode
+    ?? (setupOpenCode as unknown as (options: SetupOptions) => Promise<T>);
+  let replaceConflictingOpenCodeMcp = false;
   for (;;) {
     try {
       return await runSetup({
         ...setupOptions,
-        replaceConflictingMcpServers: [...replacementClients],
+        replaceConflictingOpenCodeMcp,
       });
     } catch (error) {
-      const conflictClient = setupMcpIdentityConflictClient(error);
       if (!interactive
-        || conflictClient === undefined
-        || conflictClient !== 'opencode'
-        || replacementClients.has(conflictClient)) throw error;
-      const replace = await promptReplaceConflictingMcp(conflictClient, { input, output });
+        || !isSetupOpenCodeMcpIdentityConflict(error)
+        || replaceConflictingOpenCodeMcp) throw error;
+      const replace = await promptReplaceConflictingMcp({ input, output });
       if (!replace) throw error;
-      replacementClients.add(conflictClient);
+      replaceConflictingOpenCodeMcp = true;
     }
   }
-}
-
-function replacementClientSet(value: readonly SetupClient[] | undefined): ReadonlySet<SetupClient> {
-  if (value === undefined) return new Set();
-  if (!Array.isArray(value)
-    || value.some((client) => !SETUP_CLIENTS.includes(client as 'opencode'))
-    || new Set(value).size !== value.length) {
-    throw new KiokukoError(
-      'VALIDATION_ERROR',
-      `replaceConflictingMcpServers must be a unique subset of: ${SETUP_CLIENTS.join(', ')}`,
-    );
-  }
-  return new Set(value);
 }
 
 function wasManagedBeforeSetup(
@@ -428,7 +409,6 @@ async function removeCreatedDirectories(createdDirectories: PlannedDirectory[]):
 async function planFile(
   planning: SetupPlanningContext,
   filePath: string,
-  client: SetupClient,
   purpose: PlannedFile['purpose'],
   render: (existing: string | undefined) => { content: string; action: SetupAction },
   mustRemainAbsent: readonly string[] = [],
@@ -447,7 +427,7 @@ async function planFile(
     ...(mustRemainAbsent.length === 0 ? {} : { mustRemainAbsent }),
     action,
     purpose,
-    client,
+    client: 'opencode',
     report: true,
   };
 }
@@ -504,11 +484,7 @@ function setupNextStep(standardSkills: boolean): string {
   return `Restart OpenCode so it reloads global MCP and instruction configuration${standardSkills ? ' and standard skills' : ''}.`;
 }
 
-async function standardSkillDirectory(
-  client: SetupClient,
-  options: PathEnvironment,
-): Promise<string> {
-  if (client !== 'opencode') throw new KiokukoError('INTEGRITY_ERROR', `Unsupported setup client: ${client}`);
+async function standardSkillDirectory(options: PathEnvironment): Promise<string> {
   return getOpenCodeSkillsDirectory(options);
 }
 
@@ -612,7 +588,7 @@ function readDryRunProjectLocations(
   return locations;
 }
 
-export async function setupGlobalClients(
+export async function setupOpenCode(
   options: SetupOptions = {},
   dependencyOverrides: SetupCommandDependencies = {},
 ): Promise<SetupResult> {
@@ -635,8 +611,7 @@ export async function setupGlobalClients(
   if (options.ennoOduno !== undefined && options.ennoOduno !== 'on' && options.ennoOduno !== 'off') {
     throw new KiokukoError('VALIDATION_ERROR', 'ennoOduno must be on or off');
   }
-  const replaceConflictingMcpServers = replacementClientSet(options.replaceConflictingMcpServers);
-  const clients: SetupClient[] = ['opencode'];
+  const replaceConflictingOpenCodeMcp = options.replaceConflictingOpenCodeMcp === true;
   const command = options.command ?? 'kiokuko-ai';
   if (typeof command !== 'string' || command.trim().length === 0 || command.includes('\0')) {
     throw new KiokukoError('VALIDATION_ERROR', 'command must be a non-empty executable path or name');
@@ -653,53 +628,47 @@ export async function setupGlobalClients(
   const files: PlannedFile[] = [];
   const planning: SetupPlanningContext = { directories: new Map() };
 
-  if (clients.includes('opencode')) {
-    const selectedConfig = await openCodeConfigPath(planning, pathEnvironment);
-    const mcpFile = await planFile(
-      planning,
-      selectedConfig.path,
-      'opencode',
-      'mcp-config',
-      (existing) => renderOpenCodeConfig(
-        existing,
-        command,
-        skillDiscoveryMode,
-        {
-          replaceConflictingIdentity: replaceConflictingMcpServers.has('opencode'),
-          ...(runtime === undefined ? {} : { runtime }),
-        },
-      ),
-      selectedConfig.mustRemainAbsent,
-    );
-    files.push(mcpFile);
-    files.push(await planFile(planning, getOpenCodeInstructionsPath(pathEnvironment), 'opencode', 'instructions', (existing) => renderGlobalInstructions(existing ?? '')));
-  }
+  const selectedConfig = await openCodeConfigPath(planning, pathEnvironment);
+  const mcpFile = await planFile(
+    planning,
+    selectedConfig.path,
+    'mcp-config',
+    (existing) => renderOpenCodeConfig(
+      existing,
+      command,
+      skillDiscoveryMode,
+      {
+        replaceConflictingIdentity: replaceConflictingOpenCodeMcp,
+        ...(runtime === undefined ? {} : { runtime }),
+      },
+    ),
+    selectedConfig.mustRemainAbsent,
+  );
+  files.push(mcpFile);
+  files.push(await planFile(planning, getOpenCodeInstructionsPath(pathEnvironment), 'instructions', (existing) => renderGlobalInstructions(existing ?? '')));
 
   if (standardSkills) {
     const bundledFiles = await loadBundledStandardSkillFiles();
-    for (const client of clients) {
-      const skillsDirectory = await standardSkillDirectory(client, pathEnvironment);
-      for (const bundled of bundledFiles) {
-        const destinationPath = setupPathJoin(
-          pathEnvironment,
-          skillsDirectory,
-          bundled.skillName,
-          bundled.relativePath,
-        );
-        files.push(await planFile(
-          planning,
-          destinationPath,
-          client,
-          'standard-skill',
-          (existing) => renderStandardSkillFile(existing, bundled, destinationPath),
-        ));
-      }
+    const skillsDirectory = await standardSkillDirectory(pathEnvironment);
+    for (const bundled of bundledFiles) {
+      const destinationPath = setupPathJoin(
+        pathEnvironment,
+        skillsDirectory,
+        bundled.skillName,
+        bundled.relativePath,
+      );
+      files.push(await planFile(
+        planning,
+        destinationPath,
+        'standard-skill',
+        (existing) => renderStandardSkillFile(existing, bundled, destinationPath),
+      ));
     }
   }
 
   const result: SetupResult = {
     protocolVersion: 1,
-    clients,
+    client: 'opencode',
     databasePath,
     appliedMigrations: [],
     files: files

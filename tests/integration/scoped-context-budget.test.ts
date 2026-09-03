@@ -5,7 +5,7 @@ import path from 'node:path';
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import test from 'node:test';
-import { AgentGatewayService } from '../../src/gateway/agent-service.js';
+import { OpenCodeTaskRunDriver } from '../fixtures/opencode-task-run-driver.js';
 import { queryScopedContext, queryScopedContextGated } from '../../src/context/scoped-broker.js';
 import { readContextDelivery } from '../../src/context/delivery.js';
 import { openConnection } from '../../src/db/connection.js';
@@ -123,7 +123,7 @@ async function fixture(target = 'budget sentinel', expected = 'bounded context')
   migrateDatabase(database, migrations);
   const project = await resolveProjectWorkspace(database, root);
   assert.ok(project);
-  const service = new AgentGatewayService(database, { now: () => now });
+  const service = new OpenCodeTaskRunDriver(database, { now: () => now });
   const opened = service.openRun({
     idempotencyKey: 'scoped-budget-run',
     request: {

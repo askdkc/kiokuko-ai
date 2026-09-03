@@ -22,7 +22,7 @@ async function setup() {
 function runInput(overrides: Record<string, unknown> = {}) {
   return {
     runId: 'run-1', workspace: '/tmp/workspace', protocolVersion: '1',
-    client: { kind: 'generic', version: '1.0.0', sessionId: 'source-session' },
+    client: { kind: 'opencode' as const, version: '1.0.0', sessionId: 'source-session' },
     captureProfile: 'standard',
     coverage: { run: 'complete', tool: 'best_effort', command: 'declared', file: 'unavailable', approval: 'unavailable' },
     task: { title: 'Task', query: 'Run tests', profileHints: { taskType: 'build', target: null, expected: 'pass', constraints: null } },

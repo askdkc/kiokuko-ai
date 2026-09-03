@@ -538,7 +538,7 @@ export async function checkpointScopedMemory(database: SqliteDatabase, input: Sc
       ...(deliveryId === undefined ? {} : { deliveryId }),
       ...(evidenceIds.length === 0 ? {} : { evidenceIds }),
       ...(evidence.changedPaths.length === 0 ? {} : { sourcePaths: evidence.changedPaths }),
-      clientKind: 'mcp',
+      clientKind: 'opencode',
       timestamp: now,
     };
     return validateNewEntryInput({ ...baseRecord, scope, provenance }).record;

@@ -32,7 +32,7 @@ function runInput(runId = 'run-1', workspace = 'workspace-a') {
     runId,
     workspace,
     protocolVersion: '1' as const,
-    client: { kind: 'generic', version: '1.0.0' },
+    client: { kind: 'opencode' as const, version: '1.0.0' },
     captureProfile: 'standard' as const,
     coverage: { run: 'complete' as const, tool: 'best_effort' as const, command: 'declared' as const, file: 'unavailable' as const, approval: 'unavailable' as const },
     task: { title: 'Task', query: 'Run tests', profileHints: { taskType: 'build' as const, target: null, expected: 'pass', constraints: null } },

@@ -7,7 +7,6 @@ import path from 'node:path';
 import test from 'node:test';
 import { openConnection } from '../../src/db/connection.js';
 import { migrateDatabase } from '../../src/db/migrate.js';
-import { CheckpointService } from '../../src/gateway/checkpoint-service.js';
 import { LedgerStore } from '../../src/ledger/store.js';
 
 const execFileAsync = promisify(execFile);
@@ -20,7 +19,7 @@ async function setup() {
   migrateDatabase(database, migrations);
   new LedgerStore(database).createRun({
     runId: 'run-1', workspace: '/tmp/workspace', protocolVersion: '1',
-    client: { kind: 'generic' }, captureProfile: 'standard',
+    client: { kind: 'opencode' }, captureProfile: 'standard',
     coverage: { run: 'best_effort', tool: 'best_effort', command: 'best_effort', file: 'best_effort', approval: 'unavailable' },
     task: { title: 'Concurrent', query: 'append', profileHints: { taskType: 'build', target: null, expected: null, constraints: null } },
     metadata: {}, startedAt: '2026-08-20T00:00:00.000Z',
@@ -57,80 +56,5 @@ test('concurrent producers allocate every local sequence exactly once', async ()
     assert.equal(database.prepare('SELECT last_sequence FROM ledger_runs WHERE run_id = ?').get<{ last_sequence: number }>('run-1')?.last_sequence, 40);
   } finally {
     database.close();
-  }
-});
-
-test('concurrent checkpoint nudge delivery persists one occurrence', async () => {
-  const directory = await mkdtemp(path.join(tmpdir(), 'kiokuko-nudge-concurrency-'));
-  const databasePath = path.join(directory, 'data.sqlite3');
-  const database = openConnection(databasePath);
-  const now = '2026-08-20T00:00:00.000Z';
-  try {
-    migrateDatabase(database, migrations);
-    const store = new LedgerStore(database, { now: () => now });
-    store.createRun({
-      runId: 'run-nudge-concurrent',
-      workspace: 'workspace:nudge-concurrent',
-      protocolVersion: '1',
-      client: { kind: 'concurrency-test' },
-      captureProfile: 'standard',
-      coverage: { run: 'complete', tool: 'complete', command: 'complete', file: 'complete', approval: 'complete' },
-      task: { title: 'Concurrent nudge', query: 'deliver one nudge', profileHints: { taskType: 'build', target: null, expected: null, constraints: null } },
-      metadata: {},
-      startedAt: now,
-    });
-    store.appendBatch('run-nudge-concurrent', {
-      events: [{ eventId: 'nudge-concurrent-event', eventType: 'run.started', actor: 'test', payload: {} }],
-    });
-  } finally {
-    database.close();
-  }
-
-  const projection = {
-    unresolvedFailureEventIds: ['nudge-concurrent-event'],
-    unknownOutcomeEventIds: [],
-    evidenceState: 'none',
-    latestMutationSequence: null,
-    latestMutationEventIds: [],
-  };
-  const recommendations = [{
-    code: 'UNRESOLVED_FAILURE',
-    message: 'Unresolved failures remain',
-    evidenceEventIds: [],
-    priority: 4,
-    untrusted: true,
-    actionable: false,
-    metadata: { truncated: false, referenceIds: [] },
-  }];
-  const worker = `
-    import { openConnection } from './src/db/connection.ts';
-    import { CheckpointService } from './src/gateway/checkpoint-service.ts';
-    const db = openConnection(process.env.KIOKUKO_DATABASE);
-    try {
-      new CheckpointService(db, () => process.env.KIOKUKO_NOW).deliverNudge({
-        runId: 'run-nudge-concurrent',
-        idempotencyKey: 'nudge-concurrent-checkpoint',
-        throughSequence: 1,
-        projection: JSON.parse(process.env.KIOKUKO_PROJECTION),
-        recommendations: JSON.parse(process.env.KIOKUKO_RECOMMENDATIONS),
-      });
-    } finally { db.close(); }
-  `;
-  await Promise.all(Array.from({ length: 2 }, () => execFileAsync(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', worker], {
-    cwd: path.resolve(import.meta.dirname, '../..'),
-    env: {
-      ...process.env,
-      KIOKUKO_DATABASE: databasePath,
-      KIOKUKO_NOW: now,
-      KIOKUKO_PROJECTION: JSON.stringify(projection),
-      KIOKUKO_RECOMMENDATIONS: JSON.stringify(recommendations),
-    },
-  })));
-
-  const result = openConnection(databasePath);
-  try {
-    assert.equal(result.prepare('SELECT COUNT(*) AS count FROM nudge_deliveries WHERE run_id = ?').get<{ count: number }>('run-nudge-concurrent')?.count, 1);
-  } finally {
-    result.close();
   }
 });

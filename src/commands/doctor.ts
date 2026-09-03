@@ -26,7 +26,7 @@ import { readPersistedEmbeddingSettings } from '../embedding/settings.js';
 import type { VectorSearchBackend } from '../embedding/types.js';
 import type { SqliteDatabase } from '../db/adapter.js';
 import { inspectOpenCodeIntegration } from '../setup/opencode-config.js';
-import { setupMcpIdentityConflictClient } from '../setup/mcp-conflict.js';
+import { isSetupOpenCodeMcpIdentityConflict } from '../setup/mcp-conflict.js';
 import { loadBundledStandardSkillFiles } from '../setup/standard-skills.js';
 import { resolveManagedOpenCodeRuntime } from '../opencode/runtime-invocation.js';
 
@@ -191,7 +191,7 @@ async function openCodeChecks(): Promise<OpenCodeChecks> {
     }
     return { plugin: current(inspection.plugin), mcp: current(inspection.mcp), runtime: runtimeCheck, skills };
   } catch (error) {
-    if (setupMcpIdentityConflictClient(error) === 'opencode') {
+    if (isSetupOpenCodeMcpIdentityConflict(error)) {
       const conflict = { ok: false, count: 1, detail: 'config=conflict' };
       return { plugin: conflict, mcp: conflict, runtime: { ok: false, count: 1, detail: 'runtime=unavailable' }, skills: conflict };
     }
@@ -423,11 +423,11 @@ async function collectDoctorResult(
   ));
   const continuationReceiptSchemaPresent = Boolean(database.prepare(`
     SELECT 1 AS present FROM sqlite_schema
-    WHERE type = 'table' AND name = 'enno_client_continuation_receipts'
+    WHERE type = 'table' AND name = 'enno_opencode_continuation_receipts'
   `).get()) && [
     'run_id', 'client_kind', 'source_session_id', 'source_terminal_hash',
     'contract_revision', 'mutation_revision', 'attempts', 'directive_digest', 'route_epoch', 'created_at',
-  ].every((column) => hasColumn(database, 'enno_client_continuation_receipts', column));
+  ].every((column) => hasColumn(database, 'enno_opencode_continuation_receipts', column));
   const ennoOperations = !ennoLeaseSchemaPresent || !continuationReceiptSchemaPresent
       ? { ok: false, count: 1, detail: 'Enno operation or continuation receipt schema is incomplete' }
     : (() => {
@@ -449,7 +449,7 @@ async function collectDoctorResult(
         SELECT COUNT(*) AS count FROM enno_verifier_runs WHERE status = 'abandoned'
       `);
       const invalidContinuationReceipts = count(database, `
-        SELECT COUNT(*) AS count FROM enno_client_continuation_receipts
+        SELECT COUNT(*) AS count FROM enno_opencode_continuation_receipts
         WHERE client_kind != 'opencode'
            OR length(source_session_id) NOT BETWEEN 1 AND 256
            OR length(source_terminal_hash) != 64

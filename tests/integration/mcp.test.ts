@@ -34,7 +34,7 @@ test('MCP exposes only the gated task and lifecycle tools and persists candidate
   const data = await mkdtemp(path.join(tmpdir(), 'kiokuko-mcp-data-'));
   const databasePath = path.join(data, 'kiokuko-ai.sqlite');
   const server = createKiokukoMcpServer({ databasePath, cwd: () => root });
-  const client = new Client({ name: 'kiokuko-test', version: '1.0.0' });
+  const client = new Client({ name: 'opencode', version: '1.0.0' });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   await client.connect(clientTransport);
@@ -328,15 +328,15 @@ test('MCP exposes only the gated task and lifecycle tools and persists candidate
     assert.equal(preparedContent.ennoOduno.orchestrationId, preparedContent.intake.sessionId);
     assert.deepEqual(preparedContent.ennoOduno.clientBinding, {
       status: 'pending',
-      clientKind: null,
-      clientVersion: null,
-      identified: false,
+      clientKind: 'opencode',
+      clientVersion: '1.0.0',
+      identified: true,
     });
     assert.equal(preparedContent.ennoOduno.directive?.role, 'enno-oduno');
     assert.equal(preparedContent.ennoOduno.directive?.handoff?.sourceRole, 'enno-oduno');
     assert.match(preparedContent.ennoOduno.directive?.handoff?.objective ?? '', /src\/beacon\.ts/u);
-    assert.equal(preparedContent.ennoOduno.directive?.harness.kind, null);
-    assert.equal(preparedContent.ennoOduno.directive?.harness.continuation, 'unidentified');
+    assert.equal(preparedContent.ennoOduno.directive?.harness.kind, 'opencode');
+    assert.equal(preparedContent.ennoOduno.directive?.harness.continuation, 'session_idle_plugin');
     assert.equal(preparedContent.ennoOduno.nextAction, 'submit_ideal');
     assert.equal(preparedContent.capabilities.availability, 'known-nonempty');
     assert.deepEqual(preparedContent.memoryPolicy, {
@@ -391,7 +391,7 @@ test('MCP exposes only the gated task and lifecycle tools and persists candidate
     assert.equal(unclassifiedContent.ennoOduno.status, 'intake');
     assert.equal(unclassifiedContent.ennoOduno.orchestrationId, unclassifiedContent.intake.sessionId);
     assert.deepEqual(unclassifiedContent.ennoOduno.clientBinding, {
-      status: 'pending', clientKind: null, clientVersion: null, identified: false,
+      status: 'pending', clientKind: 'opencode', clientVersion: '1.0.0', identified: true,
     });
     assert.equal(unclassifiedContent.ennoOduno.contractRevision, null);
     assert.equal(unclassifiedContent.ennoOduno.currentRole, 'enno-oduno');
@@ -538,7 +538,7 @@ test('MCP exposes only the gated task and lifecycle tools and persists candidate
           requestId: `mcp-gated-${catalogAvailability}-request`,
           task: 'Implement the durable beacon and add tests',
           profileHints: { taskType: 'build' },
-          client: { kind: 'test', sessionId: `task-answer-${catalogAvailability}` },
+          client: { kind: 'opencode' as const, sessionId: `task-answer-${catalogAvailability}` },
           ...catalogArguments,
         },
       });
@@ -623,7 +623,7 @@ test('MCP exposes only the gated task and lifecycle tools and persists candidate
 test('MCP transport projects non-Enno input validation failures to the stable public envelope', async () => {
   const data = await mkdtemp(path.join(tmpdir(), 'kiokuko-mcp-validation-'));
   const server = createKiokukoMcpServer({ databasePath: path.join(data, 'kiokuko-ai.sqlite') });
-  const client = new Client({ name: 'kiokuko-validation-test', version: '1.0.0' });
+  const client = new Client({ name: 'opencode', version: '1.0.0' });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   await client.connect(clientTransport);
@@ -729,7 +729,7 @@ test('task_prepare identifies OpenCode before Oduno derives the ideal', async ()
       },
     });
     assert.equal(conflict.isError, true);
-    assert.match(JSON.stringify(conflict.content), /conflict/iu);
+    assert.match(JSON.stringify(conflict.content), /Client is not supported/u);
   } finally {
     await client.close();
     if (server.isConnected()) await server.close();
@@ -742,7 +742,7 @@ test('enno_plan_submit returns the userFacingConfirmation projection over the MC
   const data = await mkdtemp(path.join(tmpdir(), 'kiokuko-mcp-confirmation-data-'));
   const databasePath = path.join(data, 'kiokuko-ai.sqlite');
   const server = createKiokukoMcpServer({ databasePath, cwd: () => root });
-  const client = new Client({ name: 'kiokuko-confirmation-test', version: '1.0.0' });
+  const client = new Client({ name: 'opencode', version: '1.0.0' });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   await client.connect(clientTransport);
@@ -871,7 +871,7 @@ test('MCP transports advisory submission and final verification preparation with
   const data = await mkdtemp(path.join(tmpdir(), 'kiokuko-mcp-advisory-data-'));
   const databasePath = path.join(data, 'kiokuko-ai.sqlite');
   const server = createKiokukoMcpServer({ databasePath, cwd: () => root });
-  const client = new Client({ name: 'kiokuko-advisory-test', version: '1.0.0' });
+  const client = new Client({ name: 'opencode', version: '1.0.0' });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   await client.connect(clientTransport);
@@ -1071,7 +1071,7 @@ test('plan-start recovery exposes only concise user choices and leaves the same 
   const data = await mkdtemp(path.join(tmpdir(), 'kiokuko-mcp-plan-recovery-data-'));
   const databasePath = path.join(data, 'kiokuko-ai.sqlite');
   const server = createKiokukoMcpServer({ databasePath, cwd: () => root });
-  const client = new Client({ name: 'kiokuko-plan-recovery-test', version: '1.0.0' });
+  const client = new Client({ name: 'opencode', version: '1.0.0' });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   await client.connect(clientTransport);
@@ -1320,7 +1320,7 @@ test('malformed compatibility discovery degrades across task_prepare and enno_pl
     }), { status: 200, headers: { 'content-type': 'application/json' } });
   };
   const server = createKiokukoMcpServer({ databasePath, cwd: () => root, fetchImpl });
-  const client = new Client({ name: 'opencode-malformed-discovery-test', version: '1.0.0' });
+  const client = new Client({ name: 'opencode', version: '1.0.0' });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   await client.connect(clientTransport);
@@ -1431,7 +1431,7 @@ test('malformed compatibility discovery degrades across task_prepare and enno_pl
       assert.equal(database.prepare('SELECT COUNT(*) AS count FROM external_skill_entries').get<{ count: number }>()?.count, 0);
       assert.equal(database.prepare('SELECT COUNT(*) AS count FROM entries').get<{ count: number }>()?.count, 0);
       assert.deepEqual(database.prepare(`
-        SELECT phase, state FROM agent_task_skill_discovery_attempts
+        SELECT phase, state FROM task_skill_discovery_attempts
         WHERE run_id = ? ORDER BY phase
       `).all(identity.runId).map((row) => ({ ...row })), [
         { phase: 'intake', state: 'completed' },
@@ -1451,7 +1451,7 @@ test('memory_checkpoint returns actionable MCP guidance during intake and succee
   const data = await mkdtemp(path.join(tmpdir(), 'kiokuko-mcp-checkpoint-recovery-data-'));
   const databasePath = path.join(data, 'kiokuko-ai.sqlite');
   const server = createKiokukoMcpServer({ databasePath, cwd: () => root });
-  const client = new Client({ name: 'kiokuko-checkpoint-recovery-test', version: '1.0.0' });
+  const client = new Client({ name: 'opencode', version: '1.0.0' });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   await client.connect(clientTransport);
@@ -1597,7 +1597,7 @@ test('task_prepare degrades safely for oversized and malformed capability items'
   const data = await mkdtemp(path.join(tmpdir(), 'kiokuko-mcp-capability-data-'));
   const databasePath = path.join(data, 'kiokuko-ai.sqlite');
   const server = createKiokukoMcpServer({ databasePath, cwd: () => root });
-  const client = new Client({ name: 'kiokuko-capability-test', version: '1.0.0' });
+  const client = new Client({ name: 'opencode', version: '1.0.0' });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   await client.connect(clientTransport);
@@ -1879,7 +1879,7 @@ test('task_prepare proceeds without memory-reasoning for managed curator global 
   database.close();
 
   const server = createKiokukoMcpServer({ databasePath, cwd: () => root });
-  const client = new Client({ name: 'kiokuko-curator-trust-test', version: '1.0.0' });
+  const client = new Client({ name: 'opencode', version: '1.0.0' });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   await client.connect(clientTransport);
@@ -1923,7 +1923,7 @@ test('MCP tool failures redact arbitrary internal error messages', async () => {
     databasePath: path.join(data, 'kiokuko-ai.sqlite'),
     migrationsDirectory: privateMigrationsPath,
   });
-  const client = new Client({ name: 'kiokuko-error-boundary-test', version: '1.0.0' });
+  const client = new Client({ name: 'opencode', version: '1.0.0' });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   await client.connect(clientTransport);
@@ -1971,7 +1971,7 @@ test('MCP generic tool errors expose the complete stable public classification',
       databasePath: path.join(data, 'kiokuko-ai.sqlite'),
       cwd: () => { throw new KiokukoError(entry.code, sentinel, { retryAfterSeconds: 999, secret: sentinel }); },
     });
-    const client = new Client({ name: `kiokuko-${entry.code.toLowerCase()}-test`, version: '1.0.0' });
+    const client = new Client({ name: 'opencode', version: '1.0.0' });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     await server.connect(serverTransport);
     await client.connect(clientTransport);
@@ -1998,7 +1998,7 @@ test('MCP generic tool errors expose the complete stable public classification',
 test('MCP cwd-bearing tools reject relative paths without reporting an internal integrity error', async () => {
   const data = await mkdtemp(path.join(tmpdir(), 'kiokuko-mcp-relative-cwd-'));
   const server = createKiokukoMcpServer({ databasePath: path.join(data, 'kiokuko-ai.sqlite') });
-  const client = new Client({ name: 'kiokuko-relative-cwd-test', version: '1.0.0' });
+  const client = new Client({ name: 'opencode', version: '1.0.0' });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   await client.connect(clientTransport);
@@ -2046,7 +2046,7 @@ test('task_prepare reports a missing absolute cwd as not found instead of an int
   const data = await mkdtemp(path.join(tmpdir(), 'kiokuko-mcp-missing-cwd-'));
   const missing = path.join(data, 'missing-worktree');
   const server = createKiokukoMcpServer({ databasePath: path.join(data, 'kiokuko-ai.sqlite') });
-  const client = new Client({ name: 'kiokuko-missing-cwd-test', version: '1.0.0' });
+  const client = new Client({ name: 'opencode', version: '1.0.0' });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   await client.connect(clientTransport);
@@ -2089,7 +2089,7 @@ test('task_prepare reports exhausted SQLite locking as service backpressure', as
       return database;
     },
   });
-  const client = new Client({ name: 'kiokuko-locked-database-test', version: '1.0.0' });
+  const client = new Client({ name: 'opencode', version: '1.0.0' });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   await client.connect(clientTransport);
@@ -2117,7 +2117,7 @@ test('task_prepare reports exhausted SQLite locking as service backpressure', as
 test('MCP identity schemas reject padding instead of normalizing identities', async () => {
   const data = await mkdtemp(path.join(tmpdir(), 'kiokuko-mcp-canonical-identities-'));
   const server = createKiokukoMcpServer({ databasePath: path.join(data, 'kiokuko-ai.sqlite') });
-  const client = new Client({ name: 'kiokuko-identity-boundary-test', version: '1.0.0' });
+  const client = new Client({ name: 'opencode', version: '1.0.0' });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   await client.connect(clientTransport);
@@ -2148,7 +2148,7 @@ test('MCP preserves only typed database failures as DATABASE_ERROR', async () =>
     databasePath: path.join(data, 'kiokuko-ai.sqlite'),
     cwd: () => { throw new KiokukoError('DATABASE_ERROR', sentinel, { debug: sentinel }); },
   });
-  const client = new Client({ name: 'kiokuko-database-boundary-test', version: '1.0.0' });
+  const client = new Client({ name: 'opencode', version: '1.0.0' });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   await client.connect(clientTransport);
@@ -2178,7 +2178,7 @@ test('MCP tool failures sanitize typed Kiokuko errors instead of trusting their 
     databasePath: path.join(data, 'kiokuko-ai.sqlite'),
     cwd: () => { throw new KiokukoError('INTEGRITY_ERROR', sentinel, { debug: sentinel }); },
   });
-  const client = new Client({ name: 'kiokuko-typed-error-boundary-test', version: '1.0.0' });
+  const client = new Client({ name: 'opencode', version: '1.0.0' });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   await client.connect(clientTransport);
@@ -2219,7 +2219,7 @@ test('MCP checkpoint keeps unsupported eligibility details on the generic redact
       });
     },
   });
-  const client = new Client({ name: 'kiokuko-checkpoint-redaction-test', version: '1.0.0' });
+  const client = new Client({ name: 'opencode', version: '1.0.0' });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   await client.connect(clientTransport);

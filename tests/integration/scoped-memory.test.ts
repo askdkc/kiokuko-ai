@@ -50,7 +50,7 @@ function seedCheckpointRun(
       run_id, workspace, client_kind, client_version, source_session_id, parent_run_id,
       protocol_version, capture_profile, coverage_json, status, title, task_hash,
       metadata_json, last_sequence, last_source_sequence, started_at, ended_at, created_at, updated_at
-    ) VALUES (?, ?, 'test', '1', ?, NULL, '1', 'standard', '{"approval":"unavailable","command":"unavailable","file":"unavailable","run":"declared","tool":"unavailable"}', 'active', 'checkpoint', NULL, '{}', 0, NULL, ?, NULL, ?, ?)
+    ) VALUES (?, ?, 'opencode', '1', ?, NULL, '1', 'standard', '{"approval":"unavailable","command":"unavailable","file":"unavailable","run":"declared","tool":"unavailable"}', 'active', 'checkpoint', NULL, '{}', 0, NULL, ?, NULL, ?, ?)
   `).run(runId, workspace, sessionId, now, now, now);
   insertRunIntakeLink(database, {
     runId,
