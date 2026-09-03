@@ -319,7 +319,7 @@ export async function readRegularFile(
   try {
     handle = await open(filePath, flags);
   } catch (error) {
-    if (isMissingFile(error)) throw changedAfterPlanning();
+    if (isMissingFile(error)) throw changedAfterPlanning(filePath);
     if (isSymlinkFailure(error)) throw new KiokukoError('SECURITY_REJECTION', 'Refusing to follow a symbolic link');
     throw error;
   }
