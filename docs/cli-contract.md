@@ -1,5 +1,20 @@
 # Embedding CLI contract
 
+## JSON envelope
+
+Every CLI command that accepts `--json` emits exactly one JSON line on stdout
+wrapped in the shared envelope. Success and error envelopes share the numeric
+`version: 1` field; there is no separate string API version:
+
+```json
+{ "version": 1, "ok": true, "operation": "recall", "data": {}, "meta": {} }
+{ "version": 1, "ok": false, "operation": "record", "error": { "code": "VALIDATION_ERROR", "message": "...", "details": {} } }
+```
+
+`meta` is optional and omitted when empty. Unexpected non-Kiokuko errors are
+redacted to `INTEGRITY_ERROR` with no internal details. The envelope is a
+human/operator-facing CLI contract; it is not a network API version.
+
 The default global installation is intentionally lightweight:
 
 ```bash

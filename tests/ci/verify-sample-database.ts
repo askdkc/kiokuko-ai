@@ -30,7 +30,7 @@ const cliPath = path.join(repositoryRoot, 'dist/bin/kiokuko.js');
 const sampleDatabasePath = path.join(repositoryRoot, 'tests/sampledb/kiokuko-ai.sqlite');
 
 interface CliEnvelope {
-  apiVersion: string;
+  version: number;
   ok: true;
   operation: string;
   data: Record<string, unknown>;
@@ -61,11 +61,11 @@ function parseCliEnvelope(stdout: string, operation: string): CliEnvelope {
   const lines = stdout.split(/\r?\n/u).filter((line) => line.trim().length > 0);
   assert.equal(lines.length, 1, `${operation} must emit exactly one JSON line`);
   const envelope = objectValue(JSON.parse(lines[0]!) as unknown, `${operation} envelope`);
-  assert.equal(envelope.apiVersion, '1');
+  assert.equal(envelope.version, 1);
   assert.equal(envelope.ok, true);
   assert.equal(envelope.operation, operation);
   return {
-    apiVersion: '1',
+    version: 1,
     ok: true,
     operation,
     data: objectValue(envelope.data, `${operation}.data`),

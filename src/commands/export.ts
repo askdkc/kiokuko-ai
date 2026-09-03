@@ -241,7 +241,6 @@ function exportWorkspaceInSnapshot(database: SqliteDatabase, options: ExportOpti
 
   const manifest: ExportLine = {
     type: 'manifest',
-    apiVersion: '1',
     workspace,
     format: 'kiokuko-jsonl',
     version: 1,
