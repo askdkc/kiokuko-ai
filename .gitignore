@@ -3,7 +3,6 @@ PLAN.md
 node_modules
 /dist/
 .kiokuko-dev/
-.codex
 # OpenCode local state and Kiokuko-generated project metadata
 .opencode/
 AGENTS.md
