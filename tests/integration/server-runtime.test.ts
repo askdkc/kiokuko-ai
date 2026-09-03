@@ -710,15 +710,12 @@ test('rejects conflicting application factory combinations before side effects',
     },
   };
 
-  for (const incompatible of [
-    { app: () => undefined },
-    { v1: () => ({ accepted: true }) },
-  ]) {
+  for (const incompatible of [{ app: () => undefined }]) {
     await assert.rejects(
       () => startHttpServer({ ...baseOptions, ...incompatible }),
       (error: unknown) => {
         assert.equal(error instanceof Error && 'code' in error && error.code === 'VALIDATION_ERROR', true);
-        assert.equal(error instanceof Error && error.message, 'applicationFactory cannot be combined with app or v1');
+        assert.equal(error instanceof Error && error.message, 'applicationFactory cannot be combined with app');
         return true;
       },
     );

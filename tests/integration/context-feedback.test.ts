@@ -33,7 +33,7 @@ function seedLedgerContext(database: ReturnType<typeof openConnection>): void {
       run_id, workspace, client_kind, client_version, source_session_id, parent_run_id,
       protocol_version, capture_profile, coverage_json, status, title, task_hash,
       metadata_json, last_sequence, last_source_sequence, started_at, ended_at, created_at, updated_at
-    ) VALUES (?, ?, 'generic', '1.0.0', NULL, NULL, '1', 'standard', '{}', 'active', 'Feedback task', NULL, '{}', 0, NULL, ?, NULL, ?, ?)
+    ) VALUES (?, ?, 'opencode', '1.0.0', NULL, NULL, '1', 'standard', '{}', 'active', 'Feedback task', NULL, '{}', 0, NULL, ?, NULL, ?, ?)
   `).run('run-feedback-1', workspace, now, now, now);
   recordEntry(database, {
     workspace,
@@ -504,7 +504,7 @@ test('scopes hashed idempotency keys by actor and run and rejects feedback-id co
       INSERT INTO ledger_runs (
         run_id, workspace, client_kind, protocol_version, capture_profile, coverage_json,
         status, metadata_json, last_sequence, started_at, created_at, updated_at
-      ) VALUES (?, ?, 'generic', '1', 'standard', '{}', 'active', '{}', 0, ?, ?, ?)
+      ) VALUES (?, ?, 'opencode', '1', 'standard', '{}', 'active', '{}', 0, ?, ?, ?)
     `).run('run-feedback-2', workspace, now, now, now);
 
     const base = {

@@ -10,7 +10,7 @@ Choose a guide by what you need to do:
 - [CLI contract](cli-contract.md) — stable command and response details.
 
 Implementation references: [architecture](architecture.md), [database](database.md),
-[execution ledger](execution-ledger.md), [client compatibility](client-compatibility.md),
+[execution ledger](execution-ledger.md), [OpenCode integration](opencode-integration.md),
 and [retrieval evaluation](retrieval-evaluation.md).
 
 The Japanese user guides are available from the [日本語目次](README.ja.md).

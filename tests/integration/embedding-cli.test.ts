@@ -15,7 +15,7 @@ import { LOCAL_SMALL_PRESET } from '../../src/embedding/presets/local-small.js';
 import { activateLocalEmbeddingProfile } from '../../src/embedding/store.js';
 import { recordEntry } from '../../src/memory/entries.js';
 import type { EmbeddingProvider } from '../../src/embedding/types.js';
-import { setupMcpIdentityConflict } from '../../src/setup/mcp-conflict.js';
+import { setupOpenCodeMcpIdentityConflict } from '../../src/setup/mcp-conflict.js';
 
 const timestamp = '2026-08-31T00:00:00.000Z';
 
@@ -35,12 +35,12 @@ function command(database: ReturnType<typeof openConnection>, output: string[], 
   readonly pathEnvironment?: { env?: NodeJS.ProcessEnv };
   readonly setupInput?: NodeJS.ReadableStream;
   readonly setupOutput?: NodeJS.WritableStream;
-  readonly setupGlobalClients?: (options: SetupOptions) => Promise<Pick<SetupResult, 'clients' | 'projectAgentFiles'>>;
+  readonly setupOpenCode?: (options: SetupOptions) => Promise<Pick<SetupResult, 'client' | 'projectAgentFiles'>>;
   readonly acquireSetupLock?: EmbeddingsCommandDependencies['acquireSetupLock'];
 } = {}): Command {
   const cli = new Command();
   cli.exitOverride();
-  const setup = options.setupGlobalClients ?? (async () => ({ clients: [], projectAgentFiles: [] }));
+  const setup = options.setupOpenCode ?? (async () => ({ client: 'opencode' as const, projectAgentFiles: [] }));
   registerEmbeddingsCommands(cli, {
     withDatabase: async (operation) => operation(database),
     ...(options.environment === undefined ? {} : { environment: options.environment }),
@@ -52,7 +52,7 @@ function command(database: ReturnType<typeof openConnection>, output: string[], 
     ...(options.setupInput === undefined ? {} : { setupInput: options.setupInput }),
     ...(options.setupOutput === undefined ? {} : { setupOutput: options.setupOutput }),
     ...(options.acquireSetupLock === undefined ? {} : { acquireSetupLock: options.acquireSetupLock }),
-    setupGlobalClients: setup,
+    setupOpenCode: setup,
     output: (json, operation, data, message) => {
       output.push(json ? JSON.stringify({ operation, data }) : message);
     },
@@ -151,21 +151,21 @@ test('embedding setup skips optional runtime checks during dry-run', async () =>
   }
 });
 
-test('embedding setup configures clients and refreshes project instructions', async () => {
+test('embedding setup configures OpenCode and refreshes project instructions', async () => {
   const database = await temporaryDatabase('embedding-cli-project-setup');
   try {
     const output: string[] = [];
     const setupCalls: SetupOptions[] = [];
     await command(database, output, {
-      setupGlobalClients: async (options) => {
+      setupOpenCode: async (options) => {
         setupCalls.push(options);
-        return { clients: ['opencode'], projectAgentFiles: [] };
+        return { client: 'opencode' as const, projectAgentFiles: [] };
       },
   }).parseAsync(['node', 'kiokuko-ai', 'embeddings', 'setup', '--dry-run', '--json']);
     const response = JSON.parse(output[0]!) as {
       data: {
         semanticEnabled: boolean;
-        projectSetup: { clients: string[]; projectAgentFiles: unknown[] };
+        projectSetup: { client: string; projectAgentFiles: unknown[] };
       };
     };
     assert.equal(setupCalls.length, 1);
@@ -173,8 +173,8 @@ test('embedding setup configures clients and refreshes project instructions', as
     assert.equal(setupCall.command, 'kiokuko-ai');
     assert.equal(setupCall.dryRun, true);
     assert.equal(setupCall.standardSkills, true);
-    assert.deepEqual(setupCall.replaceConflictingMcpServers, []);
-    assert.deepEqual(response.data.projectSetup, { clients: ['opencode'], projectAgentFiles: [] });
+    assert.equal(setupCall.replaceConflictingOpenCodeMcp, false);
+    assert.deepEqual(response.data.projectSetup, { client: 'opencode', projectAgentFiles: [] });
   } finally {
     database.close();
   }
@@ -211,10 +211,10 @@ test('embedding setup confirms and replaces a conflicting client MCP identity', 
     await command(database, output, {
       setupInput: input,
       setupOutput,
-      setupGlobalClients: async (options) => {
+      setupOpenCode: async (options) => {
         setupCalls.push(options);
-        if (attempts++ === 0) setupMcpIdentityConflict('opencode', 'conflict');
-        return { clients: ['opencode'], projectAgentFiles: [] };
+        if (attempts++ === 0) setupOpenCodeMcpIdentityConflict('conflict');
+        return { client: 'opencode' as const, projectAgentFiles: [] };
       },
     }).parseAsync(['node', 'kiokuko-ai', 'embeddings', 'setup', '--dry-run']);
     assert.deepEqual(setupCalls, [
@@ -223,14 +223,14 @@ test('embedding setup confirms and replaces a conflicting client MCP identity', 
         dryRun: true,
         standardSkills: true,
         skillDiscoveryMode: 'official',
-        replaceConflictingMcpServers: [],
+        replaceConflictingOpenCodeMcp: false,
       },
       {
         command: 'kiokuko-ai',
         dryRun: true,
         standardSkills: true,
         skillDiscoveryMode: 'official',
-        replaceConflictingMcpServers: ['opencode'],
+        replaceConflictingOpenCodeMcp: true,
       },
     ]);
   } finally {

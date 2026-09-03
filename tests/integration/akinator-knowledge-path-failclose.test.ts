@@ -4,7 +4,7 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { prepareAgentTask } from '../../src/akinator/agent-task.js';
+import { prepareOpenCodeTask } from '../../src/akinator/opencode-task.js';
 import { readKnowledgeEvidence } from '../../src/akinator/knowledge-path.js';
 import { initializeDatabase } from '../../src/commands/init.js';
 import { openConnection } from '../../src/db/connection.js';
@@ -30,7 +30,7 @@ test('rejects forged, contradictory, and non-canonical Akinator knowledge paths 
     let workspace = '';
     let entryId = '';
     for (const [index, verified] of [true, false].entries()) {
-      const prepared = await prepareAgentTask(database, {
+      const prepared = await prepareOpenCodeTask(database, {
         requestId: `knowledge-path-failclose-${index}`,
         cwd: root,
         task: 'SQLite migration failuresを安全に復旧する',
@@ -40,7 +40,7 @@ test('rejects forged, contradictory, and non-canonical Akinator knowledge paths 
           expected: '復旧テストが成功しschemaが一致する',
           constraints: '適用済みmigrationを破壊しない',
         },
-        client: { kind: 'test', sessionId: `knowledge-path-failclose-${index}` },
+        client: { kind: 'opencode' as const, sessionId: `knowledge-path-failclose-${index}` },
       });
       workspace = prepared.project.workspace;
       runs.push(prepared.run.runId);

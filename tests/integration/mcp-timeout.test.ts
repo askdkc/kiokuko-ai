@@ -10,7 +10,7 @@ import { createKiokukoMcpServer } from '../../src/mcp/server.js';
 import { openConnection } from '../../src/db/connection.js';
 import { migrateDatabase } from '../../src/db/migrate.js';
 import type { McpDatabaseOwner } from '../../src/mcp/runtime-owner.js';
-import { prepareAgentTask } from '../../src/akinator/agent-task.js';
+import { prepareOpenCodeTask } from '../../src/akinator/opencode-task.js';
 
 async function createMigratedDatabase(): Promise<{ root: string; databasePath: string }> {
   const root = await mkdtemp(path.join(tmpdir(), 'kiokuko-mcp-timeout-repo-'));
@@ -47,7 +47,7 @@ test('MCP tool timeout returns a stable public error and the same connection ser
     databaseOwner: owner,
     deadlinePolicy: { readMs: 20, externalMs: 20, mutationMs: 20, hardMaxMs: 30 },
   });
-  const client = new Client({ name: 'mcp-timeout-test', version: '1.0.0' });
+  const client = new Client({ name: 'opencode', version: '1.0.0' });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   await client.connect(clientTransport);
@@ -90,7 +90,7 @@ test('aborted task preparation closes the run and discovery attempt as failed', 
     });
   };
   try {
-    const preparation = prepareAgentTask(database, {
+    const preparation = prepareOpenCodeTask(database, {
       requestId: 'mcp-timeout-run-recovery',
       cwd: root,
       task: 'Build a TypeScript service',
@@ -109,7 +109,7 @@ test('aborted task preparation closes the run and discovery attempt as failed', 
     await assert.rejects(preparation);
     const run = database.prepare('SELECT status FROM ledger_runs WHERE task_hash IS NOT NULL ORDER BY created_at DESC LIMIT 1').get<{ status: string }>();
     assert.equal(run?.status, 'failed');
-    const attempt = database.prepare('SELECT state FROM agent_task_skill_discovery_attempts ORDER BY started_at DESC LIMIT 1').get<{ state: string }>();
+    const attempt = database.prepare('SELECT state FROM task_skill_discovery_attempts ORDER BY started_at DESC LIMIT 1').get<{ state: string }>();
     assert.equal(attempt?.state, 'failed');
   } finally {
     database.close();

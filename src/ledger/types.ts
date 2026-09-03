@@ -66,7 +66,6 @@ export interface TaskInput {
 }
 
 export interface AnswerInput {
-  apiVersion: '1';
   questionId: string;
   value: JsonValue;
 }

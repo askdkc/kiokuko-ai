@@ -70,7 +70,7 @@ async function startServer(
   repoRoot: string,
 ): Promise<Client> {
   const server = createKiokukoMcpServer({ databasePath, cwd: () => repoRoot });
-  const client = new Client({ name: "kiokuko-smoke", version: "1.0.0" });
+  const client = new Client({ name: 'opencode', version: "1.0.0" });
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);

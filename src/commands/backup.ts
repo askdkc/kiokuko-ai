@@ -8,7 +8,7 @@ import {
 import {
   createSerializedBackupArtifact,
   type SerializedBackupCreationHooks,
-} from '../db/upgrade-backup.js';
+} from '../db/serialized-backup.js';
 import { databaseBackupIntegrityError, KiokukoError } from '../errors.js';
 
 function isMissingFile(error: unknown): boolean {

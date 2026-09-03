@@ -1,10 +1,10 @@
--- Kiokuko v0.1.0 initial schema; migration metadata is created by the runtime.
+-- Kiokuko v0.1.6 initial schema; migration metadata is created by the runtime.
 
 PRAGMA application_id = 0x4B494F4B;
 PRAGMA user_version = 1;
 
--- table agent_task_skill_discovery_attempts
-CREATE TABLE agent_task_skill_discovery_attempts (
+-- table task_skill_discovery_attempts
+CREATE TABLE task_skill_discovery_attempts (
     run_id TEXT NOT NULL REFERENCES ledger_runs(run_id) ON DELETE CASCADE,
     phase TEXT NOT NULL CHECK (phase IN ('intake', 'zenki')),
     request_digest TEXT NOT NULL CHECK (
@@ -305,8 +305,8 @@ CREATE TABLE "enno_advisory_rounds" (
     UNIQUE (run_id, contract_revision, mutation_revision, phase, input_digest)
 );
 
--- table enno_client_continuations
-CREATE TABLE enno_client_continuations (
+-- table enno_opencode_continuations
+CREATE TABLE enno_opencode_continuations (
     run_id TEXT NOT NULL REFERENCES enno_contracts(run_id) ON DELETE CASCADE,
     client_kind TEXT NOT NULL CHECK (client_kind = 'opencode'),
     source_session_id TEXT NOT NULL CHECK (length(source_session_id) BETWEEN 1 AND 256),
@@ -320,6 +320,27 @@ CREATE TABLE enno_client_continuations (
     total_count INTEGER NOT NULL CHECK (total_count BETWEEN 0 AND 20),
     updated_at TEXT NOT NULL,
     PRIMARY KEY (run_id, client_kind, source_session_id)
+);
+
+-- table enno_opencode_continuation_receipts
+CREATE TABLE enno_opencode_continuation_receipts (
+    run_id TEXT NOT NULL REFERENCES enno_contracts(run_id) ON DELETE CASCADE,
+    client_kind TEXT NOT NULL CHECK (client_kind = 'opencode'),
+    source_session_id TEXT NOT NULL CHECK (length(source_session_id) BETWEEN 1 AND 256),
+    source_terminal_hash TEXT NOT NULL CHECK (
+        length(source_terminal_hash) = 64
+        AND source_terminal_hash NOT GLOB '*[^0-9a-f]*'
+    ),
+    contract_revision INTEGER NOT NULL CHECK (typeof(contract_revision) = 'integer' AND contract_revision >= 1),
+    mutation_revision INTEGER NOT NULL CHECK (typeof(mutation_revision) = 'integer' AND mutation_revision >= 0),
+    attempts INTEGER NOT NULL CHECK (typeof(attempts) = 'integer' AND attempts BETWEEN 0 AND 20),
+    directive_digest TEXT NOT NULL CHECK (
+        length(directive_digest) = 64
+        AND directive_digest NOT GLOB '*[^0-9a-f]*'
+    ),
+    route_epoch INTEGER NOT NULL CHECK (typeof(route_epoch) = 'integer' AND route_epoch >= 0),
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (run_id, client_kind, source_session_id, source_terminal_hash)
 );
 
 -- table enno_contracts
@@ -655,8 +676,8 @@ CREATE TABLE external_skills (
     UNIQUE(source_type, source_locator, slug)
 );
 
--- table gateway_idempotency
-CREATE TABLE gateway_idempotency (
+-- table task_request_receipts
+CREATE TABLE task_request_receipts (
     scope TEXT NOT NULL,
     key_hash TEXT NOT NULL CHECK (
         length(key_hash) = 64
@@ -760,7 +781,7 @@ CREATE TABLE ledger_purge_audit (
 CREATE TABLE ledger_runs (
     run_id TEXT PRIMARY KEY,
     workspace TEXT NOT NULL,
-    client_kind TEXT NOT NULL,
+    client_kind TEXT NOT NULL CHECK (client_kind = 'opencode'),
     client_version TEXT,
     source_session_id TEXT,
     parent_run_id TEXT REFERENCES ledger_runs(run_id) ON DELETE SET NULL,
@@ -956,6 +977,10 @@ ON enno_advisory_contributions(round_id, slot_rank);
 CREATE INDEX idx_enno_advisory_rounds_current
 ON enno_advisory_rounds(run_id, contract_revision, mutation_revision, phase, state);
 
+-- index idx_enno_opencode_continuation_receipts_session
+CREATE INDEX idx_enno_opencode_continuation_receipts_session
+    ON enno_opencode_continuation_receipts(run_id, client_kind, source_session_id, created_at);
+
 -- index idx_enno_contracts_session_status
 CREATE INDEX idx_enno_contracts_session_status
 ON enno_contracts(client_kind, client_session_id, status, updated_at DESC);
@@ -1013,9 +1038,9 @@ CREATE INDEX idx_external_skills_source ON external_skills(source_locator, slug)
 -- index idx_external_skills_state_checked
 CREATE INDEX idx_external_skills_state_checked ON external_skills(state, last_checked_at DESC);
 
--- index idx_gateway_idempotency_created_at
-CREATE INDEX idx_gateway_idempotency_created_at
-    ON gateway_idempotency(created_at);
+-- index idx_task_request_receipts_created_at
+CREATE INDEX idx_task_request_receipts_created_at
+    ON task_request_receipts(created_at);
 
 -- index idx_intake_feedback_run_created_at
 CREATE INDEX idx_intake_feedback_run_created_at
@@ -1071,7 +1096,7 @@ CREATE INDEX idx_skill_audit_failure_cache_expiry ON skill_audit_failure_cache(e
 
 -- index idx_skill_discovery_attempts_active
 CREATE UNIQUE INDEX idx_skill_discovery_attempts_active
-ON agent_task_skill_discovery_attempts(run_id, phase)
+ON task_skill_discovery_attempts(run_id, phase)
 WHERE state = 'started';
 
 -- index idx_skill_discovery_cache_expiry
@@ -1306,7 +1331,7 @@ BEGIN
           <> (SELECT workspace FROM akinator_sessions WHERE id = NEW.session_id);
 END;
 
--- Initial singleton state for the v0.1.0 installation.
+-- Initial singleton state for a fresh v0.1.6 installation.
 INSERT INTO external_skill_generation_clock (singleton, value)
 VALUES (1, 0);
 

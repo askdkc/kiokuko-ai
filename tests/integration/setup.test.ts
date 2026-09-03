@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { parse } from 'jsonc-parser';
 import test from 'node:test';
-import { setupGlobalClients } from '../../src/commands/setup.js';
+import { setupOpenCode } from '../../src/commands/setup.js';
 import { KIOKUKO_OPENCODE_PLUGIN_PACKAGE } from '../../src/setup/opencode-config.js';
 import { PACKAGE_VERSION } from '../../src/package-version.js';
 
@@ -24,13 +24,13 @@ async function temporaryEnvironment(prefix: string) {
 
 test('setup targets OpenCode only and is idempotent', async () => {
   const temporary = await temporaryEnvironment('opencode');
-  const first = await setupGlobalClients({
+  const first = await setupOpenCode({
     databasePath: temporary.databasePath,
     platform: 'linux',
     env: temporary.env,
     standardSkills: false,
   });
-  assert.deepEqual(first.clients, ['opencode']);
+  assert.equal(first.client, 'opencode');
   const config = parse(await readFile(temporary.openCodeConfig, 'utf8')) as {
     plugin: unknown[];
     mcp: { kiokuko: { command: string[] } };
@@ -43,7 +43,7 @@ test('setup targets OpenCode only and is idempotent', async () => {
   assert.equal(config.mcp.kiokuko.command.length, 3);
   assert.ok(config.mcp.kiokuko.command[0]?.startsWith('/'));
   assert.ok(config.mcp.kiokuko.command[1]?.endsWith('/dist/bin/kiokuko.js'));
-  const second = await setupGlobalClients({
+  const second = await setupOpenCode({
     databasePath: temporary.databasePath,
     platform: 'linux',
     env: temporary.env,
@@ -53,7 +53,7 @@ test('setup targets OpenCode only and is idempotent', async () => {
 });
 test('setup dry-run does not write config or database', async () => {
   const temporary = await temporaryEnvironment('dry-run');
-  const result = await setupGlobalClients({
+  const result = await setupOpenCode({
     databasePath: temporary.databasePath,
     platform: 'linux',
     env: temporary.env,
@@ -73,7 +73,7 @@ test('setup preserves unknown OpenCode plugin entries', async () => {
     '{ "plugin": ["unrelated-plugin"] }\n',
     'utf8',
   ));
-  await setupGlobalClients({
+  await setupOpenCode({
     databasePath: temporary.databasePath,
     platform: 'linux',
     env: temporary.env,

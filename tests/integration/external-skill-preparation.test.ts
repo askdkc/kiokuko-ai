@@ -4,7 +4,7 @@ import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { prepareAgentTask } from '../../src/akinator/agent-task.js';
+import { prepareOpenCodeTask } from '../../src/akinator/opencode-task.js';
 import { initializeDatabase } from '../../src/commands/init.js';
 import { openConnection } from '../../src/db/connection.js';
 import { KiokukoError } from '../../src/errors.js';
@@ -87,7 +87,7 @@ async function repository(prefix: string, manifest: { file: string; value: unkno
 
 function assertSelectedSkillDelivered(
   database: ReturnType<typeof openConnection>,
-  prepared: Awaited<ReturnType<typeof prepareAgentTask>>,
+  prepared: Awaited<ReturnType<typeof prepareOpenCodeTask>>,
 ): void {
   const skillId = prepared.skillDiscovery.selected[0]?.skillId;
   assert.ok(skillId, 'discovery must select a Skill');
@@ -118,7 +118,7 @@ test('uses official discovery by default and imports a missing relevant skill be
   await initializeDatabase({ databasePath });
   const database = openConnection(databasePath);
   try {
-    const prepared = await prepareAgentTask(database, {
+    const prepared = await prepareOpenCodeTask(database, {
       requestId: 'external-skill-default-discovery',
       cwd: root,
       task: 'Implement a SvelteKit component with current Svelte guidance',
@@ -133,7 +133,7 @@ test('uses official discovery by default and imports a missing relevant skill be
     database.prepare("UPDATE external_skills SET first_seen_at = '2020-01-01T00:00:00.000Z', last_seen_at = '2020-01-01T00:00:00.000Z', last_checked_at = '2020-01-01T00:00:00.000Z'").run();
     database.prepare('DELETE FROM skill_discovery_cache').run();
     let replayNetworkCalls = 0;
-    const freshnessChanged = await prepareAgentTask(database, {
+    const freshnessChanged = await prepareOpenCodeTask(database, {
       requestId: 'external-skill-default-discovery',
       cwd: root,
       task: 'Implement a SvelteKit component with current Svelte guidance',
@@ -155,7 +155,7 @@ test('uses official discovery by default and imports a missing relevant skill be
     database.prepare('UPDATE external_skills SET last_checked_at = last_seen_at WHERE skill_id = ?').run(importedSkillId);
     setExternalSkillState(database, importedSkillId, 'disabled', new Date(Date.parse(lifecycle.lastSeenAt) + 1).toISOString());
 
-    const invalidated = await prepareAgentTask(database, {
+    const invalidated = await prepareOpenCodeTask(database, {
       requestId: 'external-skill-default-discovery',
       cwd: root,
       task: 'Implement a SvelteKit component with current Svelte guidance',
@@ -171,7 +171,7 @@ test('uses official discovery by default and imports a missing relevant skill be
     assert.notEqual(invalidated.context?.deliveryId, freshnessChanged.context?.deliveryId);
     assert.equal(invalidated.context?.items.some((item) => mappedEntryIds.includes(item.entryId)), false);
 
-    const stableReplacement = await prepareAgentTask(database, {
+    const stableReplacement = await prepareOpenCodeTask(database, {
       requestId: 'external-skill-default-discovery',
       cwd: root,
       task: 'Implement a SvelteKit component with current Svelte guidance',
@@ -208,7 +208,7 @@ test('replays a completed no-delivery discovery attempt without another provider
   };
   try {
     let providerCalls = 0;
-    const first = await prepareAgentTask(database, {
+    const first = await prepareOpenCodeTask(database, {
       ...request,
       fetchImpl: async (input) => {
         providerCalls += 1;
@@ -224,12 +224,12 @@ test('replays a completed no-delivery discovery attempt without another provider
     assert.deepEqual(first.context?.items, []);
     assert.equal(database.prepare('SELECT COUNT(*) AS count FROM context_deliveries WHERE run_id = ?')
       .get<{ count: number }>(first.run.runId)?.count, 0);
-    assert.equal(database.prepare('SELECT state FROM agent_task_skill_discovery_attempts WHERE run_id = ?')
+    assert.equal(database.prepare('SELECT state FROM task_skill_discovery_attempts WHERE run_id = ?')
       .get<{ state: string }>(first.run.runId)?.state, 'completed');
 
     database.prepare('DELETE FROM skill_discovery_cache').run();
     let retryProviderCalls = 0;
-    const replayed = await prepareAgentTask(database, {
+    const replayed = await prepareOpenCodeTask(database, {
       ...request,
       fetchImpl: async () => {
         retryProviderCalls += 1;
@@ -242,10 +242,10 @@ test('replays a completed no-delivery discovery attempt without another provider
     assert.equal(providerCalls, callsAfterFirst);
     assert.equal(retryProviderCalls, 0);
 
-    database.prepare("UPDATE agent_task_skill_discovery_attempts SET summary_json = ' ' || summary_json WHERE run_id = ?")
+    database.prepare("UPDATE task_skill_discovery_attempts SET summary_json = ' ' || summary_json WHERE run_id = ?")
       .run(first.run.runId);
     await assert.rejects(
-      prepareAgentTask(database, {
+      prepareOpenCodeTask(database, {
         ...request,
         fetchImpl: async () => {
           retryProviderCalls += 1;
@@ -279,7 +279,7 @@ test('persists and replays a malformed-provider summary without retrying discove
   };
   try {
     let providerCalls = 0;
-    const prepared = await prepareAgentTask(database, {
+    const prepared = await prepareOpenCodeTask(database, {
       ...request,
       fetchImpl: async () => {
         providerCalls += 1;
@@ -290,7 +290,7 @@ test('persists and replays a malformed-provider summary without retrying discove
     assert.deepEqual(prepared.skillDiscovery.failures, [{ stage: 'search', code: 'registry_invalid_response' }]);
     assert.deepEqual(prepared.skillDiscovery.selected, []);
 
-    const replay = await prepareAgentTask(database, {
+    const replay = await prepareOpenCodeTask(database, {
       ...request,
       fetchImpl: async () => {
         providerCalls += 1;
@@ -301,7 +301,7 @@ test('persists and replays a malformed-provider summary without retrying discove
     assert.deepEqual(replay.skillDiscovery, prepared.skillDiscovery);
     const attempt = database.prepare(`
       SELECT state, summary_json AS summaryJson, failure_json AS failureJson
-      FROM agent_task_skill_discovery_attempts
+      FROM task_skill_discovery_attempts
     `).get<{ state: string; summaryJson: string | null; failureJson: string | null }>();
     assert.deepEqual({ ...attempt }, {
       state: 'completed',
@@ -342,7 +342,7 @@ test('redacts unexpected Kiokuko discovery failure details before persisting and
       && error.code === 'CONFLICT'
       && error.message === 'External Skill discovery failed closed'
       && !error.message.includes(privateSentinel);
-    await assert.rejects(prepareAgentTask(database, {
+    await assert.rejects(prepareOpenCodeTask(database, {
       ...request,
       fetchImpl: async () => {
         providerCalls += 1;
@@ -350,12 +350,12 @@ test('redacts unexpected Kiokuko discovery failure details before persisting and
       },
     }), rejectsClosedFailure);
     assert.equal(providerCalls, 1);
-    const failureJson = database.prepare('SELECT failure_json AS failureJson FROM agent_task_skill_discovery_attempts')
+    const failureJson = database.prepare('SELECT failure_json AS failureJson FROM task_skill_discovery_attempts')
       .get<{ failureJson: string }>()?.failureJson;
     assert.equal(failureJson, '{"code":"CONFLICT","kind":"kiokuko"}');
     assert.equal(failureJson?.includes(privateSentinel), false);
 
-    await assert.rejects(prepareAgentTask(database, {
+    await assert.rejects(prepareOpenCodeTask(database, {
       ...request,
       fetchImpl: async () => {
         providerCalls += 1;
@@ -390,9 +390,9 @@ test('conflicts a concurrent exact retry while the run-owned discovery attempt i
   };
   let blocked = false;
   let firstProviderCalls = 0;
-  let firstPromise: Promise<Awaited<ReturnType<typeof prepareAgentTask>>> | undefined;
+  let firstPromise: Promise<Awaited<ReturnType<typeof prepareOpenCodeTask>>> | undefined;
   try {
-    firstPromise = prepareAgentTask(database, {
+    firstPromise = prepareOpenCodeTask(database, {
       ...request,
       fetchImpl: fixtureFetch(async () => {
         firstProviderCalls += 1;
@@ -403,12 +403,12 @@ test('conflicts a concurrent exact retry while the run-owned discovery attempt i
       }),
     });
     await within(entered.promise, 2_000, 'first discovery provider entry');
-    assert.equal(database.prepare('SELECT state FROM agent_task_skill_discovery_attempts')
+    assert.equal(database.prepare('SELECT state FROM task_skill_discovery_attempts')
       .get<{ state: string }>()?.state, 'started');
 
     let secondProviderCalls = 0;
     await assert.rejects(
-      within(prepareAgentTask(concurrent, {
+      within(prepareOpenCodeTask(concurrent, {
         ...request,
         fetchImpl: async () => {
           secondProviderCalls += 1;
@@ -425,9 +425,9 @@ test('conflicts a concurrent exact retry while the run-owned discovery attempt i
     const first = await within(firstPromise, 5_000, 'first discovery completion');
     assert.ok(firstProviderCalls > 0);
     assert.equal(first.skillDiscovery.attempted, true);
-    assert.equal(database.prepare('SELECT state FROM agent_task_skill_discovery_attempts WHERE run_id = ?')
+    assert.equal(database.prepare('SELECT state FROM task_skill_discovery_attempts WHERE run_id = ?')
       .get<{ state: string }>(first.run.runId)?.state, 'completed');
-    assert.equal(database.prepare('SELECT COUNT(*) AS count FROM agent_task_skill_discovery_attempts')
+    assert.equal(database.prepare('SELECT COUNT(*) AS count FROM task_skill_discovery_attempts')
       .get<{ count: number }>()?.count, 1);
     assert.equal(database.prepare('SELECT COUNT(*) AS count FROM ledger_runs').get<{ count: number }>()?.count, 1);
   } finally {
@@ -446,15 +446,15 @@ test('discovers reference-only context when a build client lacks or does not rep
   let networkCalls = 0;
   const successfulProvider = fixtureFetch();
   for (const request of [
-    { client: { kind: 'test', sessionId: 'missing-memory-reasoning' }, capabilities: [SOUL_CAPABILITY, { kind: 'skill', name: 'kiokuko-ui-design-soul' }] },
-    { client: { kind: 'test', sessionId: 'unknown-memory-reasoning' }, capabilities: [SOUL_CAPABILITY, { kind: 'invalid', name: 'invalid' }] },
+    { client: { kind: 'opencode' as const, sessionId: 'missing-memory-reasoning' }, capabilities: [SOUL_CAPABILITY, { kind: 'skill', name: 'kiokuko-ui-design-soul' }] },
+    { client: { kind: 'opencode' as const, sessionId: 'unknown-memory-reasoning' }, capabilities: [SOUL_CAPABILITY, { kind: 'invalid', name: 'invalid' }] },
   ] as const) {
     const data = await mkdtemp(path.join(tmpdir(), `kiokuko-post-discovery-capability-gate-${request.client.sessionId}-`));
     const databasePath = path.join(data, 'kiokuko-ai.sqlite');
     await initializeDatabase({ databasePath });
     const database = openConnection(databasePath);
     try {
-      const prepared = await prepareAgentTask(database, {
+      const prepared = await prepareOpenCodeTask(database, {
         requestId: `external-skill-post-gate-${request.client.sessionId}`,
         cwd: root,
         task: 'Implement a SvelteKit component with current Svelte guidance',
@@ -501,7 +501,7 @@ test('fails closed when a replayed task context references a corrupt external so
     skillDiscoveryMode: 'official' as const,
   };
   try {
-    const prepared = await prepareAgentTask(database, { ...request, fetchImpl: fixtureFetch() });
+    const prepared = await prepareOpenCodeTask(database, { ...request, fetchImpl: fixtureFetch() });
     const skillId = prepared.skillDiscovery.selected[0]?.skillId;
     assert.ok(skillId);
     const mappedEntryIds = database.prepare('SELECT entry_id AS entryId FROM external_skill_entries WHERE skill_id = ?').all<{ entryId: string }>(skillId).map((row) => row.entryId);
@@ -511,7 +511,7 @@ test('fails closed when a replayed task context references a corrupt external so
     database.prepare('UPDATE external_skills SET source_commit = ? WHERE skill_id = ?').run('e'.repeat(40), skillId);
     let networkCalls = 0;
     await assert.rejects(
-      prepareAgentTask(database, {
+      prepareOpenCodeTask(database, {
         ...request,
         fetchImpl: async () => { networkCalls += 1; throw new Error('corrupt delivery replay must not search again'); },
       }),
@@ -542,13 +542,13 @@ test('keeps an exact retry on the same run and uses a new logical request after 
     skillDiscoveryMode: 'official' as const,
   };
   try {
-    const initial = await prepareAgentTask(database, { ...request, fetchImpl: fixtureFetch() });
+    const initial = await prepareOpenCodeTask(database, { ...request, fetchImpl: fixtureFetch() });
     const initialDigest = database.prepare('SELECT manifest_digest AS digest FROM repository_fingerprints WHERE repository_id = ?')
       .get<{ digest: string }>(initial.project.repositoryId)?.digest;
     assert.ok(initialDigest);
 
     let networkCalls = 0;
-    const unchanged = await prepareAgentTask(database, {
+    const unchanged = await prepareOpenCodeTask(database, {
       ...request,
       fetchImpl: async () => { networkCalls += 1; throw new Error('unchanged project replay must not search again'); },
     });
@@ -558,7 +558,7 @@ test('keeps an exact retry on the same run and uses a new logical request after 
     assert.equal(networkCalls, 0);
 
     await writeFile(path.join(root, 'package.json'), JSON.stringify({ dependencies: { '@sveltejs/kit': '^2.1.0', svelte: '^5.1.0' } }));
-    await assert.rejects(prepareAgentTask(database, {
+    await assert.rejects(prepareOpenCodeTask(database, {
       ...request,
       fetchImpl: async () => { networkCalls += 1; throw new Error('conflicting request must not search'); },
     }), (error: unknown) => error instanceof Error
@@ -568,7 +568,7 @@ test('keeps an exact retry on the same run and uses a new logical request after 
     assert.equal(database.prepare('SELECT COUNT(*) AS count FROM ledger_runs').get<{ count: number }>()?.count, 1);
 
     const changedFetch = fixtureFetch();
-    const changed = await prepareAgentTask(database, {
+    const changed = await prepareOpenCodeTask(database, {
       ...request,
       requestId: 'external-skill-manifest-changed',
       fetchImpl: async (...args) => { networkCalls += 1; return changedFetch(...args); },
@@ -599,7 +599,7 @@ test('fails closed without importing when the manifest changes during discovery'
     const resolvedProject = await resolveProjectWorkspace(database, root);
     assert.ok(resolvedProject);
     await assert.rejects(
-      prepareAgentTask(database, {
+      prepareOpenCodeTask(database, {
         requestId: 'external-skill-manifest-snapshot',
         cwd: root,
         task: 'Implement a Svelte component with current Svelte guidance',
@@ -639,16 +639,16 @@ test('starts a new discovery run when the effective mode changes from off to off
     task: 'Implement a SvelteKit component with current Svelte guidance',
     profileHints: { taskType: 'build' as const, target: 'SvelteKit component', expected: 'tests pass', constraints: null },
     capabilities: [SOUL_CAPABILITY, { kind: 'skill', name: 'memory-reasoning' }],
-    client: { kind: 'test', sessionId: 'mode-identity' },
+    client: { kind: 'opencode' as const, sessionId: 'mode-identity' },
   };
   try {
-    const disabled = await prepareAgentTask(database, {
+    const disabled = await prepareOpenCodeTask(database, {
       ...request,
       requestId: 'external-skill-mode-off',
       skillDiscoveryMode: 'off',
       fetchImpl: async () => { throw new Error('off mode must not search'); },
     });
-    const enabled = await prepareAgentTask(database, {
+    const enabled = await prepareOpenCodeTask(database, {
       ...request,
       requestId: 'external-skill-mode-official',
       skillDiscoveryMode: 'official',
@@ -679,17 +679,17 @@ test('starts a new discovery run when relevant client skills become missing', as
     task: 'Implement a SvelteKit component with current Svelte guidance',
     profileHints: { taskType: 'build' as const, target: 'SvelteKit component', expected: 'tests pass', constraints: null },
     skillDiscoveryMode: 'official' as const,
-    client: { kind: 'test', sessionId: 'capability-identity' },
+    client: { kind: 'opencode' as const, sessionId: 'capability-identity' },
   };
   try {
-    const satisfied = await prepareAgentTask(database, {
+    const satisfied = await prepareOpenCodeTask(database, {
       ...request,
       requestId: 'external-skill-capabilities-satisfied',
       capabilities: [SOUL_CAPABILITY, { kind: 'skill', name: 'memory-reasoning' }, { kind: 'skill', name: 'svelte' }, { kind: 'skill', name: 'sveltekit' }],
       fetchImpl: async () => { throw new Error('available skills must suppress discovery'); },
     });
     let fetchCalls = 0;
-    const missing = await prepareAgentTask(database, {
+    const missing = await prepareOpenCodeTask(database, {
       ...request,
       requestId: 'external-skill-capabilities-missing',
       capabilities: [SOUL_CAPABILITY, { kind: 'skill', name: 'memory-reasoning' }],
@@ -717,7 +717,7 @@ test('allows Akinator external Skill discovery to be explicitly disabled', async
   const database = openConnection(databasePath);
   try {
     let networkCalls = 0;
-    const prepared = await prepareAgentTask(database, {
+    const prepared = await prepareOpenCodeTask(database, {
       requestId: 'external-skill-discovery-disabled',
       cwd: root,
       task: 'Implement a SvelteKit component',
@@ -742,7 +742,7 @@ test('does not expose a Svelte external skill to an unrelated Laravel project', 
   await initializeDatabase({ databasePath });
   const database = openConnection(databasePath);
   try {
-    const source = await prepareAgentTask(database, {
+    const source = await prepareOpenCodeTask(database, {
       requestId: 'external-skill-compat-source',
       cwd: svelteRoot,
       task: 'Implement a SvelteKit component',
@@ -773,7 +773,7 @@ test('keeps task preparation successful when the registry is unavailable', async
   const database = openConnection(databasePath);
   const offlineSentinel = 'transport-token-sentinel-must-not-leak';
   try {
-    const prepared = await prepareAgentTask(database, {
+    const prepared = await prepareOpenCodeTask(database, {
       requestId: 'external-skill-offline',
       cwd: root,
       task: 'Implement a SvelteKit component',
@@ -834,7 +834,7 @@ test('keeps task preparation ready without fabricating a catalog source after a 
     throw new Error(`unexpected timeout fixture URL: ${url}`);
   };
   try {
-    const prepared = await prepareAgentTask(database, {
+    const prepared = await prepareOpenCodeTask(database, {
       requestId: 'external-skill-provider-timeout',
       cwd: root,
       task: 'Research current Svelte component guidance',

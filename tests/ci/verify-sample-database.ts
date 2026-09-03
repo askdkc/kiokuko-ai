@@ -30,7 +30,7 @@ const cliPath = path.join(repositoryRoot, 'dist/bin/kiokuko.js');
 const sampleDatabasePath = path.join(repositoryRoot, 'tests/sampledb/kiokuko-ai.sqlite');
 
 interface CliEnvelope {
-  apiVersion: string;
+  version: number;
   ok: true;
   operation: string;
   data: Record<string, unknown>;
@@ -61,11 +61,11 @@ function parseCliEnvelope(stdout: string, operation: string): CliEnvelope {
   const lines = stdout.split(/\r?\n/u).filter((line) => line.trim().length > 0);
   assert.equal(lines.length, 1, `${operation} must emit exactly one JSON line`);
   const envelope = objectValue(JSON.parse(lines[0]!) as unknown, `${operation} envelope`);
-  assert.equal(envelope.apiVersion, '1');
+  assert.equal(envelope.version, 1);
   assert.equal(envelope.ok, true);
   assert.equal(envelope.operation, operation);
   return {
-    apiVersion: '1',
+    version: 1,
     ok: true,
     operation,
     data: objectValue(envelope.data, `${operation}.data`),
@@ -87,7 +87,7 @@ async function runCliJson(args: string[], operation: string, environment: NodeJS
 function assertCurrentFixture(): void {
   assert.ok(
     CURRENT_SCHEMA_VERSION > 0,
-    'The sample database must use the v0.1.0 baseline',
+    'The sample database must use the current single-migration schema',
   );
   const database = openConnection(sampleDatabasePath, { readOnly: true });
   try {
@@ -102,7 +102,7 @@ function assertCurrentFixture(): void {
     assert.deepEqual(
       versions,
       CURRENT_MIGRATION_VERSIONS,
-      'The committed sample database must remain on the v0.1.0 baseline',
+      'The committed sample database must contain exactly the current migration history',
     );
   } finally {
     database.close();
@@ -149,7 +149,7 @@ async function verifySetup(environment: NodeJS.ProcessEnv, databasePath: string)
   );
   assert.equal(setup.data.databasePath, databasePath);
   const applied = migrationVersions(setup.data.appliedMigrations);
-  assert.deepEqual(applied, [], 'setup must not apply migrations to a current v0.1.0 sample database');
+  assert.deepEqual(applied, [], 'setup must not apply migrations to the current sample database');
 }
 
 async function verifyDoctor(environment: NodeJS.ProcessEnv): Promise<void> {
@@ -337,7 +337,7 @@ async function verifyWeb(environment: NodeJS.ProcessEnv): Promise<void> {
 }
 
 async function main(): Promise<void> {
-    assertCurrentFixture();
+  assertCurrentFixture();
   const temporaryRoot = await mkdtemp(path.join(tmpdir(), 'kiokuko-sampledb-ci-'));
   try {
     const isolated = await isolatedEnvironment(temporaryRoot);
@@ -349,7 +349,7 @@ async function main(): Promise<void> {
     await verifyDoctor(isolated.env);
     await verifyWeb(isolated.env);
     await verifyDoctor(isolated.env);
-    process.stdout.write('Sample database migration and Web API verification passed.\n');
+    process.stdout.write('Fresh-schema sample database and Web API verification passed.\n');
   } finally {
     await rm(temporaryRoot, { recursive: true, force: true });
   }

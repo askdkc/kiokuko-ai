@@ -1,12 +1,12 @@
 # Database
 
-The first public release is `v0.1.0`. It has one schema migration:
-`migrations/001_initial.sql`.
+`v0.1.6` intentionally resets the database contract. It has one
+fresh schema migration: `migrations/001_initial.sql`, with `user_version = 1`.
 
 An absent path or an empty SQLite file is initialized with that migration.
 Running setup again against the same database verifies the recorded migration
-checksum and makes no changes. A pending future migration uses a private
-backup, an immediate transaction, and the recorded checksum before committing.
+checksum and makes no changes. This release has no in-place upgrade path and
+does not create an upgrade backup.
 
 A non-empty file without the current migration history, or with unsupported,
 corrupt, or mismatched history, is rejected with `DATABASE_ERROR`. The source
@@ -15,5 +15,5 @@ recognize, convert, reset, delete, or recover databases from earlier projects.
 
 The SQLite database is the durable source for memory, ledger, Enno-Oduno, and
 local embedding state. Workspace JSONL archives and ledger archives accept only
-their current `v0.1.0` record contracts; a full SQLite backup is required when
-revision history or derived embedding state must be preserved.
+their current record contracts. Use the explicit `kiokuko-ai backup` command
+when revision history or derived embedding state must be preserved.

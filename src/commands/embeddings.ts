@@ -127,7 +127,7 @@ export interface EmbeddingsCommandDependencies {
   readonly pathEnvironment?: PathEnvironment;
   readonly setupInput?: NodeJS.ReadableStream;
   readonly setupOutput?: NodeJS.WritableStream;
-  readonly setupGlobalClients?: (options: SetupOptions) => Promise<Pick<SetupResult, 'clients' | 'projectAgentFiles'>>;
+  readonly setupOpenCode?: (options: SetupOptions) => Promise<Pick<SetupResult, 'client' | 'projectAgentFiles'>>;
   readonly acquireSetupLock?: (options?: PathEnvironment) => Promise<EmbeddingSetupLock>;
 }
 
@@ -413,7 +413,7 @@ export function registerEmbeddingsCommands(cli: Command, dependencies: Embedding
         : await (dependencies.acquireSetupLock ?? acquireEmbeddingSetupLock)(dependencies.pathEnvironment);
       const executeSetup = async () => {
         if (!dryRun) await ensureOptionalRuntime(dependencies);
-        const setup = await runSetupFlow<Pick<SetupResult, 'clients' | 'projectAgentFiles'>>({
+        const setup = await runSetupFlow<Pick<SetupResult, 'client' | 'projectAgentFiles'>>({
           ...(dependencies.pathEnvironment === undefined ? {} : { environment: dependencies.pathEnvironment }),
           command: options.command,
           dryRun,
@@ -424,7 +424,7 @@ export function registerEmbeddingsCommands(cli: Command, dependencies: Embedding
           ...(dependencies.setupInput === undefined ? {} : { input: dependencies.setupInput }),
           ...(dependencies.setupOutput === undefined ? {} : { output: dependencies.setupOutput }),
         }, {
-          ...(dependencies.setupGlobalClients === undefined ? {} : { setupGlobalClients: dependencies.setupGlobalClients }),
+          ...(dependencies.setupOpenCode === undefined ? {} : { setupOpenCode: dependencies.setupOpenCode }),
         });
         const embeddingData = await dependencies.withDatabase((database, backend) => runEmbeddingSetup(database, {
           presetId: options.preset,
@@ -448,7 +448,7 @@ export function registerEmbeddingsCommands(cli: Command, dependencies: Embedding
       const data = {
         ...embeddingData,
         projectSetup: {
-          clients: setup.clients,
+          client: setup.client,
           projectAgentFiles: setup.projectAgentFiles,
         },
       };

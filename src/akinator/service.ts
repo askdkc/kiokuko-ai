@@ -67,7 +67,7 @@ function assertBoundedTask(value: string): void {
 }
 
 function assertBoundedAnswer(value: string, questionId: keyof TaskProfile): void {
-  sanitizeAnswer({ apiVersion: '1', questionId, value });
+  sanitizeAnswer({ questionId, value });
 }
 
 function assertSafeProfile(profile: TaskProfile): void {

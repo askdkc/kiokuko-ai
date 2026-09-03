@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import test from 'node:test';
 import { openConnection } from '../../src/db/connection.js';
 import { migrateDatabase } from '../../src/db/migrate.js';
-import { AgentGatewayService } from '../../src/gateway/agent-service.js';
+import { OpenCodeTaskRunDriver } from '../fixtures/opencode-task-run-driver.js';
 import { ContextBroker, readContextBrokerRunState } from '../../src/context/broker.js';
 import { recordEntry, updateCandidateEntry } from '../../src/memory/entries.js';
 import { buildStructuredScope } from '../../src/memory/structured-memory.js';
@@ -38,11 +38,11 @@ async function database() {
   return value;
 }
 
-function open(service: AgentGatewayService, workspace: string, hints: Record<string, unknown>) {
+function open(service: OpenCodeTaskRunDriver, workspace: string, hints: Record<string, unknown>) {
   return service.openRun({
     idempotencyKey: `open-${workspace}`,
     request: {
-      apiVersion: '1', workspace,
+      workspace,
       client: { kind: 'context-test' },
       task: { title: 'Implement local context', query: 'Implement local context', profileHints: hints },
       captureProfile: 'standard',
@@ -120,7 +120,7 @@ function rewriteLastEventPayload(
 
 test('context broker returns no context for needs_answer', async () => {
   const db = await database();
-  const service = new AgentGatewayService(db, { now: () => now });
+  const service = new OpenCodeTaskRunDriver(db, { now: () => now });
   const opened = open(service, 'needs-answer', { taskType: 'build' });
   const broker = new ContextBroker(db);
   const result = await broker.query({ workspace: 'needs-answer', runId: opened.runId });
@@ -131,7 +131,7 @@ test('context broker returns no context for needs_answer', async () => {
 test('needs_answer broker fails closed when intake finalizes after preparation', async () => {
   const db = await database();
   try {
-    const service = new AgentGatewayService(db, { now: () => now });
+    const service = new OpenCodeTaskRunDriver(db, { now: () => now });
     const opened = open(service, 'needs-answer-finalization-race', { taskType: 'build' });
     assert.equal(opened.intakeStatus, 'needs_answer');
     assert.equal(opened.currentQuestion?.id, 'target');
@@ -146,13 +146,13 @@ test('needs_answer broker fails closed when intake finalizes after preparation',
           const withTarget = service.answerIntake({
             runId: opened.runId,
             idempotencyKey: 'needs-answer-race-target',
-            request: { apiVersion: '1', questionId: 'target', value: 'src/race.ts' },
+            request: { questionId: 'target', value: 'src/race.ts' },
           });
           assert.equal(withTarget.currentQuestion?.id, 'expected');
           const finalized = service.answerIntake({
             runId: opened.runId,
             idempotencyKey: 'needs-answer-race-expected',
-            request: { apiVersion: '1', questionId: 'expected', value: 'focused tests pass' },
+            request: { questionId: 'expected', value: 'focused tests pass' },
           });
           assert.equal(finalized.intakeStatus, 'ready');
           return { persist: false, value: 'stale-needs-answer' as const };
@@ -174,11 +174,10 @@ test('needs_answer broker fails closed when intake finalizes after preparation',
 test('active intake derives current tags without rejecting its intentionally stale link snapshot', async () => {
   const db = await database();
   try {
-    const service = new AgentGatewayService(db, { now: () => now });
+    const service = new OpenCodeTaskRunDriver(db, { now: () => now });
     const opened = service.openRun({
       idempotencyKey: 'open-active-derived-tags',
       request: {
-        apiVersion: '1',
         workspace: 'active-derived-tags',
         client: { kind: 'context-test' },
         task: { title: 'Opaque request', query: 'Opaque request', profileHints: {} },
@@ -191,7 +190,7 @@ test('active intake derives current tags without rejecting its intentionally sta
     const answered = service.answerIntake({
       runId: opened.runId,
       idempotencyKey: 'answer-active-derived-tags-task-type',
-      request: { apiVersion: '1', questionId: 'taskType', value: 'build' },
+      request: { questionId: 'taskType', value: 'build' },
     });
     assert.equal(answered.intakeStatus, 'needs_answer');
     assert.equal(answered.currentQuestion?.id, 'target');
@@ -212,7 +211,7 @@ test('active intake derives current tags without rejecting its intentionally sta
 
 test('ready context is local-first, stores one deterministic delivery, and suppresses the retry', async () => {
   const db = await database();
-  const service = new AgentGatewayService(db, { now: () => now });
+  const service = new OpenCodeTaskRunDriver(db, { now: () => now });
   const opened = open(service, 'ready-local', { taskType: 'build', target: 'src/app.ts', expected: 'tests pass' });
   recordEntry(db, {
     workspace: 'ready-local', kind: 'reference', title: 'Implement local context src/app.ts tests pass',
@@ -239,7 +238,7 @@ test('generic broker binds selection state to registered federation or the reque
   try {
     const project = await resolveProjectWorkspace(db, root);
     assert.ok(project);
-    const registered = open(new AgentGatewayService(db, { now: () => now }), project.workspace, {
+    const registered = open(new OpenCodeTaskRunDriver(db, { now: () => now }), project.workspace, {
       taskType: 'build', target: 'registered selection sentinel', expected: 'scoped replay',
     });
     const broker = new ContextBroker(db);
@@ -278,7 +277,7 @@ test('generic broker binds selection state to registered federation or the reque
     assert.equal(globalResult.context?.items.some((item) => item.entryId === global.id), true);
 
     const unregisteredWorkspace = 'unregistered-selection-workspace';
-    const unregistered = open(new AgentGatewayService(db, { now: () => now }), unregisteredWorkspace, {
+    const unregistered = open(new OpenCodeTaskRunDriver(db, { now: () => now }), unregisteredWorkspace, {
       taskType: 'build', target: 'unregistered selection sentinel', expected: 'local-only replay',
     });
     const unregisteredInput = { workspace: unregisteredWorkspace, runId: unregistered.runId, limit: 10 };
@@ -330,7 +329,7 @@ test('generic broker binds the exact project fingerprint through ranking and rep
     const imported = importReplaySkill(db);
     const importedEntry = imported.entries[0];
     assert.ok(importedEntry);
-    const opened = open(new AgentGatewayService(db, { now: () => now }), project.workspace, {
+    const opened = open(new OpenCodeTaskRunDriver(db, { now: () => now }), project.workspace, {
       taskType: 'build', target: 'Svelte replay guidance', expected: 'tests pass',
     });
     const broker = new ContextBroker(db);
@@ -371,7 +370,7 @@ test('an empty generic delivery is invalidated when a matching external Skill is
   try {
     const project = await resolveProjectWorkspace(db, root);
     assert.ok(project);
-    const opened = open(new AgentGatewayService(db, { now: () => now }), project.workspace, {
+    const opened = open(new OpenCodeTaskRunDriver(db, { now: () => now }), project.workspace, {
       taskType: 'build', target: 'Svelte replay guidance', expected: 'tests pass',
     });
     const broker = new ContextBroker(db);
@@ -399,7 +398,7 @@ test('an empty generic delivery is invalidated by matching portable ordinary eco
   try {
     const project = await resolveProjectWorkspace(db, root);
     assert.ok(project);
-    const opened = open(new AgentGatewayService(db, { now: () => now }), project.workspace, {
+    const opened = open(new OpenCodeTaskRunDriver(db, { now: () => now }), project.workspace, {
       taskType: 'build', target: 'portable Svelte ecosystem memory', expected: 'tests pass',
     });
     const broker = new ContextBroker(db);
@@ -456,7 +455,7 @@ test('generic broker binds title, coverage, and valid same-sequence event state 
   for (const mutation of mutations) {
     const db = await database();
     try {
-      const opened = open(new AgentGatewayService(db, { now: () => now }), `run-state-${mutation.name}`, {
+      const opened = open(new OpenCodeTaskRunDriver(db, { now: () => now }), `run-state-${mutation.name}`, {
         taskType: 'build', target: `run state ${mutation.name}`, expected: 'tests pass',
       });
       const sequence = db.prepare('SELECT last_sequence AS value FROM ledger_runs WHERE run_id = ?')
@@ -489,7 +488,7 @@ test('generic broker binds title, coverage, and valid same-sequence event state 
 test('generic broker rejects a missing ledger event and every terminal run before retrieval', async () => {
   const missingDb = await database();
   try {
-    const opened = open(new AgentGatewayService(missingDb, { now: () => now }), 'missing-ledger-event', {
+    const opened = open(new OpenCodeTaskRunDriver(missingDb, { now: () => now }), 'missing-ledger-event', {
       taskType: 'build', target: 'missing ledger event', expected: 'explicit integrity failure',
     });
     const lastSequence = missingDb.prepare('SELECT last_sequence AS value FROM ledger_runs WHERE run_id = ?')
@@ -509,7 +508,7 @@ test('generic broker rejects a missing ledger event and every terminal run befor
 
   const mismatchedDb = await database();
   try {
-    const opened = open(new AgentGatewayService(mismatchedDb, { now: () => now }), 'active-run-active-intake', { taskType: 'build' });
+    const opened = open(new OpenCodeTaskRunDriver(mismatchedDb, { now: () => now }), 'active-run-active-intake', { taskType: 'build' });
     assert.equal(opened.intakeStatus, 'needs_answer');
     new LedgerStore(mismatchedDb, { now: () => '2026-08-20T00:01:00.000Z' })
       .updateRunStatus(opened.runId, 'active');
@@ -528,7 +527,7 @@ test('generic broker rejects a missing ledger event and every terminal run befor
 
   const terminalDb = await database();
   try {
-    const opened = open(new AgentGatewayService(terminalDb, { now: () => now }), 'terminal-active-intake', { taskType: 'build' });
+    const opened = open(new OpenCodeTaskRunDriver(terminalDb, { now: () => now }), 'terminal-active-intake', { taskType: 'build' });
     assert.equal(opened.intakeStatus, 'needs_answer');
     new LedgerStore(terminalDb, { now: () => '2026-08-20T00:01:00.000Z' })
       .updateRunStatus(opened.runId, 'cancelled');
@@ -567,7 +566,7 @@ test('generic broker rejects noncanonical and hash-invalid ledger events before 
     const db = await database();
     try {
       const workspace = `invalid-ledger-${testCase.name.replaceAll(' ', '-')}`;
-      const opened = open(new AgentGatewayService(db, { now: () => now }), workspace, {
+      const opened = open(new OpenCodeTaskRunDriver(db, { now: () => now }), workspace, {
         taskType: 'build', target: testCase.name, expected: 'explicit integrity failure',
       });
       const event = new LedgerStore(db).readEvents(opened.runId).at(-1);
@@ -625,7 +624,7 @@ test('generic broker rejects non-current or injected intake ranking metadata bef
     const db = await database();
     try {
       const workspace = `intake-ranking-${testCase.name.replaceAll(' ', '-')}`;
-      const opened = open(new AgentGatewayService(db, { now: () => now }), workspace, {
+      const opened = open(new OpenCodeTaskRunDriver(db, { now: () => now }), workspace, {
         taskType: 'build', target: 'unrelated target', expected: 'focused tests pass',
       });
       assert.equal(opened.intakeStatus, 'ready');
@@ -668,7 +667,7 @@ test('generic broker rejects non-current or injected intake ranking metadata bef
 test('fails closed when an exact replay sequence is altered or its delivery disappears inside the gate', async () => {
   const db = await database();
   try {
-    const opened = open(new AgentGatewayService(db, { now: () => now }), 'replay-header-integrity', {
+    const opened = open(new OpenCodeTaskRunDriver(db, { now: () => now }), 'replay-header-integrity', {
       taskType: 'build', target: 'replay header sentinel', expected: 'tests pass',
     });
     recordEntry(db, {
@@ -718,7 +717,7 @@ test('fails closed when an exact replay sequence is altered or its delivery disa
 test('fails closed when a replayed delivery loses its referenced current entry', async () => {
   const db = await database();
   try {
-    const service = new AgentGatewayService(db, { now: () => now });
+    const service = new OpenCodeTaskRunDriver(db, { now: () => now });
     const opened = open(service, 'missing-replayed-entry', {
       taskType: 'build', target: 'missing replayed entry sentinel', expected: 'tests pass',
     });
@@ -756,7 +755,7 @@ test('fails closed when a replayed delivery loses its referenced current entry',
 test('fails closed when prior delivery history exceeds the broker policy bound', async () => {
   const db = await database();
   try {
-    const service = new AgentGatewayService(db, { now: () => now });
+    const service = new OpenCodeTaskRunDriver(db, { now: () => now });
     const opened = open(service, 'history-bound', {
       taskType: 'build', target: 'src/history.ts', expected: 'tests pass',
     });
@@ -809,7 +808,7 @@ test('replays a valid ecosystem delivery and fails closed on an obsolete stored 
   const imported = importReplaySkill(db);
   const importedEntry = imported.entries[0];
   assert.ok(importedEntry);
-  const service = new AgentGatewayService(db, { now: () => now });
+  const service = new OpenCodeTaskRunDriver(db, { now: () => now });
   const opened = open(service, project.workspace, {
     taskType: 'build', target: 'Svelte replay guidance', expected: 'tests pass',
   });
@@ -856,7 +855,7 @@ test('fails closed when a replayed global entry has same-revision scope corrupti
       }),
       tags: ['global', 'replay', 'scope', 'corruption', 'sentinel'],
     }, { now });
-    const opened = open(new AgentGatewayService(db, { now: () => now }), project.workspace, {
+    const opened = open(new OpenCodeTaskRunDriver(db, { now: () => now }), project.workspace, {
       taskType: 'build', target: 'global replay scope corruption sentinel', expected: 'tests pass',
     });
     const broker = new ContextBroker(db);
@@ -911,7 +910,7 @@ test('fails closed on a corrupt delivered historical scope after the current rev
       }),
       tags: ['historical', 'global', 'scope', 'corruption', 'sentinel'],
     }, { now });
-    const opened = open(new AgentGatewayService(db, { now: () => now }), project.workspace, {
+    const opened = open(new OpenCodeTaskRunDriver(db, { now: () => now }), project.workspace, {
       taskType: 'build', target: 'historical global scope corruption sentinel', expected: 'tests pass',
     });
     const broker = new ContextBroker(db);
@@ -956,7 +955,7 @@ test('does not replay a managed external reference after the skill is disabled',
   const imported = importReplaySkill(db);
   const importedEntry = imported.entries[0];
   assert.ok(importedEntry);
-  const service = new AgentGatewayService(db, { now: () => now });
+  const service = new OpenCodeTaskRunDriver(db, { now: () => now });
   const opened = open(service, imported.sourceWorkspace, {
     taskType: 'build', target: 'Svelte replay guidance', expected: 'tests pass',
   });
@@ -1018,7 +1017,7 @@ test('bound broker rejects a valid external Skill refresh after asynchronous ran
     const project = await resolveProjectWorkspace(db, root);
     assert.ok(project);
     const imported = importReplaySkill(db);
-    const opened = open(new AgentGatewayService(db, { now: () => now }), project.workspace, {
+    const opened = open(new OpenCodeTaskRunDriver(db, { now: () => now }), project.workspace, {
       taskType: 'build', target: 'Svelte replay guidance', expected: 'tests pass',
     });
     const current = listExternalSkills(db).find((skill) => skill.skillId === imported.skillId);
@@ -1066,7 +1065,7 @@ test('fails closed when a replayed managed external reference has a corrupt sour
   const imported = importReplaySkill(db);
   const importedEntry = imported.entries[0];
   assert.ok(importedEntry);
-  const service = new AgentGatewayService(db, { now: () => now });
+  const service = new OpenCodeTaskRunDriver(db, { now: () => now });
   const opened = open(service, imported.sourceWorkspace, {
     taskType: 'build', target: 'Svelte replay guidance', expected: 'tests pass',
   });
@@ -1095,7 +1094,7 @@ test('fails closed when a delivered managed external reference loses every mappi
     const imported = importReplaySkill(db);
     const importedEntry = imported.entries[0];
     assert.ok(importedEntry);
-    const opened = open(new AgentGatewayService(db, { now: () => now }), imported.sourceWorkspace, {
+    const opened = open(new OpenCodeTaskRunDriver(db, { now: () => now }), imported.sourceWorkspace, {
       taskType: 'build', target: 'Svelte replay guidance', expected: 'tests pass',
     });
     const broker = new ContextBroker(db);
@@ -1164,7 +1163,7 @@ test('delivery commit rejects concurrent external disable, stale, and corrupt so
       assert.ok(project);
       const imported = importReplaySkill(db);
       const mappedIds = imported.entries.map((entry) => entry.id);
-      const opened = open(new AgentGatewayService(db, { now: () => now }), project.workspace, {
+      const opened = open(new OpenCodeTaskRunDriver(db, { now: () => now }), project.workspace, {
         taskType: 'build', target: 'Svelte replay guidance', expected: 'tests pass',
       });
       const broker = new ContextBroker(db);

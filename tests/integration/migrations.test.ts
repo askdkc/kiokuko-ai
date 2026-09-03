@@ -16,7 +16,7 @@ test('the current database has canonical migrations and is idempotent', () => {
     assert.deepEqual(migrateDatabase(database).applied, []);
     assert.equal(database.prepare('SELECT COUNT(*) AS count FROM schema_migrations').get<{ count: number }>()?.count, CURRENT_MIGRATION_VERSIONS.length);
     assert.equal(database.prepare("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'entries'").get()?.['1'], 1);
-    assert.equal(database.prepare("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'enno_client_continuation_receipts'").get()?.['1'], 1);
+    assert.equal(database.prepare("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'enno_opencode_continuation_receipts'").get()?.['1'], 1);
     assert.equal(database.prepare('PRAGMA user_version').get<{ user_version: number }>()?.user_version, CURRENT_SCHEMA_VERSION);
   } finally {
     database.close();

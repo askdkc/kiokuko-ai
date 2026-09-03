@@ -52,9 +52,9 @@ test('prints the package version from the version subcommand', async () => {
   assert.equal(stdout, `${packageMetadata.version}\n`);
 });
 
-test('registers required commands', () => {
+test('registers exactly the supported OpenCode and operator commands', () => {
   const names = buildCli().commands.map((command) => command.name());
-  for (const name of [
+  assert.deepEqual(names, [
     'version',
     'init',
     'setup',
@@ -62,6 +62,7 @@ test('registers required commands', () => {
     'use',
     'recall',
     'memory',
+    'guide',
     'search',
     'read',
     'record',
@@ -69,19 +70,17 @@ test('registers required commands', () => {
     'curator',
     'supersede',
     'link',
+    'purge',
+    'backup',
+    'doctor',
+    'ledger',
+    'skills',
+    'enno',
+    'embeddings',
+    'web',
     'export',
     'import',
-    'backup',
-    'purge',
-    'doctor',
-    'web',
-    'guide',
-    'call',
-    'agent',
-    'skills',
-  ]) {
-    assert.ok(names.includes(name), `missing ${name}`);
-  }
+  ]);
 });
 
 test('does not synthesize an agent-file override when the use flag is omitted', () => {
@@ -115,7 +114,6 @@ test('exposes scoped recall through the documented memory recall command', () =>
   assert.match(recall.helpInformation(), /--workspace <name>/);
   assert.match(recall.helpInformation(), /--json/);
   assert.match(recall.description(), /Human\/operator management/u);
-  assert.match(buildCli().commands.find((command) => command.name() === 'call')?.description() ?? '', /memory reads are not supported/u);
 });
 
 test('exposes the curator review and confirmation options', () => {
@@ -135,19 +133,6 @@ test('exposes the Akinator guide subcommands', () => {
   assert.deepEqual(guide.commands.map((command) => command.name()), ['start', 'answer']);
 });
 
-test('exposes the generic agent lifecycle subcommands and required options', () => {
-  const agent = buildCli().commands.find((command) => command.name() === 'agent');
-  assert.ok(agent);
-  assert.deepEqual(agent.commands.map((command) => command.name()), ['open', 'answer', 'events', 'checkpoint', 'close', 'feedback']);
-  assert.match(agent.commands.find((command) => command.name() === 'open')?.helpInformation() ?? '', /--workspace <workspace>/);
-  assert.match(agent.commands.find((command) => command.name() === 'open')?.helpInformation() ?? '', /--client <kind>/);
-  assert.match(agent.commands.find((command) => command.name() === 'open')?.helpInformation() ?? '', /--task <task>/);
-  assert.match(agent.commands.find((command) => command.name() === 'open')?.helpInformation() ?? '', /--capabilities-json <file\|->/);
-  assert.match(agent.commands.find((command) => command.name() === 'answer')?.helpInformation() ?? '', /--question-id <id>/);
-  assert.match(agent.commands.find((command) => command.name() === 'answer')?.helpInformation() ?? '', /--capabilities-json <file\|->/);
-  assert.match(agent.commands.find((command) => command.name() === 'checkpoint')?.helpInformation() ?? '', /--capabilities-json <file\|->/);
-  assert.match(agent.commands.find((command) => command.name() === 'events')?.helpInformation() ?? '', /--input-json <file\|->/);
-});
 test('exposes help for the use command', () => {
   const use = buildCli().commands.find((command) => command.name() === 'use');
   assert.ok(use);
@@ -182,9 +167,9 @@ test('no-argument setup configures OpenCode automatically', async () => {
     process.stdout.write = originalWrite;
   }
 
-  const response = JSON.parse(stdout) as { data: { clients: string[]; files: Array<{ client: string }> }; ok: boolean };
+  const response = JSON.parse(stdout) as { data: { client: string; files: Array<{ client: string }> }; ok: boolean };
   assert.equal(response.ok, true);
-  assert.deepEqual(response.data.clients, ['opencode']);
+  assert.equal(response.data.client, 'opencode');
   assert.ok(response.data.files.every((file) => file.client === 'opencode'));
 });
 
@@ -224,14 +209,14 @@ test('client conflict prompt defaults to yes and accepts explicit negative answe
       callback();
     },
   });
-  assert.equal(await promptReplaceConflictingMcp('opencode', { input: Readable.from(['\n']), output }), true);
+  assert.equal(await promptReplaceConflictingMcp({ input: Readable.from(['\n']), output }), true);
   assert.match(outputText, /remove that identity, install the managed configuration, and continue setup/u);
   assert.match(outputText, /Replace the existing OpenCode Kiokuko MCP identity and continue\? \[Y\/n\]/u);
 
   for (const answer of ['n\n', 'no\n', 'いいえ\n']) {
     const declineOutput = new Writable({ write(_chunk, _encoding, callback) { callback(); } });
     assert.equal(
-      await promptReplaceConflictingMcp('opencode', { input: Readable.from([answer]), output: declineOutput }),
+      await promptReplaceConflictingMcp({ input: Readable.from([answer]), output: declineOutput }),
       false,
     );
   }
@@ -354,23 +339,4 @@ test('interactive setup preserves a conflicting OpenCode MCP identity when repla
     && /conflicting kiokuko MCP server/u.test(error.message));
 
   assert.equal(await readFile(configPath, 'utf8'), original);
-});
-
-test('exposes foreground serve options without capability-token controls', () => {
-  const serve = buildCli().commands.find((command) => command.name() === 'serve');
-  assert.ok(serve);
-  const help = serve.helpInformation();
-  assert.match(help, /--host <host>/);
-  assert.match(help, /--port <number>/);
-  assert.match(help, /--json/);
-  assert.doesNotMatch(help, /token|database|lock/i);
-});
-
-test('exposes exactly server status in the server command group', () => {
-  const server = buildCli().commands.find((command) => command.name() === 'server');
-  assert.ok(server);
-  assert.deepEqual(server.commands.map((command) => command.name()), ['status']);
-  const status = server.commands[0];
-  assert.ok(status);
-  assert.match(status.helpInformation(), /--json/);
 });

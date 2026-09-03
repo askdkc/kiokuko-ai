@@ -29,7 +29,7 @@ function insertRun(database: ReturnType<typeof openConnection>, runId: string): 
       run_id, workspace, client_kind, client_version, source_session_id, parent_run_id,
       protocol_version, capture_profile, coverage_json, status, title, task_hash,
       metadata_json, last_sequence, last_source_sequence, started_at, ended_at, created_at, updated_at
-    ) VALUES (?, ?, 'test', '1', NULL, NULL, '1', 'minimal', '{}', 'active', 'Task', NULL, '{}', 0, NULL, ?, NULL, ?, ?)
+    ) VALUES (?, ?, 'opencode', '1', NULL, NULL, '1', 'minimal', '{}', 'active', 'Task', NULL, '{}', 0, NULL, ?, NULL, ?, ?)
   `).run(runId, `workspace:${runId}`, now, now, now);
 }
 

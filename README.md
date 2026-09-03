@@ -82,4 +82,4 @@ behavior are documented in [Security and trust](docs/security-and-trust.md).
 
 Implementation-focused references remain in [architecture](docs/architecture.md),
 [database](docs/database.md), [execution ledger](docs/execution-ledger.md), and
-[client compatibility](docs/client-compatibility.md).
+[OpenCode integration](docs/opencode-integration.md).

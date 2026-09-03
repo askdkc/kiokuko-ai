@@ -656,10 +656,16 @@ test('Enno identifies OpenCode and rejects unknown or contradictory client ident
     kind: 'opencode',
     version: '1.2.3',
   });
-  assert.throws(() => resolveTaskPrepareClient({ kind: 'other-client' }, {
-    name: 'opencode',
-    version: '1.2.3',
-  }), /conflicts with the MCP client/iu);
+  for (const kind of ['codex', 'claude', 'hermes', 'other-client']) {
+    assert.throws(
+      () => resolveTaskPrepareClient({ kind }, { name: 'opencode', version: '1.2.3' }),
+      (error: unknown) => error instanceof KiokukoError && error.code === 'UNSUPPORTED_CLIENT',
+    );
+    assert.throws(
+      () => resolveTaskPrepareClient(undefined, { name: kind, version: '1.2.3' }),
+      (error: unknown) => error instanceof KiokukoError && error.code === 'UNSUPPORTED_CLIENT',
+    );
+  }
 });
 
 test('mandatory SOUL assignment is deterministic and does not duplicate requirements', () => {

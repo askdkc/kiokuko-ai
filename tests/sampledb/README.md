@@ -6,10 +6,10 @@
 - global memory entries;
 - one imported external-skill snapshot and its entry mappings.
 
-The fixture intentionally stops at schema version 11. CI copies it into an
-isolated application-data directory before running `kiokuko-ai setup`, so the
-committed file is never migrated in place. The test then runs `kiokuko-ai doctor`
-and checks the migrated data through a real `kiokuko-ai web` process.
+The fixture is generated directly from the single current `001_initial.sql`
+migration (`PRAGMA user_version = 1`). CI copies it into an isolated
+application-data directory, verifies that setup applies no migration, then checks
+the data through `kiokuko-ai doctor` and a real `kiokuko-ai web` process.
 
 Regenerate it after intentionally changing the fixture or its baseline:
 

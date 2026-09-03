@@ -23,7 +23,6 @@ import {
 } from './types.js';
 
 export const ENNO_ADAPTER_WARNING = 'Kiokuko Enno-Oduno adapter unavailable; allowing the client to stop.';
-export const ENNO_CLIENTS = ENNO_CLIENT_KINDS;
 export type EnnoClient = EnnoClientKind;
 const hookInputSchema = z.object({
   protocolVersion: z.literal(OPENCODE_HOOK_PROTOCOL_VERSION).optional(),
@@ -234,7 +233,7 @@ function claimContinuation(
   const existing = database.prepare(`
     SELECT contract_revision AS contractRevision, mutation_revision AS mutationRevision,
            attempts, directive_digest AS directiveDigest, route_epoch AS routeEpoch
-    FROM enno_client_continuation_receipts
+    FROM enno_opencode_continuation_receipts
     WHERE run_id = ? AND client_kind = ? AND source_session_id = ? AND source_terminal_hash = ?
   `).get<{
     contractRevision: number;
@@ -252,7 +251,7 @@ function claimContinuation(
     SELECT contract_revision AS contractRevision, mutation_revision AS mutationRevision,
            attempts, directive_digest AS directiveDigest,
            continuation_count AS continuationCount, total_count AS totalCount
-    FROM enno_client_continuations
+    FROM enno_opencode_continuations
     WHERE run_id = ? AND client_kind = ? AND source_session_id = ?
   `).get<{
     contractRevision: number;
@@ -274,7 +273,7 @@ function claimContinuation(
 
   const receiptCount = Number(database.prepare(`
     SELECT COUNT(*) AS count
-    FROM enno_client_continuation_receipts
+    FROM enno_opencode_continuation_receipts
     WHERE run_id = ? AND client_kind = ? AND source_session_id = ?
       AND contract_revision = ? AND mutation_revision = ? AND attempts = ? AND directive_digest = ?
   `).get<{ count: number }>(
@@ -288,7 +287,7 @@ function claimContinuation(
   )?.count ?? 0);
   const receiptTotalCount = Number(database.prepare(`
     SELECT COUNT(*) AS count
-    FROM enno_client_continuation_receipts
+    FROM enno_opencode_continuation_receipts
     WHERE run_id = ? AND client_kind = ? AND source_session_id = ?
   `).get<{ count: number }>(snapshot.runId, client, snapshot.clientSessionId)?.count ?? 0);
   const aggregateUnchanged = aggregate?.contractRevision === snapshot.revision
@@ -301,7 +300,7 @@ function claimContinuation(
   const totalLimit = snapshot.contract.maxAttempts;
   if (count >= remaining || totalCount >= totalLimit) return { allowed: false, replayed: false };
   database.prepare(`
-    INSERT INTO enno_client_continuation_receipts (
+    INSERT INTO enno_opencode_continuation_receipts (
       run_id, client_kind, source_session_id, source_terminal_hash,
       contract_revision, mutation_revision, attempts, directive_digest, route_epoch, created_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -318,7 +317,7 @@ function claimContinuation(
     new Date().toISOString(),
   );
   database.prepare(`
-    INSERT INTO enno_client_continuations (
+    INSERT INTO enno_opencode_continuations (
       run_id, client_kind, source_session_id, contract_revision, mutation_revision,
       attempts, directive_digest, continuation_count, total_count, updated_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, 1, ?)
@@ -328,14 +327,14 @@ function claimContinuation(
       attempts = excluded.attempts,
       directive_digest = excluded.directive_digest,
       continuation_count = CASE
-        WHEN enno_client_continuations.contract_revision = excluded.contract_revision
-         AND enno_client_continuations.mutation_revision = excluded.mutation_revision
-         AND enno_client_continuations.attempts = excluded.attempts
-         AND enno_client_continuations.directive_digest = excluded.directive_digest
-        THEN enno_client_continuations.continuation_count + 1
+        WHEN enno_opencode_continuations.contract_revision = excluded.contract_revision
+         AND enno_opencode_continuations.mutation_revision = excluded.mutation_revision
+         AND enno_opencode_continuations.attempts = excluded.attempts
+         AND enno_opencode_continuations.directive_digest = excluded.directive_digest
+        THEN enno_opencode_continuations.continuation_count + 1
         ELSE 1
       END,
-      total_count = enno_client_continuations.total_count + 1,
+      total_count = enno_opencode_continuations.total_count + 1,
       updated_at = excluded.updated_at
   `).run(
     snapshot.runId,

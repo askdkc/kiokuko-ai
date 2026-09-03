@@ -86,14 +86,14 @@ type StoredDiscoveryFailure =
   | { kind: 'skill_provider'; code: SkillProviderFailureCode; retryAfterSeconds: number | null }
   | { kind: 'skill_source'; code: SkillSourceFailureCode; retryAfterSeconds: number | null };
 
-export interface AgentTaskSkillDiscoveryAttemptIdentity {
+export interface TaskSkillDiscoveryAttemptIdentity {
   runId: string;
   phase: 'intake' | 'zenki';
   requestDigest: string;
   mode: SkillDiscoveryMode;
 }
 
-export type AgentTaskSkillDiscoveryAttemptClaim =
+export type TaskSkillDiscoveryAttemptClaim =
   | { kind: 'execute'; queryBudget: number; selectionBudget: number }
   | { kind: 'replay'; summary: SkillDiscoverySummary };
 
@@ -256,13 +256,13 @@ function validateFailure(value: unknown): StoredDiscoveryFailure {
   return integrity();
 }
 
-function attemptRow(database: SqliteDatabase, identity: AgentTaskSkillDiscoveryAttemptIdentity): StoredAttemptRow | undefined {
+function attemptRow(database: SqliteDatabase, identity: TaskSkillDiscoveryAttemptIdentity): StoredAttemptRow | undefined {
   return database.prepare(`
     SELECT run_id, phase, request_digest,
            reserved_query_count, reserved_selection_count,
            consumed_query_count, consumed_selection_count,
            state, summary_json, failure_json, started_at, finished_at
-    FROM agent_task_skill_discovery_attempts
+    FROM task_skill_discovery_attempts
     WHERE run_id = ? AND phase = ? AND request_digest = ?
   `).get<StoredAttemptRow>(identity.runId, identity.phase, identity.requestDigest);
 }
@@ -273,18 +273,18 @@ function allAttemptRows(database: SqliteDatabase, runId: string): StoredAttemptR
            reserved_query_count, reserved_selection_count,
            consumed_query_count, consumed_selection_count,
            state, summary_json, failure_json, started_at, finished_at
-    FROM agent_task_skill_discovery_attempts
+    FROM task_skill_discovery_attempts
     WHERE run_id = ?
   `).all<StoredAttemptRow>(runId);
 }
 
-function activeAttemptRow(database: SqliteDatabase, runId: string, phase: AgentTaskSkillDiscoveryAttemptIdentity['phase']): StoredAttemptRow | undefined {
+function activeAttemptRow(database: SqliteDatabase, runId: string, phase: TaskSkillDiscoveryAttemptIdentity['phase']): StoredAttemptRow | undefined {
   return database.prepare(`
     SELECT run_id, phase, request_digest,
            reserved_query_count, reserved_selection_count,
            consumed_query_count, consumed_selection_count,
            state, summary_json, failure_json, started_at, finished_at
-    FROM agent_task_skill_discovery_attempts
+    FROM task_skill_discovery_attempts
     WHERE run_id = ? AND phase = ? AND state = 'started'
     LIMIT 1
   `).get<StoredAttemptRow>(runId, phase);
@@ -294,7 +294,7 @@ function boundedBudget(value: unknown, maximum: number): value is number {
   return nonNegativeSafeInteger(value) && value <= maximum;
 }
 
-function validateAttemptRow(row: StoredAttemptRow, identity?: AgentTaskSkillDiscoveryAttemptIdentity): void {
+function validateAttemptRow(row: StoredAttemptRow, identity?: TaskSkillDiscoveryAttemptIdentity): void {
   if (typeof row.run_id !== 'string'
     || typeof row.phase !== 'string'
     || !['intake', 'zenki'].includes(row.phase)
@@ -370,8 +370,8 @@ function normalizedFailure(error: unknown): { failure: StoredDiscoveryFailure; e
 
 function resolveExistingAttempt(
   existing: StoredAttemptRow,
-  identity: AgentTaskSkillDiscoveryAttemptIdentity,
-): Extract<AgentTaskSkillDiscoveryAttemptClaim, { kind: 'replay' }> {
+  identity: TaskSkillDiscoveryAttemptIdentity,
+): Extract<TaskSkillDiscoveryAttemptClaim, { kind: 'replay' }> {
   validateAttemptRow(existing, identity);
   if (existing.state === 'started') {
     throw new KiokukoError('CONFLICT', 'Task Skill discovery is already in progress or did not complete');
@@ -385,10 +385,10 @@ function resolveExistingAttempt(
   throwStoredFailure(validateFailure(parseCanonicalStoredJson(existing.failure_json, MAX_FAILURE_JSON_CHARS)));
 }
 
-export function readAgentTaskSkillDiscoveryAttempt(
+export function readTaskSkillDiscoveryAttempt(
   database: SqliteDatabase,
-  identity: AgentTaskSkillDiscoveryAttemptIdentity,
-): Extract<AgentTaskSkillDiscoveryAttemptClaim, { kind: 'replay' }> | undefined {
+  identity: TaskSkillDiscoveryAttemptIdentity,
+): Extract<TaskSkillDiscoveryAttemptClaim, { kind: 'replay' }> | undefined {
   const existing = attemptRow(database, identity);
   return existing === undefined ? undefined : resolveExistingAttempt(existing, identity);
 }
@@ -409,9 +409,9 @@ function usedDiscoveryBudget(database: SqliteDatabase, runId: string): {
   return { queryBudget, selectionBudget };
 }
 
-export function claimAgentTaskSkillDiscoveryAttempt(
+export function claimTaskSkillDiscoveryAttempt(
   database: SqliteDatabase,
-  identity: AgentTaskSkillDiscoveryAttemptIdentity,
+  identity: TaskSkillDiscoveryAttemptIdentity,
   requestedBudget: {
     queryBudget: number;
     selectionBudget: number;
@@ -419,7 +419,7 @@ export function claimAgentTaskSkillDiscoveryAttempt(
     queryBudget: ENNO_MAX_TOTAL_SKILL_QUERIES,
     selectionBudget: ENNO_MAX_EXTERNAL_SKILLS,
   },
-): AgentTaskSkillDiscoveryAttemptClaim {
+): TaskSkillDiscoveryAttemptClaim {
   if (!boundedText(identity.runId, 256)
     || !HASH.test(identity.requestDigest)
     || (identity.phase !== 'intake' && identity.phase !== 'zenki')
@@ -442,7 +442,7 @@ export function claimAgentTaskSkillDiscoveryAttempt(
       const grantedQueryBudget = queryBudget === 0 || selectionBudget === 0 ? 0 : queryBudget;
       const grantedSelectionBudget = queryBudget === 0 || selectionBudget === 0 ? 0 : selectionBudget;
       database.prepare(`
-        INSERT INTO agent_task_skill_discovery_attempts (
+        INSERT INTO task_skill_discovery_attempts (
           run_id, phase, request_digest,
           reserved_query_count, reserved_selection_count,
           consumed_query_count, consumed_selection_count,
@@ -458,9 +458,9 @@ export function claimAgentTaskSkillDiscoveryAttempt(
   });
 }
 
-export function completeAgentTaskSkillDiscoveryAttempt(
+export function completeTaskSkillDiscoveryAttempt(
   database: SqliteDatabase,
-  identity: AgentTaskSkillDiscoveryAttemptIdentity,
+  identity: TaskSkillDiscoveryAttemptIdentity,
   summary: SkillDiscoverySummary,
   assertBeforeComplete?: () => void,
 ): SkillDiscoverySummary {
@@ -481,7 +481,7 @@ export function completeAgentTaskSkillDiscoveryAttempt(
     assertBeforeComplete?.();
     const finishedAt = new Date().toISOString();
     const updated = database.prepare(`
-      UPDATE agent_task_skill_discovery_attempts
+      UPDATE task_skill_discovery_attempts
       SET state = 'completed', summary_json = ?, consumed_query_count = ?, consumed_selection_count = ?, finished_at = ?
       WHERE run_id = ? AND phase = ? AND request_digest = ? AND state = 'started'
       RETURNING state, summary_json
@@ -495,9 +495,9 @@ export function completeAgentTaskSkillDiscoveryAttempt(
   });
 }
 
-export function failAgentTaskSkillDiscoveryAttempt(
+export function failTaskSkillDiscoveryAttempt(
   database: SqliteDatabase,
-  identity: AgentTaskSkillDiscoveryAttemptIdentity,
+  identity: TaskSkillDiscoveryAttemptIdentity,
   cause: unknown,
 ): never {
   const normalized = normalizedFailure(cause);
@@ -509,7 +509,7 @@ export function failAgentTaskSkillDiscoveryAttempt(
       validateAttemptRow(existing, identity);
       if (existing.state !== 'started') integrity();
       const updated = database.prepare(`
-        UPDATE agent_task_skill_discovery_attempts
+        UPDATE task_skill_discovery_attempts
         SET state = 'failed', failure_json = ?,
             consumed_query_count = reserved_query_count,
             consumed_selection_count = reserved_selection_count,

@@ -72,4 +72,4 @@ MCP toolの呼び出しはclientとモデルが決めるため、モデルが毎
 - [CLI contract](docs/cli-contract.md)
 
 実装者向け資料は[architecture](docs/architecture.md)、[database](docs/database.md)、[execution ledger](docs/execution-ledger.md)、
-[client compatibility](docs/client-compatibility.md)を参照してください。
+[OpenCode integration](docs/opencode-integration.md)を参照してください。

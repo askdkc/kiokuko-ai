@@ -83,7 +83,7 @@ const HASH_PATTERN = /^[0-9a-f]{64}$/u;
 const TIMESTAMP_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u;
 const RECORD_FIELDS = {
   checksum: ['type', 'sha256'],
-  manifest: ['type', 'apiVersion', 'workspace', 'format', 'version', 'counts'],
+  manifest: ['type', 'workspace', 'format', 'version', 'counts'],
   entry: [
     'type', 'id', 'workspace', 'kind', 'status', 'title', 'body', 'summary',
     'scope_json', 'provenance_json', 'trust_level', 'confidence', 'content_hash',
@@ -387,7 +387,7 @@ function parseImport(text: string): ImportDocument {
   const payloadLines = lines.slice(1).map((line, index) => parseJsonLine(line, `Import payload line ${index + 1}`));
   const manifest = payloadLines[0]!;
   exactFields(manifest, RECORD_FIELDS.manifest, 'Import manifest');
-  if (manifest.format !== 'kiokuko-jsonl' || manifest.apiVersion !== '1' || manifest.version !== 1) {
+  if (manifest.format !== 'kiokuko-jsonl' || manifest.version !== 1) {
     throw new KiokukoError('VALIDATION_ERROR', 'Unsupported import format');
   }
   if (manifest.type !== 'manifest') throw new KiokukoError('VALIDATION_ERROR', 'Import manifest is invalid');

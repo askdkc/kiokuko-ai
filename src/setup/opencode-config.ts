@@ -5,7 +5,7 @@ import { PACKAGE_VERSION } from '../package-version.js';
 import { isSkillDiscoveryMode, SKILL_DISCOVERY_ENV } from '../skills/config.js';
 import type { SkillDiscoveryMode } from '../skills/types.js';
 import type { DelimitedBlockResult } from './managed-text.js';
-import { setupMcpIdentityConflict, setupMcpIdentityConflictClient } from './mcp-conflict.js';
+import { isSetupOpenCodeMcpIdentityConflict, setupOpenCodeMcpIdentityConflict } from './mcp-conflict.js';
 import { assertStrictJsonSyntax } from './strict-json.js';
 import type { OpenCodeRuntimeInvocation } from '../opencode/hook-effect.js';
 
@@ -131,7 +131,7 @@ function validation(message: string): never {
 }
 
 function conflict(): never {
-  setupMcpIdentityConflict('opencode', 'OpenCode config already contains a conflicting kiokuko MCP server');
+  setupOpenCodeMcpIdentityConflict('OpenCode config already contains a conflicting kiokuko MCP server');
 }
 
 export type OpenCodeIntegrationStatus = 'absent' | 'current' | 'legacy' | 'outdated' | 'duplicate' | 'conflict';
@@ -165,7 +165,7 @@ export function inspectOpenCodeIntegration(
   try {
     plugins = validatePluginEntries(root);
   } catch (error) {
-    if (setupMcpIdentityConflictClient(error) === 'opencode') return { plugin: 'conflict', mcp: 'conflict' };
+    if (isSetupOpenCodeMcpIdentityConflict(error)) return { plugin: 'conflict', mcp: 'conflict' };
     throw error;
   }
   const managedPlugins = plugins.filter((entry) => pluginPackage(entry) === KIOKUKO_OPENCODE_PLUGIN_PACKAGE);

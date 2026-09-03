@@ -23,14 +23,14 @@ const exitCodes: Array<[ErrorCode, number]> = [
 
 test('preserves the existing success and error JSON envelope shapes', () => {
   assert.deepEqual(successEnvelope('recall', { items: [] }, { count: 0 }), {
-    apiVersion: '1',
+    version: 1,
     ok: true,
     operation: 'recall',
     data: { items: [] },
     meta: { count: 0 },
   });
   assert.deepEqual(errorEnvelope('record', new KiokukoError('VALIDATION_ERROR', 'invalid input', { field: 'title' })), {
-    apiVersion: '1',
+    version: 1,
     ok: false,
     operation: 'record',
     error: {
@@ -46,7 +46,7 @@ test('redacts arbitrary errors from the public JSON envelope', () => {
   const envelope = errorEnvelope('skills.list', new Error(sentinel));
 
   assert.deepEqual(envelope, {
-    apiVersion: '1',
+    version: 1,
     ok: false,
     operation: 'skills.list',
     error: {

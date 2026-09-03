@@ -3,25 +3,14 @@ PLAN.md
 node_modules
 /dist/
 .kiokuko-dev/
-
-# AI assistant local state and configuration
-.codex/
-.claude/
+# OpenCode local state and Kiokuko-generated project metadata
 .opencode/
-.hermes/
-.aider*
-.agents/
-.continue/
-.cursor/
-.gemini/
-.roo/
-.windsurf/
-.cursorrules
-.windsurfrules
-
-# Client-specific instruction files; keep Kiokuko's packaged template tracked
 AGENTS.md
 !templates/AGENTS.md
-CLAUDE.md
-GEMINI.md
 .kiokuko.json
+
+# SQLite runtime sidecars are never source artifacts
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite3-wal
+*.sqlite3-shm

@@ -4,7 +4,7 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { prepareAgentTask } from '../../src/akinator/agent-task.js';
+import { prepareOpenCodeTask } from '../../src/akinator/opencode-task.js';
 import { initializeDatabase } from '../../src/commands/init.js';
 import { openConnection } from '../../src/db/connection.js';
 import { advisoryInputDigest } from '../../src/enno-oduno/advisory.js';
@@ -24,7 +24,7 @@ async function fixture() {
   const databasePath = path.join(databaseDirectory, 'data.sqlite3');
   await initializeDatabase({ databasePath });
   const database = openConnection(databasePath);
-  const prepared = await prepareAgentTask(database, {
+  const prepared = await prepareOpenCodeTask(database, {
     requestId: 'advisory-request',
     cwd: root,
     task: 'Repair the add function',
@@ -36,7 +36,7 @@ async function fixture() {
   return { root, database, databasePath, prepared };
 }
 
-function identity(prepared: Awaited<ReturnType<typeof prepareAgentTask>>) {
+function identity(prepared: Awaited<ReturnType<typeof prepareOpenCodeTask>>) {
   return {
     runId: prepared.run.runId,
     workspace: prepared.project.workspace,

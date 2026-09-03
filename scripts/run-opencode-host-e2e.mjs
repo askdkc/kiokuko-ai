@@ -193,7 +193,7 @@ async function jsonRequest(baseURL, pathname) {
 async function mcpTools(cliScript, environment, cwd) {
   const input = [
     JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {
-      protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'kiokuko-host-contract', version: '1' },
+      protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'opencode', version: 'host-e2e' },
     } }),
     JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }),
     JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} }),
@@ -232,7 +232,7 @@ async function mcpTools(cliScript, environment, cwd) {
 async function mcpToolCall(cliScript, environment, cwd, name, argumentsValue) {
   const input = [
     JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {
-      protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'kiokuko-host-contract', version: '1' },
+      protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'opencode', version: 'host-e2e' },
     } }),
     JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }),
     JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name, arguments: argumentsValue } }),
@@ -341,7 +341,7 @@ async function main() {
     const tools = await mcpTools(cliScript, environment, project);
     const toolNames = tools.map((tool) => tool.name).filter((name) => typeof name === 'string');
     if (!toolNames.includes('task_prepare')) throw new Error('Kiokuko task_prepare is missing from MCP tool catalog');
-    const hook = await requireSuccess(process.execPath, [cliScript, 'enno', 'hook', '--client', 'opencode', '--input-json', '-'], {
+    const hook = await requireSuccess(process.execPath, [cliScript, 'enno', 'hook', '--input-json', '-'], {
       cwd: project, env: environment, input: `${JSON.stringify({ protocolVersion: 1, packageVersion: packageJson.version, sessionId: 'fixture-session', terminalMessageId: 'fixture-terminal', cwd: project })}\n`, timeoutMs: 45_000, label: 'hook',
     });
     const hookResponse = parseJson(hook.stdout.toString('utf8'), 'hook_output');
@@ -424,7 +424,7 @@ async function main() {
       if (activeRun.status !== 'cancelled') throw new Error(`active Enno run was not terminated:${String(activeRun.status)}`);
       const receiptCount = Number(database.prepare(`
         SELECT COUNT(*) AS count
-        FROM enno_client_continuation_receipts
+        FROM enno_opencode_continuation_receipts
         WHERE run_id = ?
       `).get(activeRun.runId)?.count ?? 0);
       if (receiptCount !== 1) throw new Error(`durable continuation receipt count mismatch:${receiptCount}`);

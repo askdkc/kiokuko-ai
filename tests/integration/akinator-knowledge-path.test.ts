@@ -4,7 +4,7 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { prepareAgentTask } from '../../src/akinator/agent-task.js';
+import { prepareOpenCodeTask } from '../../src/akinator/opencode-task.js';
 import { initializeDatabase } from '../../src/commands/init.js';
 import { openConnection } from '../../src/db/connection.js';
 import { curateMemoryCandidates } from '../../src/memory/curator.js';
@@ -20,7 +20,7 @@ test('counts only verified independent Akinator runs and makes repeated portable
   try {
     let workspace = '';
     for (const sessionId of ['client-run-a', 'client-run-b']) {
-      const prepared = await prepareAgentTask(database, {
+      const prepared = await prepareOpenCodeTask(database, {
         requestId: `knowledge-path-${sessionId}`,
         cwd: root,
         task: 'SQLite migration failuresを安全に復旧する',
@@ -30,7 +30,7 @@ test('counts only verified independent Akinator runs and makes repeated portable
           expected: '復旧テストが成功しschemaが一致する',
           constraints: '適用済みmigrationを破壊しない',
         },
-        client: { kind: 'test', sessionId },
+        client: { kind: 'opencode' as const, sessionId },
       });
       workspace = prepared.project.workspace;
       const checkpoint = await checkpointScopedMemory(database, {
@@ -77,12 +77,12 @@ test('does not qualify retrieval-free runs without fresh verification or a passi
   await initializeDatabase({ databasePath });
   const database = openConnection(databasePath);
   try {
-    const prepared = await prepareAgentTask(database, {
+    const prepared = await prepareOpenCodeTask(database, {
       requestId: 'knowledge-path-unverified',
       cwd: root,
       task: '設定手順を実装する',
       profileHints: { taskType: 'build', target: '設定', expected: '設定が反映される' },
-      client: { kind: 'test', sessionId: 'unverified' },
+      client: { kind: 'opencode' as const, sessionId: 'unverified' },
     });
     const checkpoint = await checkpointScopedMemory(database, {
       cwd: root,

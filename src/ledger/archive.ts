@@ -21,7 +21,6 @@ import {
 } from './types.js';
 
 export const LEDGER_ARCHIVE_FORMAT = 'kiokuko-ledger-jsonl' as const;
-export const LEDGER_ARCHIVE_API_VERSION = '1' as const;
 export const LEDGER_ARCHIVE_VERSION = 1 as const;
 
 export const MAX_ARCHIVE_LINE_COUNT = 10_000;
@@ -110,7 +109,7 @@ const EMPTY_COUNTS: LedgerArchiveCounts = {
 
 const RECORD_FIELDS: Record<ArchiveRecordType | 'manifest' | 'checksum', readonly string[]> = {
   checksum: ['type', 'sha256'],
-  manifest: ['type', 'apiVersion', 'archiveVersion', 'format', 'workspace', 'counts'],
+  manifest: ['type', 'archiveVersion', 'format', 'workspace', 'counts'],
   runs: [
     'type', 'run_id', 'workspace', 'client_kind', 'client_version', 'source_session_id', 'parent_run_id',
     'protocol_version', 'capture_profile', 'coverage_json', 'status', 'title', 'task_hash', 'metadata_json',
@@ -679,7 +678,6 @@ function buildArchive(workspace: string, records: Map<ArchiveRecordType, Archive
   const counts = countRecords(records);
   const manifest: ArchiveRecord = {
     type: 'manifest',
-    apiVersion: LEDGER_ARCHIVE_API_VERSION,
     archiveVersion: LEDGER_ARCHIVE_VERSION,
     format: LEDGER_ARCHIVE_FORMAT,
     workspace,
@@ -743,7 +741,6 @@ function parseArchive(content: string): { workspace: string; counts: LedgerArchi
   if (actual !== checksum.sha256) integrity();
   const manifest = parseLine(lines[1]!, RECORD_FIELDS.manifest);
   if (manifest.type !== 'manifest'
-    || manifest.apiVersion !== LEDGER_ARCHIVE_API_VERSION
     || typeof manifest.archiveVersion !== 'number'
     || manifest.archiveVersion !== LEDGER_ARCHIVE_VERSION
     || manifest.format !== LEDGER_ARCHIVE_FORMAT) validation();

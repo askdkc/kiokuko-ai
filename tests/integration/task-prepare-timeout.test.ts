@@ -6,7 +6,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { openConnection } from '../../src/db/connection.js';
 import { migrateDatabase } from '../../src/db/migrate.js';
-import { prepareAgentTask } from '../../src/akinator/agent-task.js';
+import { prepareOpenCodeTask } from '../../src/akinator/opencode-task.js';
 
 async function waitFor(predicate: () => boolean): Promise<void> {
   const deadline = Date.now() + 1_000;
@@ -39,7 +39,7 @@ test('task preparation propagates cancellation into external skill discovery wit
     });
   };
   try {
-    const preparation = prepareAgentTask(database, {
+    const preparation = prepareOpenCodeTask(database, {
       requestId: 'task-prepare-timeout-fixture',
       cwd: root,
       task: 'Build a TypeScript service',

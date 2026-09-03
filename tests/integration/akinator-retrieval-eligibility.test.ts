@@ -4,7 +4,7 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { prepareAgentTask } from '../../src/akinator/agent-task.js';
+import { prepareOpenCodeTask } from '../../src/akinator/opencode-task.js';
 import type { SqliteDatabase } from '../../src/db/adapter.js';
 import { openConnection } from '../../src/db/connection.js';
 import { migrateDatabase } from '../../src/db/migrate.js';
@@ -52,7 +52,7 @@ test('Akinator retrieval fails closed for an external marker without a managed i
     }
 
     await assert.rejects(
-      prepareAgentTask(database, {
+      prepareOpenCodeTask(database, {
         requestId: 'akinator-retrieval-eligibility',
         cwd: root,
         task: 'Implement a feature',
@@ -63,7 +63,7 @@ test('Akinator retrieval fails closed for an external marker without a managed i
           constraints: null,
         },
         capabilities: [{ kind: 'skill', name: 'memory-reasoning' }],
-        client: { kind: 'test', sessionId: 'akinator-retrieval-eligibility' },
+        client: { kind: 'opencode' as const, sessionId: 'akinator-retrieval-eligibility' },
         skillDiscoveryMode: 'off',
       }),
       (error: unknown) => error instanceof Error

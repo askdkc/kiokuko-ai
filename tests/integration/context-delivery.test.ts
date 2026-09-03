@@ -30,7 +30,7 @@ function seedDeliveryTarget(database: ReturnType<typeof openConnection>): void {
       run_id, workspace, client_kind, client_version, source_session_id, parent_run_id,
       protocol_version, capture_profile, coverage_json, status, title, task_hash,
     metadata_json, last_sequence, last_source_sequence, started_at, ended_at, created_at, updated_at
-    ) VALUES (?, ?, 'generic', '1.0.0', NULL, NULL, '1', 'standard', '{"approval":"unavailable","command":"unavailable","file":"unavailable","run":"declared","tool":"unavailable"}', 'active', 'Delivery task', NULL, '{}', 0, NULL, ?, NULL, ?, ?)
+    ) VALUES (?, ?, 'opencode', '1.0.0', NULL, NULL, '1', 'standard', '{"approval":"unavailable","command":"unavailable","file":"unavailable","run":"declared","tool":"unavailable"}', 'active', 'Delivery task', NULL, '{}', 0, NULL, ?, NULL, ?, ?)
   `).run('run-delivery-1', workspace, now, now, now);
   database.prepare(`
     INSERT INTO akinator_sessions (
@@ -599,7 +599,7 @@ test('enforces run, intake, workspace, sequence, and historical entry revision r
       INSERT INTO ledger_runs (
         run_id, workspace, client_kind, protocol_version, capture_profile, coverage_json,
         status, metadata_json, last_sequence, started_at, created_at, updated_at
-      ) VALUES (?, 'other-workspace', 'generic', '1', 'standard', '{}', 'active', '{}', 3, ?, ?, ?)
+      ) VALUES (?, 'other-workspace', 'opencode', '1', 'standard', '{}', 'active', '{}', 3, ?, ?, ?)
     `).run('run-other-workspace', now, now, now);
     assert.throws(
       () => recordContextDelivery(database, { ...deliveryInput('delivery-cross-run-1'), runId: 'run-other-workspace' }),

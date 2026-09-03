@@ -10,5 +10,5 @@
 - [CLI contract](cli-contract.md) — 安定したコマンドとレスポンス。
 
 実装者向けは[architecture](architecture.md)、[database](database.md)、[execution ledger](execution-ledger.md)、
-[client compatibility](client-compatibility.md)、[retrieval evaluation](retrieval-evaluation.md)を参照してください。
+[OpenCode integration](opencode-integration.md)、[retrieval evaluation](retrieval-evaluation.md)を参照してください。
 英語目次は[こちら](README.md)です。

@@ -15,7 +15,7 @@ import { importSkillSnapshot } from '../../src/skills/store.js';
 import { validateSkillSnapshot } from '../../src/skills/source/snapshot-validator.js';
 import type { SkillCandidate } from '../../src/skills/types.js';
 
-export const SAMPLE_DATABASE_BASELINE_VERSION = 2;
+export const SAMPLE_DATABASE_SCHEMA_VERSION = 1;
 export const SAMPLE_PROJECT_WORKSPACE = 'project:sampledb-ci';
 export const SAMPLE_GLOBAL_WORKSPACE = 'global';
 export const SAMPLE_EXTERNAL_SKILL_ID = 'github:sveltejs/ai-tools:svelte-code-writer';
@@ -88,9 +88,9 @@ function sampleSkillSnapshot() {
 
 export const SAMPLE_EXTERNAL_SKILL_DOCUMENT_COUNT = documentsFromSkillSnapshot(sampleSkillSnapshot()).length;
 
-async function copyBaselineMigrations(targetDirectory: string): Promise<void> {
+async function copyCurrentMigration(targetDirectory: string): Promise<void> {
   const available = await readdir(migrationsRoot);
-  for (let version = 1; version <= SAMPLE_DATABASE_BASELINE_VERSION; version += 1) {
+  for (let version = 1; version <= SAMPLE_DATABASE_SCHEMA_VERSION; version += 1) {
     const prefix = String(version).padStart(3, '0');
     const matches = available.filter((name) => name.startsWith(`${prefix}_`) && name.endsWith('.sql'));
     assert.equal(matches.length, 1, `Expected exactly one migration for version ${version}`);
@@ -285,9 +285,9 @@ function canonicalizeGeneratedIdentifiers(database: ReturnType<typeof openConnec
   database.exec('VACUUM');
 }
 
-function assertBaselineState(database: ReturnType<typeof openConnection>): void {
+function assertCurrentState(database: ReturnType<typeof openConnection>): void {
   const versions = database.prepare('SELECT version FROM schema_migrations ORDER BY version').all<{ version: number }>();
-  assert.deepEqual(versions.map(({ version }) => version), Array.from({ length: SAMPLE_DATABASE_BASELINE_VERSION }, (_, index) => index + 1));
+  assert.deepEqual(versions.map(({ version }) => version), [SAMPLE_DATABASE_SCHEMA_VERSION]);
   const counts = database.prepare('SELECT workspace, COUNT(*) AS count FROM entries GROUP BY workspace ORDER BY workspace')
     .all<{ workspace: string; count: number }>()
     .map(({ workspace, count }) => ({ workspace, count }));
@@ -306,19 +306,19 @@ export async function createSampleDatabase(targetPath: string): Promise<void> {
   const temporaryMigrations = path.join(temporaryRoot, 'migrations');
   const temporaryDatabase = path.join(temporaryRoot, 'kiokuko-ai.sqlite');
   await mkdir(temporaryMigrations);
-  await copyBaselineMigrations(temporaryMigrations);
+  await copyCurrentMigration(temporaryMigrations);
 
   const database = openConnection(temporaryDatabase);
   let completed = false;
   try {
     const migration = migrateDatabase(database, temporaryMigrations);
-    assert.equal(migration.currentVersion, SAMPLE_DATABASE_BASELINE_VERSION);
-    assert.deepEqual(migration.applied, Array.from({ length: SAMPLE_DATABASE_BASELINE_VERSION }, (_, index) => index + 1));
+    assert.equal(migration.currentVersion, SAMPLE_DATABASE_SCHEMA_VERSION);
+    assert.deepEqual(migration.applied, [SAMPLE_DATABASE_SCHEMA_VERSION]);
     recordProjectFixtures(database);
     recordGlobalFixtures(database);
     recordExternalSkillFixture(database);
     canonicalizeGeneratedIdentifiers(database);
-    assertBaselineState(database);
+    assertCurrentState(database);
     database.close();
     await chmod(temporaryDatabase, 0o600);
     await rename(temporaryDatabase, absoluteTarget);
