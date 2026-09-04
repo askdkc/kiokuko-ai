@@ -170,11 +170,27 @@ test('embedding setup configures OpenCode and refreshes project instructions', a
     };
     assert.equal(setupCalls.length, 1);
     const setupCall = setupCalls[0]!;
-    assert.equal(setupCall.command, 'kiokuko-ai');
+    assert.equal(Object.hasOwn(setupCall, 'command'), false);
     assert.equal(setupCall.dryRun, true);
     assert.equal(setupCall.standardSkills, true);
     assert.equal(setupCall.replaceConflictingOpenCodeMcp, false);
     assert.deepEqual(response.data.projectSetup, { client: 'opencode', projectAgentFiles: [] });
+  } finally {
+    database.close();
+  }
+});
+
+test('embedding setup preserves an explicit executable override', async () => {
+  const database = await temporaryDatabase('embedding-cli-command-override');
+  try {
+    const setupCalls: SetupOptions[] = [];
+    await command(database, [], {
+      setupOpenCode: async (options) => {
+        setupCalls.push(options);
+        return { client: 'opencode', projectAgentFiles: [] };
+      },
+    }).parseAsync(['node', 'kiokuko-ai', 'embeddings', 'setup', '--command', '/custom/kiokuko-ai', '--dry-run', '--json']);
+    assert.equal(setupCalls[0]?.command, '/custom/kiokuko-ai');
   } finally {
     database.close();
   }
@@ -219,14 +235,12 @@ test('embedding setup confirms and replaces a conflicting client MCP identity', 
     }).parseAsync(['node', 'kiokuko-ai', 'embeddings', 'setup', '--dry-run']);
     assert.deepEqual(setupCalls, [
       {
-        command: 'kiokuko-ai',
         dryRun: true,
         standardSkills: true,
         skillDiscoveryMode: 'official',
         replaceConflictingOpenCodeMcp: false,
       },
       {
-        command: 'kiokuko-ai',
         dryRun: true,
         standardSkills: true,
         skillDiscoveryMode: 'official',
