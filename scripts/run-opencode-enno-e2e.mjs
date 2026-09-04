@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
+import { access, mkdtemp, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
@@ -49,6 +49,16 @@ async function requireSuccess(command, args, options) {
   if (result.code !== 0) throw new Error(`fixture command failed: ${path.basename(command)} (${result.spawnCode ?? result.code ?? result.signal ?? 'unknown'})`);
 }
 
+export function createOpenCodeE2eEnvironment({ home, config, data }, inherited = process.env) {
+  return {
+    ...inherited,
+    HOME: home,
+    XDG_CONFIG_HOME: config,
+    XDG_DATA_HOME: data,
+    KIOKUKO_DATA_DIR: data,
+  };
+}
+
 async function runOpenCode() {
   if (process.argv.length > 2) return { client, status: 'failed', reason: 'unexpected_argument' };
   if (process.env.RUN_OPENCODE_E2E !== '1') return { client, status: 'not-run', reason: 'RUN_OPENCODE_E2E=1 is not set' };
@@ -67,18 +77,15 @@ async function runOpenCode() {
   await requireSuccess('git', ['-c', 'user.name=Kiokuko E2E', '-c', 'user.email=kiokuko-e2e@example.invalid', 'commit', '-qm', 'fixture'], { cwd: project, timeoutMs: 10_000 });
 
   const databasePath = path.join(data, 'kiokuko-ai.sqlite');
-  const environment = {
-    ...process.env,
-    HOME: home,
-    XDG_CONFIG_HOME: config,
-    XDG_DATA_HOME: data,
-    KIOKUKO_DATABASE: databasePath,
-  };
+  const environment = createOpenCodeE2eEnvironment({ home, config, data });
   const command = process.env.OPENCODE_E2E_COMMAND || 'opencode';
   await requireSuccess(kiokuko, ['setup', '--enno-oduno', 'on', '--skill-discovery', 'off', '--json'], {
     cwd: project, env: environment, timeoutMs: 60_000,
   });
   await requireSuccess(kiokuko, ['use', '--root', project, '--json'], { cwd: project, env: environment, timeoutMs: 60_000 });
+
+  // Fail before launching a model if setup and ledger verification disagree.
+  await access(databasePath);
 
   const task = 'Use Kiokuko Enno-Oduno. Fix the incorrect add function, keep the public API, and make node --test pass. Use at most three repair loops.';
   const result = await execute(command, ['run', task], { cwd: project, env: environment, timeoutMs });
@@ -122,6 +129,8 @@ async function runOpenCode() {
   }
 }
 
-const results = [await runOpenCode()];
-process.stdout.write(`${JSON.stringify({ protocolVersion: 1, results })}\n`);
-if (results.some((result) => result.status === 'failed')) process.exitCode = 1;
+if (process.argv[1] !== undefined && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  const results = [await runOpenCode()];
+  process.stdout.write(`${JSON.stringify({ protocolVersion: 1, results })}\n`);
+  if (results.some((result) => result.status === 'failed')) process.exitCode = 1;
+}

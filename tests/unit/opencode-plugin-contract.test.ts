@@ -61,3 +61,47 @@ test('package boundary points OpenCode loader at the plugin dist entrypoint and 
     './cli': './dist/bin/kiokuko.js',
   });
 });
+
+for (const mode of ['dispose', 'timeout'] as const) {
+  test(`compaction read-back is cancelled by ${mode}`, async (t) => {
+    let requestSignal: AbortSignal | undefined;
+    let release!: () => void;
+    let cancelled!: () => void;
+    const cancellation = new Promise<void>((resolve) => { cancelled = resolve; });
+    if (mode === 'timeout') {
+      const timeout = AbortSignal.timeout.bind(AbortSignal);
+      t.mock.method(AbortSignal, 'timeout', () => timeout(20));
+    }
+    const hooks = await KiokukoPlugin({
+      directory: '/repo',
+      client: {
+        app: { log: async () => undefined },
+        session: {
+          list: async () => ({ data: [] }),
+          status: async () => ({ data: {} }),
+          messages: ({ signal }: { signal?: AbortSignal }) => new Promise((resolve, reject) => {
+            requestSignal = signal;
+            release = () => resolve({ data: [] });
+            signal?.addEventListener('abort', () => { cancelled(); reject(signal.reason); }, { once: true });
+          }),
+        },
+      },
+    } as never);
+    let guard: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await hooks.event!({ event: { type: 'session.compacted', properties: { sessionID: 'compacting' } } as never });
+      assert.ok(requestSignal, 'read-back must receive an abort signal');
+      const completion = mode === 'dispose' ? hooks.dispose!() : cancellation;
+      await Promise.race([
+        completion,
+        new Promise<never>((_, reject) => { guard = setTimeout(() => reject(new Error('compaction read did not cancel')), 1_000); }),
+      ]);
+      assert.equal(requestSignal.aborted, true);
+      assert.equal(requestSignal.reason.name, mode === 'timeout' ? 'TimeoutError' : 'AbortError');
+    } finally {
+      clearTimeout(guard);
+      release?.();
+      await hooks.dispose?.();
+    }
+  });
+}

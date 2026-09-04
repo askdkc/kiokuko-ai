@@ -441,3 +441,56 @@ test('idle state eviction never removes active entries', () => {
   assert.equal(state.begin('overflow').kind, 'run_hook');
   assert.equal(state.get('active-1')?.state, 'in_flight');
 });
+
+test('reconciliation recovers an omitted idle session while a sibling is busy, then recovers the sibling', async () => {
+  const calls: string[] = [];
+  const reads: string[] = [];
+  let statuses: Record<string, { type: string }> = { busy: { type: 'busy' } };
+  const client = { session: {
+    list: async () => ({ data: ['idle', 'busy'].map((id) => ({ id, directory: '/repo', time: { updated: 1 } })) }),
+    status: async () => ({ data: statuses }),
+    get: async ({ path }: { path: { id: string } }) => ({ data: { id: path.id, directory: '/repo' } }),
+    messages: async ({ path }: { path: { id: string } }) => { reads.push(path.id); return { data: [assistant(`terminal-${path.id}`)] }; },
+  } };
+  const dependencies = {
+    state: new OpenCodeIdleState(),
+    reconciliationState: { sessionUpdates: new Map<string, number>(), retrySessionIds: new Set<string>() },
+    runHook: async ({ sessionId }: { sessionId: string }) => { calls.push(sessionId); return { kind: 'stop' as const, reason: 'no_active_run' as const }; },
+  };
+  await reconcileOpenCodeIdle(client as never, '/repo', dependencies);
+  assert.deepEqual(calls, ['idle']);
+  assert.equal(reads.includes('busy'), false);
+  assert.equal(dependencies.reconciliationState.sessionUpdates.has('busy'), false);
+  statuses = {};
+  await reconcileOpenCodeIdle(client as never, '/repo', dependencies);
+  assert.deepEqual(calls, ['idle', 'busy']);
+  const readCount = reads.length;
+  await reconcileOpenCodeIdle(client as never, '/repo', dependencies);
+  assert.equal(reads.length, readCount);
+});
+
+test('reconciliation retains failed reads without starving another idle session', async () => {
+  let fail = true;
+  const calls: string[] = [];
+  const client = { session: {
+    list: async () => ({ data: ['failed', 'healthy'].map((id) => ({ id, directory: '/repo', time: { updated: 1 } })) }),
+    status: async () => ({ data: {} }),
+    get: async ({ path }: { path: { id: string } }) => ({ data: { id: path.id, directory: '/repo' } }),
+    messages: async ({ path }: { path: { id: string } }) => {
+      if (fail && path.id === 'failed') throw new Error('temporary transport failure');
+      return { data: [assistant(`terminal-${path.id}`)] };
+    },
+  } };
+  const dependencies = {
+    state: new OpenCodeIdleState(),
+    reconciliationState: { sessionUpdates: new Map<string, number>(), retrySessionIds: new Set<string>() },
+    runHook: async ({ sessionId }: { sessionId: string }) => { calls.push(sessionId); return { kind: 'stop' as const, reason: 'no_active_run' as const }; },
+  };
+  await reconcileOpenCodeIdle(client as never, '/repo', dependencies);
+  assert.deepEqual(calls, ['healthy']);
+  assert.deepEqual([...dependencies.reconciliationState.retrySessionIds], ['failed']);
+  fail = false;
+  await reconcileOpenCodeIdle(client as never, '/repo', dependencies);
+  assert.deepEqual(calls, ['healthy', 'failed']);
+  assert.equal(dependencies.reconciliationState.retrySessionIds.size, 0);
+});

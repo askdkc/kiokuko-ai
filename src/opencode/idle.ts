@@ -414,43 +414,43 @@ export async function reconcileOpenCodeIdle(
   }
   const statusEntries = eventObject(statuses);
   if (statusEntries === undefined) return;
-  const statusSessionIds = new Set(Object.keys(statusEntries));
-  const changedSessionIds = new Set<string>();
-  for (const [sessionId, session] of rootSessions) {
-    if (session.updated === undefined) continue;
-    if (reconciliationState.sessionUpdates.get(sessionId) !== session.updated) changedSessionIds.add(sessionId);
-    reconciliationState.sessionUpdates.set(sessionId, session.updated);
-  }
-  const candidateSessionIds = statusSessionIds.size > 0
-    ? [...statusSessionIds].filter((sessionId) => rootSessionIds.has(sessionId)).slice(0, MAX_IDLE_ENTRIES)
-    : [...rootSessions.entries()]
-      .filter(([sessionId]) => changedSessionIds.has(sessionId) || reconciliationState.retrySessionIds.has(sessionId))
-      .sort((left, right) => (right[1].updated ?? 0) - (left[1].updated ?? 0))
-      .map(([sessionId]) => sessionId);
-
-  for (const sessionId of candidateSessionIds) {
-    if (!isActive(dependencies)) return;
-    const status = statusEntries[sessionId];
-    let fallbackTerminal: string | undefined;
-    if (!rootSessionIds.has(sessionId) || (statusSessionIds.size > 0 && eventObject(status)?.type !== 'idle')) continue;
-    if (statusSessionIds.size === 0) {
-      const messagesResponse = await client.session.messages({ path: { id: sessionId }, ...requestSignal(dependencies) });
-      const messages = responseData(messagesResponse);
-      if (!Array.isArray(messages) || !completedAssistantMessage(messages[messages.length - 1])) continue;
-      fallbackTerminal = terminalId(messages);
-      if (fallbackTerminal === undefined) continue;
+  const state = dependencies.state ?? new OpenCodeIdleState();
+  // OpenCode omits idle sessions from this map. A busy sibling must not
+  // suppress recovery, and observing a timestamp is not processing it.
+  for (const sessionId of rootSessions.keys()) {
+    if (Object.hasOwn(statusEntries, sessionId) && eventObject(statusEntries[sessionId])?.type !== 'idle') {
+      reconciliationState.retrySessionIds.add(sessionId);
     }
-    await handleOpenCodeIdle(client, directory, {
-      type: 'session.idle',
-      properties: { sessionID: sessionId, ...(fallbackTerminal === undefined ? {} : { messageID: fallbackTerminal }) },
-    }, dependencies);
-    if (fallbackTerminal !== undefined && dependencies.reconciliationState !== undefined) {
-      const state = dependencies.state?.get(openCodeIdleKey(directory, sessionId, fallbackTerminal));
-      if (state?.state === 'retryable_failure' || state?.state === 'pending_prompt' || state?.state === 'prompt_in_flight') {
-        dependencies.reconciliationState.retrySessionIds.add(sessionId);
-      } else {
-        dependencies.reconciliationState.retrySessionIds.delete(sessionId);
+  }
+  const candidates = [...rootSessions.entries()]
+    .filter(([sessionId, session]) => session.updated === undefined
+      || reconciliationState.sessionUpdates.get(sessionId) !== session.updated
+      || reconciliationState.retrySessionIds.has(sessionId)
+      || eventObject(statusEntries[sessionId])?.type === 'idle')
+    .sort((left, right) => (right[1].updated ?? 0) - (left[1].updated ?? 0));
+
+  for (const [sessionId, session] of candidates) {
+    if (!isActive(dependencies)) return;
+    if (Object.hasOwn(statusEntries, sessionId) && eventObject(statusEntries[sessionId])?.type !== 'idle') continue;
+    reconciliationState.retrySessionIds.add(sessionId);
+    try {
+      const messages = await readSessionMessages(client, sessionId, dependencies);
+      if (!isActive(dependencies)) return;
+      const terminal = terminalId(messages);
+      if (terminal === undefined) continue;
+      await handleOpenCodeIdle(client, directory, {
+        type: 'session.idle',
+        properties: { sessionID: sessionId, messageID: terminal },
+      }, { ...dependencies, state });
+      const entry = state.get(openCodeIdleKey(directory, sessionId, terminal));
+      if (entry?.state === 'completed' || entry?.state === 'quarantined') {
+        if (session.updated !== undefined) reconciliationState.sessionUpdates.set(sessionId, session.updated);
+        reconciliationState.retrySessionIds.delete(sessionId);
       }
+    } catch {
+      if (!isActive(dependencies)) return;
+      // Retain this candidate and keep recovering unrelated sessions.
+      await safeLog(dependencies.log, 'OpenCode reconciliation read failed', 'lifecycle_error');
     }
   }
 }
