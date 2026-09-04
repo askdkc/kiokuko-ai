@@ -26,6 +26,8 @@ import {
   type WorkPlan,
   type WorkReportResult,
   WORK_UNIT_ROUTES,
+  WORK_UNIT_ISOLATION_PREFERENCES,
+  WORK_UNIT_RESOURCE_ACCESS,
 } from './types.js';
 import {
   ennoZodValidationError,
@@ -93,6 +95,21 @@ export const expertRefSchema = z.object({
   reason: canonicalText(500),
 }).strict();
 
+const resourceClaimSchema = z.object({
+  key: boundedPath,
+  access: z.enum(WORK_UNIT_RESOURCE_ACCESS),
+}).strict();
+
+const resourceClaimsSchema = z.array(resourceClaimSchema).max(64).default([]).superRefine((claims, context) => {
+  const keys = claims.map((claim) => claim.key);
+  if (new Set(keys).size !== keys.length) {
+    context.addIssue({ code: 'custom', message: 'WorkUnit resource claim keys must be unique' });
+  }
+});
+
+const legacyInputManifestDigest = '0'.repeat(64);
+const defaultOutputContract = 'Return one bounded WorkUnit report satisfying every acceptance criterion.';
+
 export const workUnitSchema = z.object({
   id: identifier,
   objective: canonicalText(16_384),
@@ -103,6 +120,10 @@ export const workUnitSchema = z.object({
   acceptanceCriteria: z.array(canonicalText(8_192)).min(1).max(128),
   focusedVerifiers: verifierListSchema(),
   routes: z.array(z.enum(WORK_UNIT_ROUTES)).min(1).max(WORK_UNIT_ROUTES.length),
+  resourceClaims: resourceClaimsSchema,
+  isolationPreference: z.enum(WORK_UNIT_ISOLATION_PREFERENCES).default('shared_serial'),
+  inputManifestDigest: z.string().regex(/^[0-9a-f]{64}$/u).default(legacyInputManifestDigest),
+  outputContract: canonicalText(16_384).default(defaultOutputContract),
 }).strict().superRefine((unit, context) => {
   const ids = unit.expertRefs.map((reference) => reference.id);
   if (new Set(ids).size !== ids.length) {
@@ -120,6 +141,10 @@ const submissionWorkUnitSchema = z.object({
   acceptanceCriteria: z.array(canonicalText(8_192)).min(1).max(128),
   focusedVerifiers: submissionVerifierListSchema(),
   routes: z.array(z.enum(WORK_UNIT_ROUTES)).min(1).max(WORK_UNIT_ROUTES.length),
+  resourceClaims: resourceClaimsSchema,
+  isolationPreference: z.enum(WORK_UNIT_ISOLATION_PREFERENCES).default('shared_serial'),
+  inputManifestDigest: z.string().regex(/^[0-9a-f]{64}$/u).optional(),
+  outputContract: canonicalText(16_384).default(defaultOutputContract),
 }).strict().superRefine((unit, context) => {
   const expertIds = unit.expertRefs.map((reference) => reference.id);
   if (new Set(expertIds).size !== expertIds.length) {
@@ -514,11 +539,8 @@ export const planSubmissionSchema = z.object({
   finalVerifiers: submissionVerifierListSchema(1),
   maxAttempts: z.number().int().min(ENNO_MIN_ATTEMPTS).max(ENNO_MAX_ATTEMPTS).default(8),
   provenance: contractProvenanceSchema,
-  recoveryAction: z.enum(['continue_same_plan', 'revise_plan']).optional().describe(
-    'Required only when explicitly resuming a same-run plan-start recovery after the user chose one displayed option.',
-  ),
   capabilities: z.array(z.unknown()).optional().describe(
-    'Complete current client capability descriptors. The field remains transport-optional only so omission can return a safe user-facing recovery choice before any plan effect.',
+    'Complete current client capability descriptors when available. Omission degrades plan quality but never prevents plan adoption.',
   ),
 }).strict().superRefine((submission, context) => {
   requireExplicitIdentityOrResumeToken(submission, context);
@@ -569,8 +591,10 @@ export const workReportSchema = z.object({
   resumeToken: resumeTokenSchema.optional(),
   expectedRevision: z.number().int().min(1),
   idempotencyKey: identifier,
-  leaseToken: canonicalText(256).optional(),
-  routeEpoch: z.number().int().min(0).optional(),
+  leaseToken: canonicalText(256),
+  routeEpoch: z.number().int().min(0),
+  attempt: z.number().int().min(1).max(20),
+  inputManifestDigest: z.string().regex(/^[0-9a-f]{64}$/u),
   workUnitId: identifier,
   result: z.object({
     outcome: z.enum(['completed', 'failed', 'blocked']),
@@ -578,6 +602,16 @@ export const workReportSchema = z.object({
     mutated: z.boolean(),
     changedPaths: z.array(repositoryRelativePath).max(256),
   }).strict(),
+}).strict().superRefine(requireExplicitIdentityOrResumeToken);
+
+export const workClaimSchema = z.object({
+  runId: identifier,
+  workspace: canonicalText(256).optional(),
+  orchestrationId: orchestrationIdSchema.optional(),
+  resumeToken: resumeTokenSchema.optional(),
+  expectedRevision: z.number().int().min(1),
+  idempotencyKey: identifier,
+  maxParallel: z.number().int().min(1).max(8).default(3),
 }).strict().superRefine(requireExplicitIdentityOrResumeToken);
 
 export const finishSchema = z.object({
@@ -683,6 +717,10 @@ export function parseEnnoAnswer(input: unknown): z.infer<typeof ennoAnswerSchema
 
 export function parseWorkReport(input: unknown): z.infer<typeof workReportSchema> {
   return parseInputBoundary('work_report', workReportSchema, input);
+}
+
+export function parseWorkClaim(input: unknown): z.infer<typeof workClaimSchema> {
+  return parseInputBoundary('work_claim', workClaimSchema, input);
 }
 
 export function parseFinishRequest(input: unknown): z.infer<typeof finishSchema> {

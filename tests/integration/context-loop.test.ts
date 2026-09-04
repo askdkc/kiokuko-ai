@@ -485,7 +485,7 @@ test('generic broker binds title, coverage, and valid same-sequence event state 
   }
 });
 
-test('generic broker rejects a missing ledger event and every terminal run before retrieval', async () => {
+test('generic broker rejects missing ledger evidence and terminal runs while allowing advisory intake', async () => {
   const missingDb = await database();
   try {
     const opened = open(new OpenCodeTaskRunDriver(missingDb, { now: () => now }), 'missing-ledger-event', {
@@ -512,13 +512,9 @@ test('generic broker rejects a missing ledger event and every terminal run befor
     assert.equal(opened.intakeStatus, 'needs_answer');
     new LedgerStore(mismatchedDb, { now: () => '2026-08-20T00:01:00.000Z' })
       .updateRunStatus(opened.runId, 'active');
-    await assert.rejects(
-      new ContextBroker(mismatchedDb).query({ workspace: 'active-run-active-intake', runId: opened.runId }),
-      (error: unknown) => error instanceof Error
-        && 'code' in error
-        && error.code === 'INTEGRITY_ERROR'
-        && error.message === 'Context run status does not match its intake state',
-    );
+    const advisory = await new ContextBroker(mismatchedDb)
+      .query({ workspace: 'active-run-active-intake', runId: opened.runId });
+    assert.equal(advisory.context, null);
     assert.equal(mismatchedDb.prepare('SELECT COUNT(*) AS count FROM context_deliveries WHERE run_id = ?')
       .get<{ count: number }>(opened.runId)?.count, 0);
   } finally {

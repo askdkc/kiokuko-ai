@@ -22,6 +22,7 @@ export const LEDGER_EVENT_TYPES = [
   'enno.review_started', 'enno.review_accepted', 'enno.replan_requested',
   'enno.verification_started', 'enno.verification_passed', 'enno.verification_failed',
   'oduno.meditation_completed', 'enno.completed', 'enno.blocked', 'enno.cancelled',
+  'enno.quality_degraded',
 ] as const;
 export type LedgerEventType = (typeof LEDGER_EVENT_TYPES)[number];
 

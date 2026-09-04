@@ -47,10 +47,9 @@ function hasPersistentSchema(connection: ReturnType<typeof openConnection>): boo
 }
 
 function isCurrentSchema(plan: MigrationPlan): boolean {
-  return plan.currentVersion === 1
-    && plan.databaseVersion === 1
-    && plan.applied.length === 1
-    && plan.applied[0] === 1
+  return plan.currentVersion >= 1
+    && plan.databaseVersion === plan.currentVersion
+    && plan.applied.length === plan.currentVersion
     && plan.pending.length === 0;
 }
 
@@ -72,12 +71,7 @@ function inspectExistingDatabase(
   }
 }
 
-/**
- * Initialize a fresh OpenCode-only database or open the exact current schema.
- *
- * Existing alpha schemas are deliberately rejected from a read-only
- * connection. Setup never upgrades, deletes, relocates, or backs them up.
- */
+/** Initialize a fresh OpenCode-only database or advance a valid migration prefix. */
 export async function initializeDatabase(options: InitOptions = {}): Promise<InitResult> {
   const databasePath = options.databasePath ?? getGlobalDatabasePath();
   if (databasePath === ':memory:') {
@@ -91,10 +85,10 @@ export async function initializeDatabase(options: InitOptions = {}): Promise<Ini
     ? await ensurePlatformDataDirectory()
     : dirname(databasePath);
   const snapshot = loadMigrationSnapshot(options.migrationsDirectory ?? defaultMigrationsDirectory());
-  if (snapshot.migrations.length !== 1 || snapshot.migrations[0]?.version !== 1) {
+  if (snapshot.migrations.length === 0 || snapshot.migrations[0]?.version !== 1) {
     throw new KiokukoError(
       'INTEGRITY_ERROR',
-      'This Kiokuko release requires exactly one fresh-schema migration: 001',
+      'Kiokuko migrations must begin with 001',
     );
   }
 
@@ -103,7 +97,15 @@ export async function initializeDatabase(options: InitOptions = {}): Promise<Ini
   const expectedIdentity = existed ? databaseFileIdentity(databasePath) : undefined;
   if (existed && !wasZeroLength) {
     const inspection = inspectExistingDatabase(databasePath, snapshot);
-    if (inspection.hasSchema && !inspection.current) throw obsoleteAlphaSchema();
+    if (inspection.hasSchema && !inspection.current) {
+      const probe = openConnection(databasePath, { readOnly: true });
+      try {
+        const plan = inspectMigrationSnapshot(probe, snapshot);
+        if (plan.databaseVersion === 0) throw obsoleteAlphaSchema();
+      } finally {
+        probe.close();
+      }
+    }
   }
 
   const connection = openConnection(databasePath, {
@@ -119,7 +121,14 @@ export async function initializeDatabase(options: InitOptions = {}): Promise<Ini
       } catch (error) {
         throw obsoleteAlphaSchema(error);
       }
-      if (!isCurrentSchema(plan)) throw obsoleteAlphaSchema();
+      if (plan.databaseVersion === 0) throw obsoleteAlphaSchema();
+      if (plan.pending.length > 0) {
+        const migration = withImmediateTransaction(
+          connection,
+          () => migrateDatabaseSnapshotInTransaction(connection, snapshot),
+        );
+        applied = migration.applied;
+      }
     } else {
       const migration = withImmediateTransaction(
         connection,
@@ -130,7 +139,7 @@ export async function initializeDatabase(options: InitOptions = {}): Promise<Ini
 
     const finalPlan = inspectMigrationSnapshot(connection, snapshot);
     if (!isCurrentSchema(finalPlan)) {
-      throw new KiokukoError('INTEGRITY_ERROR', 'Database initialization did not produce schema version 1');
+      throw new KiokukoError('INTEGRITY_ERROR', 'Database initialization did not produce the current schema version');
     }
     return {
       databasePath,

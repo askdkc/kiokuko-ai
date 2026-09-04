@@ -29,6 +29,7 @@ import { inspectOpenCodeIntegration } from '../setup/opencode-config.js';
 import { isSetupOpenCodeMcpIdentityConflict } from '../setup/mcp-conflict.js';
 import { loadBundledStandardSkillFiles } from '../setup/standard-skills.js';
 import { resolveManagedOpenCodeRuntime } from '../opencode/runtime-invocation.js';
+import { orchestrationJobDiagnostics } from '../orchestration/jobs.js';
 
 export interface DoctorCheck {
   ok: boolean;
@@ -64,6 +65,7 @@ export interface DoctorResult {
     hybridSearch: DoctorCheck;
     embeddings: DoctorCheck;
     ennoOperations: DoctorCheck;
+    orchestration: DoctorCheck;
     openCodePlugin: DoctorCheck;
     openCodeMcp: DoctorCheck;
     openCodeRuntime: DoctorCheck;
@@ -463,6 +465,39 @@ async function collectDoctorResult(
         detail: `staleReceipts=${expiredReceipts}, staleVerifiers=${expiredVerifiers}, invalidContinuationReceipts=${invalidContinuationReceipts}, recoveredReceipts=${recoveredReceipts}, recoveredVerifiers=${recoveredVerifiers}`,
       };
     })();
+  const jobDiagnostics = orchestrationJobDiagnostics(database);
+  const now = new Date().toISOString();
+  const expiredExecutionLeases = count(database, `
+    SELECT COUNT(*) AS count FROM enno_execution_leases WHERE lease_expires_at <= ?
+  `, now);
+  const incompleteCompactions = count(database, `
+    SELECT COUNT(*) AS count FROM compaction_cycles WHERE state IN ('captured', 'compacted', 'queued')
+  `);
+  const unboundCompactionPosts = count(database, `
+    SELECT COUNT(*) AS count FROM compaction_post_events WHERE bound_cycle_id IS NULL
+  `);
+  const failedCompactions = count(database, `
+    SELECT COUNT(*) AS count FROM compaction_cycles WHERE state = 'failed'
+  `);
+  const planPublishFailures = count(database, `
+    SELECT COUNT(*) AS count FROM enno_plan_artifacts WHERE state = 'failed'
+  `);
+  const autoPromotionFailures = count(database, `
+    SELECT COUNT(*) AS count FROM orchestration_jobs
+    WHERE kind = 'memory_promotion' AND state IN ('failed', 'abandoned')
+  `);
+  const modelFallbacks = count(database, `
+    SELECT COUNT(*) AS count FROM ledger_events
+    WHERE event_type = 'enno.quality_degraded'
+      AND json_extract(payload_json, '$.reason') = 'model_fallback'
+  `);
+  const orchestrationFindings = expiredExecutionLeases + failedCompactions + unboundCompactionPosts
+    + planPublishFailures + autoPromotionFailures;
+  const orchestration = {
+    ok: orchestrationFindings === 0,
+    count: orchestrationFindings,
+    detail: `queue=${jobDiagnostics.pending + jobDiagnostics.leased + jobDiagnostics.failed}, pending=${jobDiagnostics.pending}, leased=${jobDiagnostics.leased}, failed=${jobDiagnostics.failed}, oldest=${jobDiagnostics.oldestPendingAt ?? 'none'}, expiredLeases=${expiredExecutionLeases}, incompleteCompactions=${incompleteCompactions}, unboundCompactionPosts=${unboundCompactionPosts}, failedCompactions=${failedCompactions}, planPublishFailures=${planPublishFailures}, autoPromotionFailures=${autoPromotionFailures}, modelFallbacks=${modelFallbacks}`,
+  };
   const checks = {
     integrity: { ok: integrity === 'ok', detail: integrity },
     foreignKeys: { ok: foreignKeyRows.length === 0, count: foreignKeyRows.length },
@@ -484,6 +519,7 @@ async function collectDoctorResult(
     hybridSearch: hybridCheck,
     embeddings: embeddings.check,
     ennoOperations,
+    orchestration,
     openCodePlugin: options.openCodePlugin,
     openCodeMcp: options.openCodeMcp,
     openCodeRuntime: options.openCodeRuntime,

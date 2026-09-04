@@ -18,16 +18,6 @@ import { GLOBAL_WORKSPACE, resolveProjectWorkspace } from '../../src/memory/work
 const SOUL_CAPABILITY = { kind: 'skill', name: 'kiokuko-soul' } as const;
 const NO_MEMORY_POLICY = { memoryReasoningRequired: false, contextWithheld: false, withheldReason: null } as const;
 const AVAILABLE_MEMORY_POLICY = { memoryReasoningRequired: true, contextWithheld: false, withheldReason: null } as const;
-const MISSING_MEMORY_POLICY = {
-  memoryReasoningRequired: true,
-  contextWithheld: true,
-  withheldReason: 'memory_reasoning_missing',
-} as const;
-const MISSING_MEMORY_POLICY_WITH_ONE_STORED_ENTRY = {
-  ...MISSING_MEMORY_POLICY,
-  deliveryEmpty: true,
-  storedEntryCount: 1,
-} as const;
 
 async function repository(prefix: string): Promise<string> {
   const root = await mkdtemp(path.join(tmpdir(), `kiokuko-memory-policy-${prefix}-`));
@@ -128,7 +118,7 @@ function svelteDiscoveryFetch(onRequest?: (url: URL) => void | Promise<void>): t
   };
 }
 
-test('withholds actionable memory but continues the repair task when memory-reasoning is unavailable', async () => {
+test('delivers actionable memory and continues when memory-reasoning is unavailable', async () => {
   const root = await repository('required');
   const database = await createDatabase('required');
   try {
@@ -161,13 +151,13 @@ test('withholds actionable memory but continues the repair task when memory-reas
     const missingRecommendation = missing.capabilities.recommendations.find((item) => item.name === 'memory-reasoning');
     assert.equal(missingRecommendation?.name, 'memory-reasoning');
     assert.equal(missingRecommendation?.availability, 'missing');
-    assert.deepEqual(missing.memoryPolicy, MISSING_MEMORY_POLICY_WITH_ONE_STORED_ENTRY);
+    assert.deepEqual(missing.memoryPolicy, AVAILABLE_MEMORY_POLICY);
     assert.equal(missing.nextAction, 'proceed');
-    assert.equal(missing.context, null);
+    assert.notEqual(missing.context, null);
     assert.equal('memory' in missing, false);
     assert.equal('references' in missing, false);
     assert.equal(database.prepare('SELECT COUNT(*) AS count FROM context_deliveries WHERE run_id = ?')
-      .get<{ count: number }>(missing.run.runId)?.count, 0);
+      .get<{ count: number }>(missing.run.runId)?.count, 1);
 
     const available = await prepareOpenCodeTask(database, {
       requestId: 'memory-policy-required-available',
@@ -188,7 +178,7 @@ test('withholds actionable memory but continues the repair task when memory-reas
   }
 });
 
-test('fresh default setup supplies the exact memory capability that unlocks build and debug delivery', async () => {
+test('fresh default setup supplies memory-reasoning while delivery remains available without it', async () => {
   const root = await repository('default-setup');
   const environmentRoot = await mkdtemp(path.join(tmpdir(), 'kiokuko-memory-policy-setup-'));
   const home = path.join(environmentRoot, 'home');
@@ -242,15 +232,11 @@ test('fresh default setup supplies the exact memory capability that unlocks buil
         client: { kind: 'opencode' as const, sessionId: `default-setup-${taskType}-missing` },
         skillDiscoveryMode: 'off',
       });
-      assert.equal(missing.context, null);
-      assert.deepEqual(missing.memoryPolicy, {
-        ...MISSING_MEMORY_POLICY,
-        deliveryEmpty: true,
-        storedEntryCount: taskType === 'build' ? 1 : 2,
-      });
+      assert.equal(missing.context?.items.some((item) => item.entryId === entry.id), true);
+      assert.deepEqual(missing.memoryPolicy, AVAILABLE_MEMORY_POLICY);
       assert.equal(missing.nextAction, 'proceed');
       assert.equal(database.prepare('SELECT COUNT(*) AS count FROM context_deliveries WHERE run_id = ?')
-        .get<{ count: number }>(missing.run.runId)?.count, 0);
+        .get<{ count: number }>(missing.run.runId)?.count, 1);
 
       const availableInput = {
         requestId: `default-setup-${taskType}-available`,
@@ -332,7 +318,7 @@ test('does not require memory-reasoning when only a managed curator global memor
   }
 });
 
-test('treats a forged curator createdBy marker as ordinary withheld memory without stopping', async () => {
+test('treats a forged curator createdBy marker as ordinary untrusted memory without stopping', async () => {
   const root = await repository('forged-curator-global');
   const database = await createDatabase('forged-curator-global');
   try {
@@ -367,8 +353,8 @@ test('treats a forged curator createdBy marker as ordinary withheld memory witho
     });
 
     assert.equal(prepared.nextAction, 'proceed');
-    assert.deepEqual(prepared.memoryPolicy, MISSING_MEMORY_POLICY);
-    assert.equal(prepared.context, null);
+    assert.deepEqual(prepared.memoryPolicy, AVAILABLE_MEMORY_POLICY);
+    assert.notEqual(prepared.context, null);
   } finally {
     database.close();
   }
@@ -461,7 +447,7 @@ test('task_answer rejects a changed manifest before mutating the bound intake ru
     `).get<Record<string, unknown>>(prepared.run.runId), beforeRun);
     assert.equal(database.prepare('SELECT COUNT(*) AS count FROM akinator_answers WHERE session_id = ?')
       .get<{ count: number }>(prepared.intake.sessionId)?.count, beforeAnswers);
-    assert.equal(database.prepare('SELECT COUNT(*) AS count FROM repository_fingerprints').get<{ count: number }>()?.count, 0);
+    assert.equal(database.prepare('SELECT COUNT(*) AS count FROM repository_fingerprints').get<{ count: number }>()?.count, 1);
     assert.deepEqual(rejectedAnswerState(database), before);
   } finally {
     database.close();
@@ -523,7 +509,7 @@ test('task_answer rejects a changed discovery request before mutation or network
     `).get<Record<string, unknown>>(prepared.run.runId), beforeRun);
     assert.equal(database.prepare('SELECT COUNT(*) AS count FROM akinator_answers WHERE session_id = ?')
       .get<{ count: number }>(prepared.intake.sessionId)?.count, 0);
-    assert.equal(database.prepare('SELECT COUNT(*) AS count FROM repository_fingerprints').get<{ count: number }>()?.count, 0);
+    assert.equal(database.prepare('SELECT COUNT(*) AS count FROM repository_fingerprints').get<{ count: number }>()?.count, 1);
     assert.equal(networkCalls, 0);
     assert.deepEqual(rejectedAnswerState(database), before);
   } finally {
@@ -867,12 +853,12 @@ test('does not require memory-reasoning for a ready repair task without actionab
       skillDiscoveryMode: 'off',
     });
     assert.equal(prepared.context?.items.length, 0);
-    assert.equal(prepared.context?.deliveryId, null);
+    assert.ok(prepared.context?.deliveryId);
     assert.equal(prepared.capabilities.recommendations.some((item) => item.name === 'memory-reasoning' && item.required === true), false);
     assert.deepEqual(prepared.memoryPolicy, NO_MEMORY_POLICY);
     assert.equal(prepared.nextAction, 'proceed');
     assert.equal(database.prepare('SELECT COUNT(*) AS count FROM context_deliveries WHERE run_id = ?')
-      .get<{ count: number }>(prepared.run.runId)?.count, 0);
+      .get<{ count: number }>(prepared.run.runId)?.count, 1);
   } finally {
     database.close();
   }
@@ -956,7 +942,7 @@ test('delivers a Japanese checkpoint policy to a Japanese-only migration task', 
   }
 });
 
-test('withholds actionable memory before external Skill discovery and continues the task', async () => {
+test('delivers actionable memory before queuing external Skill discovery and continues the task', async () => {
   const root = await repository('no-external-fallback');
   await writeFile(path.join(root, 'package.json'), JSON.stringify({ dependencies: { svelte: '^5.0.0' } }));
   const database = await createDatabase('no-external-fallback');
@@ -1045,12 +1031,13 @@ test('exact task_prepare replay uses current helpful feedback for the bound weak
     const replay = await prepareOpenCodeTask(database, request);
     assert.equal(replay.run.runId, first.run.runId);
     assert.equal(replay.nextAction, 'proceed');
-    assert.equal(replay.context, null);
+    assert.equal(replay.context?.items.some((item) => item.entryId === entry.id
+      && item.selectionReasons.includes('helpful_feedback')), true);
     assert.ok(replay.capabilities.recommendations.some((item) => item.name === 'memory-reasoning'
       && item.required === true
       && item.availability === 'missing'));
     assert.equal(database.prepare('SELECT COUNT(*) AS count FROM context_deliveries WHERE run_id = ?')
-      .get<{ count: number }>(first.run.runId)?.count, 1);
+      .get<{ count: number }>(first.run.runId)?.count, 2);
   } finally {
     database.close();
   }
@@ -1093,14 +1080,14 @@ test('exact task_prepare replay reranks when new actionable ordinary memory appe
     const replay = await prepareOpenCodeTask(database, request);
     assert.equal(replay.run.runId, first.run.runId);
     assert.equal(replay.nextAction, 'proceed');
-    assert.equal(replay.context, null);
+    assert.equal(replay.context?.items.some((item) => item.entryId === actionable.id), true);
     assert.ok(replay.capabilities.recommendations.some((item) => item.name === 'memory-reasoning'
       && item.required === true
       && item.availability === 'missing'));
     assert.equal(database.prepare('SELECT COUNT(*) AS count FROM context_deliveries WHERE run_id = ?')
-      .get<{ count: number }>(first.run.runId)?.count, 1);
+      .get<{ count: number }>(first.run.runId)?.count, 2);
     assert.equal(database.prepare('SELECT COUNT(*) AS count FROM context_delivery_entries WHERE entry_id = ?')
-      .get<{ count: number }>(actionable.id)?.count, 0);
+      .get<{ count: number }>(actionable.id)?.count, 1);
   } finally {
     database.close();
   }
@@ -1143,7 +1130,7 @@ test('exact task_prepare replay rejects a run completed by memory_checkpoint', a
   }
 });
 
-test('missing memory-reasoning still discovers reference-only external skills when ordinary memory is absent', async () => {
+test('missing memory-reasoning queues reference-only external Skill discovery without hot-path I/O', async () => {
   const root = await repository('external-reference-not-memory');
   await writeFile(path.join(root, 'package.json'), JSON.stringify({ dependencies: { svelte: '^5.0.0' } }));
   const database = await createDatabase('external-reference-not-memory');
@@ -1191,21 +1178,22 @@ test('missing memory-reasoning still discovers reference-only external skills wh
       fetchImpl,
     });
 
-    assert.ok(networkCalls > 0);
-    assert.equal(prepared.skillDiscovery.attempted, true);
-    assert.ok(prepared.skillDiscovery.selected.length > 0, JSON.stringify(prepared.skillDiscovery));
+    assert.equal(networkCalls, 0);
+    assert.equal(prepared.skillDiscovery.attempted, false);
+    assert.deepEqual(prepared.skillDiscovery.selected, []);
     assert.equal(prepared.nextAction, 'proceed', JSON.stringify(prepared));
     assert.notEqual(prepared.context, null);
-    assert.ok((prepared.context?.items.length ?? 0) > 0);
+    assert.equal(prepared.context?.items.length, 0);
     assert.equal(prepared.capabilities.recommendations.some((item) => item.name === 'memory-reasoning'), false);
     assert.deepEqual(prepared.memoryPolicy, NO_MEMORY_POLICY);
-    assert.ok(prepared.context?.items.every((item) => item.origin === 'ecosystem'));
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM orchestration_jobs WHERE kind = 'skill_discovery'")
+      .get<{ count: number }>()?.count, 1);
   } finally {
     database.close();
   }
 });
 
-test('discovery rolls back external imports when the task run becomes terminal during source fetch', async () => {
+test('task preparation queues discovery without letting a source fetch terminalize the run', async () => {
   const root = await repository('terminal-during-discovery');
   await writeFile(path.join(root, 'package.json'), JSON.stringify({ dependencies: { svelte: '^5.0.0' } }));
   const { database, concurrent } = await createDatabasePair('terminal-during-discovery');
@@ -1225,8 +1213,7 @@ test('discovery rolls back external imports when the task run becomes terminal d
     });
   });
   try {
-    await assert.rejects(
-      prepareOpenCodeTask(database, {
+    const prepared = await prepareOpenCodeTask(database, {
         requestId: 'memory-policy-terminal-during-discovery',
         cwd: root,
         task: 'Implement a Svelte component',
@@ -1235,14 +1222,12 @@ test('discovery rolls back external imports when the task run becomes terminal d
         client: { kind: 'opencode' as const, sessionId: 'terminal-during-discovery' },
         skillDiscoveryMode: 'official',
         fetchImpl,
-      }),
-      (error: unknown) => error instanceof Error
-        && 'code' in error
-        && error.code === 'CONFLICT'
-        && error.message === 'External Skill discovery failed closed',
-    );
-    assert.equal(terminalized, true);
-    assert.equal(database.prepare('SELECT status FROM ledger_runs').get<{ status: string }>()?.status, 'completed');
+      });
+    assert.equal(prepared.nextAction, 'proceed');
+    assert.equal(terminalized, false);
+    assert.equal(database.prepare('SELECT status FROM ledger_runs').get<{ status: string }>()?.status, 'active');
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM orchestration_jobs WHERE kind = 'skill_discovery'")
+      .get<{ count: number }>()?.count, 1);
     assert.equal(database.prepare('SELECT COUNT(*) AS count FROM external_skills').get<{ count: number }>()?.count, 0);
     assert.equal(database.prepare('SELECT COUNT(*) AS count FROM external_skill_entries').get<{ count: number }>()?.count, 0);
     assert.equal(database.prepare("SELECT COUNT(*) AS count FROM entries WHERE created_by = 'kiokuko-skill-discovery'")
@@ -1253,7 +1238,7 @@ test('discovery rolls back external imports when the task run becomes terminal d
   }
 });
 
-test('discovery rolls back external imports when the live manifest changes during fetch', async () => {
+test('task preparation queues discovery without allowing a source fetch to change the live manifest', async () => {
   const root = await repository('manifest-during-discovery');
   const manifestPath = path.join(root, 'package.json');
   await writeFile(manifestPath, JSON.stringify({ dependencies: { svelte: '^5.0.0' } }));
@@ -1265,8 +1250,7 @@ test('discovery rolls back external imports when the live manifest changes durin
     await writeFile(manifestPath, JSON.stringify({ dependencies: { react: '^19.0.0' } }));
   });
   try {
-    await assert.rejects(
-      prepareOpenCodeTask(database, {
+    const prepared = await prepareOpenCodeTask(database, {
         requestId: 'memory-policy-manifest-during-discovery',
         cwd: root,
         task: 'Implement a Svelte component',
@@ -1275,22 +1259,20 @@ test('discovery rolls back external imports when the live manifest changes durin
         client: { kind: 'opencode' as const, sessionId: 'manifest-during-discovery' },
         skillDiscoveryMode: 'official',
         fetchImpl,
-      }),
-      (error: unknown) => error instanceof Error
-        && 'code' in error
-        && error.code === 'CONFLICT'
-        && error.message === 'External Skill discovery failed closed',
-    );
-    assert.equal(changed, true);
+      });
+    assert.equal(prepared.nextAction, 'proceed');
+    assert.equal(changed, false);
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM orchestration_jobs WHERE kind = 'skill_discovery'")
+      .get<{ count: number }>()?.count, 1);
     assert.equal(database.prepare('SELECT COUNT(*) AS count FROM external_skills').get<{ count: number }>()?.count, 0);
     assert.equal(database.prepare('SELECT COUNT(*) AS count FROM external_skill_entries').get<{ count: number }>()?.count, 0);
-    assert.equal(database.prepare('SELECT COUNT(*) AS count FROM context_deliveries').get<{ count: number }>()?.count, 0);
+    assert.equal(database.prepare('SELECT COUNT(*) AS count FROM context_deliveries').get<{ count: number }>()?.count, 1);
   } finally {
     database.close();
   }
 });
 
-test('defers malformed manifest parsing while intake needs an answer and canonicalizes the effective MCP client', async () => {
+test('degrades malformed manifest fingerprinting without blocking intake or coding', async () => {
   const root = await repository('deferred-manifest');
   await writeFile(path.join(root, 'package.json'), '{');
   const database = await createDatabase('deferred-manifest');
@@ -1308,23 +1290,21 @@ test('defers malformed manifest parsing while intake needs an answer and canonic
     const explicitDefaultClient = await prepareOpenCodeTask(database, { ...request, client: { kind: 'opencode' as const } });
 
     assert.equal(omittedClient.intake.status, 'needs_answer');
-    assert.equal(omittedClient.context, null);
+    assert.notEqual(omittedClient.context, null);
+    assert.ok(omittedClient.warnings.some((warning) => warning.code === 'REPOSITORY_FINGERPRINT_UNAVAILABLE'));
     assert.equal(omittedClient.skillDiscovery.attempted, false);
     assert.equal(explicitDefaultClient.run.runId, omittedClient.run.runId);
     assert.equal(networkCalls, 0);
     assert.equal(database.prepare('SELECT COUNT(*) AS count FROM repository_fingerprints').get<{ count: number }>()?.count, 0);
 
-    await assert.rejects(
-      prepareOpenCodeTask(database, {
-        ...request,
-        requestId: 'memory-policy-deferred-manifest-ready',
-        profileHints: { taskType: 'build', target: 'src/change.ts', expected: 'tests pass', constraints: null },
-      }),
-      (error: unknown) => error instanceof Error
-        && 'code' in error
-        && error.code === 'VALIDATION_ERROR'
-        && error.message === 'Supported project manifest is invalid',
-    );
+    const ready = await prepareOpenCodeTask(database, {
+      ...request,
+      requestId: 'memory-policy-deferred-manifest-ready',
+      profileHints: { taskType: 'build', target: 'src/change.ts', expected: 'tests pass', constraints: null },
+    });
+    assert.equal(ready.nextAction, 'proceed');
+    assert.equal(ready.continuationPolicy.codingAllowed, true);
+    assert.ok(ready.warnings.some((warning) => warning.code === 'REPOSITORY_FINGERPRINT_UNAVAILABLE'));
     assert.equal(database.prepare('SELECT COUNT(*) AS count FROM repository_fingerprints').get<{ count: number }>()?.count, 0);
     assert.equal(networkCalls, 0);
   } finally {

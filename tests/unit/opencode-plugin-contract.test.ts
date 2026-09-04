@@ -21,6 +21,7 @@ test('OpenCode plugin entrypoint exposes a loadable named plugin', async () => {
   assert.deepEqual(Object.keys(hooks).sort(), [
     'dispose',
     'event',
+    'experimental.compaction.autocontinue',
     'experimental.session.compacting',
     'tool.execute.after',
   ]);
@@ -28,6 +29,7 @@ test('OpenCode plugin entrypoint exposes a loadable named plugin', async () => {
   assert.equal(typeof hooks.event, 'function');
   assert.equal(typeof hooks['tool.execute.after'], 'function');
   assert.equal(typeof hooks['experimental.session.compacting'], 'function');
+  assert.equal(typeof hooks['experimental.compaction.autocontinue'], 'function');
   await hooks.dispose?.();
 });
 

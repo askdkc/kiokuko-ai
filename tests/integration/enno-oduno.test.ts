@@ -8,6 +8,7 @@ import { prepareOpenCodeTask } from '../../src/akinator/opencode-task.js';
 import { initializeDatabase } from '../../src/commands/init.js';
 import { openConnection } from '../../src/db/connection.js';
 import { withImmediateTransaction } from '../../src/db/transaction.js';
+import { recordTaskContextRevision } from '../../src/context/revisions.js';
 import { KiokukoError } from '../../src/errors.js';
 import { decideAdapterContinuation } from '../../src/enno-oduno/adapters.js';
 import { advisoryInputDigest } from '../../src/enno-oduno/advisory.js';
@@ -67,11 +68,18 @@ function advisoryDigest(phase: AdvisoryPhase, contractRevision: number, mutation
   return advisoryInputDigest({ phase, contractRevision, mutationRevision, allowlistedContext: context });
 }
 
-function executionCredentials(response: { executionLease?: { leaseToken: string; routeEpoch: number } | null | undefined }) {
+function executionCredentials(response: { executionLease?: {
+  leaseToken: string;
+  routeEpoch: number;
+  attempt: number;
+  inputManifestDigest: string;
+} | null | undefined }) {
   assert.ok(response.executionLease);
   return {
     leaseToken: response.executionLease.leaseToken,
     routeEpoch: response.executionLease.routeEpoch,
+    attempt: response.executionLease.attempt,
+    inputManifestDigest: response.executionLease.inputManifestDigest,
   };
 }
 
@@ -227,12 +235,19 @@ test('task_prepare derives the Oduno ideal before handing the request to harness
     assert.match(planned.idealized.ennoOduno.directive?.objective ?? '', /one cohesive externally observable function or use-case contract/iu);
     assert.match(planned.idealized.ennoOduno.directive?.objective ?? '', /focused runnable test target/iu);
 
+    const lateContext = recordTaskContextRevision(database, {
+      runId: planned.identity.runId,
+      context: { kind: 'skill_recommendation', candidates: ['late-skill'] },
+    });
+    assert.equal(lateContext.contextRevision, 2);
     const claimed = decideAdapterContinuation(database, 'opencode', {
       sessionId: planned.hostSessionId,
       cwd: root,
     });
     assert.equal(claimed.continue, true);
     assert.equal(claimed.directive?.role, 'goki');
+    assert.match(claimed.reason ?? '', /"contextRevision":2/u);
+    assert.match(claimed.reason ?? '', /"late-skill"/u);
     assert.deepEqual(claimed.directive?.requiredSkills, ['kiokuko-soul', 'kiokuko-single-purpose-functions']);
     assert.deepEqual(claimed.directive?.workUnit?.skillNames, ['kiokuko-soul', 'kiokuko-single-purpose-functions']);
     assert.deepEqual(claimed.directive?.workUnit?.expertRefs, [{
@@ -275,6 +290,8 @@ test('task_prepare derives the Oduno ideal before handing the request to harness
       resumeToken: claimed.resumeToken,
       leaseToken: claimed.executionLease.leaseToken,
       routeEpoch: claimed.routeEpoch,
+      attempt: claimed.executionLease.attempt,
+      inputManifestDigest: claimed.executionLease.inputManifestDigest,
       expectedRevision: 2,
       idempotencyKey: 'adapter-output-only-work',
       workUnitId: 'repair',
@@ -483,6 +500,8 @@ test('an active WorkUnit lease prevents automatic rerouting to another local cli
       idempotencyKey: 'lease-loser-report',
       leaseToken: 'invalid-current-lease-token',
       routeEpoch: returned.routeEpoch,
+      attempt: returned.executionLease.attempt,
+      inputManifestDigest: returned.executionLease.inputManifestDigest,
       workUnitId: 'repair',
       result: { outcome: 'completed', summary: 'Stale actor must lose', mutated: false, changedPaths: [] },
     }), /lease is stale or belongs to another actor/iu);
@@ -508,6 +527,8 @@ test('an active WorkUnit lease prevents automatic rerouting to another local cli
       idempotencyKey: 'expired-owner-report',
       leaseToken: returned.executionLease.leaseToken,
       routeEpoch: returned.routeEpoch,
+      attempt: returned.executionLease.attempt,
+      inputManifestDigest: returned.executionLease.inputManifestDigest,
       workUnitId: 'repair',
       result: { outcome: 'completed', summary: 'Expired owner must not report', mutated: false, changedPaths: [] },
     }), /lease is stale or belongs to another actor/iu);
@@ -518,6 +539,8 @@ test('an active WorkUnit lease prevents automatic rerouting to another local cli
       idempotencyKey: 'recovered-owner-report',
       leaseToken: recovered.executionLease.leaseToken,
       routeEpoch: recovered.routeEpoch,
+      attempt: recovered.executionLease.attempt,
+      inputManifestDigest: recovered.executionLease.inputManifestDigest,
       workUnitId: 'repair',
       result: { outcome: 'completed', summary: 'Recovered owner completed the WorkUnit', mutated: false, changedPaths: [] },
     });
@@ -554,6 +577,10 @@ test('Goki cannot start before Oduno derives the ideal and Zenki submits a plan'
       orchestrationId: prepared.intake.sessionId,
       expectedRevision: 1,
       idempotencyKey: 'illegal-goki-report',
+      leaseToken: 'not-active',
+      routeEpoch: 0,
+      attempt: 1,
+      inputManifestDigest: '0'.repeat(64),
       workUnitId: 'not-planned',
       result: {
         outcome: 'completed',
@@ -580,7 +607,7 @@ test('Goki cannot start before Oduno derives the ideal and Zenki submits a plan'
   }
 });
 
-test('a missing plan environment catalog returns a recoverable choice without consuming the run', async () => {
+test('a missing plan environment catalog degrades quality without blocking the run', async () => {
   const { root, database } = await fixture();
   try {
     const prepared = await prepareOpenCodeTask(database, {
@@ -606,43 +633,36 @@ test('a missing plan environment catalog returns a recoverable choice without co
     );
     const { capabilities: omittedCapabilities, ...missingInput } = completeInput;
     assert.ok(omittedCapabilities.length > 0);
-    await assert.rejects(
-      submitEnnoPlan(database, { ...missingInput, idempotencyKey: 'plan-environment-missing-first' }),
-      (error: unknown) => {
-        assert.ok(error instanceof KiokukoError);
-        assert.equal(error.code, 'CONFLICT');
-        assert.deepEqual(error.details, { planStartRecoveryReason: 'environment_information_missing' });
-        return true;
-      },
-    );
+    const planned = await submitEnnoPlan(database, {
+      ...missingInput,
+      idempotencyKey: 'plan-environment-missing-first',
+    });
 
     const snapshot = readEnnoSnapshot(database, identity);
-    assert.equal(snapshot.status, 'zenki_planning');
-    assert.equal(snapshot.revision, 1);
-    assert.equal(snapshot.workUnits.length, 0);
+    assert.equal(planned.ennoOduno.status, 'goki_executing');
+    assert.equal(planned.ennoOduno.qualityState, 'degraded');
+    assert.equal(snapshot.status, 'goki_executing');
+    assert.equal(snapshot.revision, 2);
+    assert.equal(snapshot.workUnits.length, 1);
     assert.equal(database.prepare('SELECT status FROM ledger_runs WHERE run_id = ?')
       .get<{ status: string }>(identity.runId)?.status, 'active');
     assert.equal(database.prepare("SELECT COUNT(*) AS count FROM enno_operation_receipts WHERE run_id = ? AND operation = 'plan_submit'")
-      .get<{ count: number }>(identity.runId)?.count, 0);
+      .get<{ count: number }>(identity.runId)?.count, 1);
     assert.equal(database.prepare("SELECT COUNT(*) AS count FROM task_skill_discovery_attempts WHERE run_id = ? AND phase = 'zenki'")
       .get<{ count: number }>(identity.runId)?.count, 0);
     assert.equal(database.prepare('SELECT COUNT(*) AS count FROM enno_advisory_rounds WHERE run_id = ?')
       .get<{ count: number }>(identity.runId)?.count, 0);
     assert.equal(database.prepare("SELECT COUNT(*) AS count FROM ledger_events WHERE run_id = ? AND event_type = 'zenki.plan_created'")
-      .get<{ count: number }>(identity.runId)?.count, 0);
+      .get<{ count: number }>(identity.runId)?.count, 1);
     assert.equal(decideAdapterContinuation(database, 'opencode', {
       session_id: 'opencode-plan-environment-missing', cwd: root,
-    }).continue, false);
-
-    const continued = await submitEnnoPlan(database, { ...completeInput, recoveryAction: 'continue_same_plan' });
-    assert.equal(continued.ennoOduno.status, 'goki_executing');
-    assert.equal(continued.ennoOduno.contractRevision, 2);
+    }).continue, true);
   } finally {
     database.close();
   }
 });
 
-test('a changed environment waits for a choice and explicit planning cancellation permits a clean restart', async () => {
+test('a changed environment is recorded but does not stop plan execution', async () => {
   const { root, database } = await fixture();
   try {
     const sessionId = 'opencode-plan-environment-changed';
@@ -672,48 +692,22 @@ test('a changed environment waits for a choice and explicit planning cancellatio
       name: 'new-current-tool',
       description: 'A newly available tool changes the bound environment.',
     }];
-    await assert.rejects(submitEnnoPlan(database, changedInput), (error: unknown) => {
-      assert.ok(error instanceof KiokukoError);
-      assert.equal(error.code, 'CONFLICT');
-      assert.deepEqual(error.details, { planStartRecoveryReason: 'environment_changed' });
-      return true;
-    });
-    const unchanged = readEnnoSnapshot(database, identity);
-    assert.equal(unchanged.status, 'zenki_planning');
-    assert.equal(unchanged.revision, 1);
-    assert.equal(unchanged.mutationRevision, 0);
-    assert.equal(unchanged.workUnits.length, 0);
+    const changed = await submitEnnoPlan(database, changedInput);
+    const snapshot = readEnnoSnapshot(database, identity);
+    assert.equal(changed.ennoOduno.status, 'goki_executing');
+    assert.equal(snapshot.status, 'goki_executing');
+    assert.equal(snapshot.revision, 2);
+    assert.equal(snapshot.workUnits.length, 1);
     assert.equal(database.prepare('SELECT status FROM ledger_runs WHERE run_id = ?')
       .get<{ status: string }>(identity.runId)?.status, 'active');
     assert.equal(database.prepare("SELECT COUNT(*) AS count FROM enno_operation_receipts WHERE run_id = ? AND operation = 'plan_submit'")
-      .get<{ count: number }>(identity.runId)?.count, 0);
+      .get<{ count: number }>(identity.runId)?.count, 1);
     assert.equal(database.prepare("SELECT COUNT(*) AS count FROM ledger_events WHERE run_id = ? AND event_type = 'zenki.plan_created'")
-      .get<{ count: number }>(identity.runId)?.count, 0);
-
-    assert.throws(() => answerEnno(database, {
-      ...identity, expectedRevision: 1, idempotencyKey: 'planning-approve-forbidden', action: 'approve',
-    }), /not in the required state/iu);
-    assert.throws(() => answerEnno(database, {
-      ...identity, expectedRevision: 1, idempotencyKey: 'planning-revise-forbidden', action: 'revise',
-      requestedChanges: 'This must still wait for normal plan confirmation',
-    }), /not in the required state/iu);
-    const cancelled = answerEnno(database, {
-      ...identity, expectedRevision: 1, idempotencyKey: 'planning-explicit-cancel', action: 'cancel',
-    });
-    assert.equal(cancelled.ennoOduno.status, 'cancelled');
-    assert.equal(database.prepare('SELECT status FROM ledger_runs WHERE run_id = ?')
-      .get<{ status: string }>(identity.runId)?.status, 'cancelled');
-
-    const restarted = await prepareOpenCodeTask(database, {
-      requestId: 'plan-environment-restarted', cwd: root, task: 'Repair the add function',
-      profileHints: { taskType: 'debug', target: 'src/add.js', expected: 'tests pass', constraints: null },
-      capabilities, client: { kind: 'opencode', sessionId }, skillDiscoveryMode: 'off',
-    });
-    submitPreparedIdeal(database, restarted, 'plan-environment-restarted-ideal');
+      .get<{ count: number }>(identity.runId)?.count, 1);
     const continuation = decideAdapterContinuation(database, 'opencode', { session_id: sessionId, cwd: root });
     assert.equal(continuation.continue, true);
-    assert.equal(continuation.runId, restarted.run.runId);
-    assert.equal(continuation.directive?.role, 'zenki');
+    assert.equal(continuation.runId, identity.runId);
+    assert.equal(continuation.directive?.role, 'goki');
   } finally {
     database.close();
   }
@@ -781,7 +775,7 @@ test('a legacy plan ended by a lost environment catalog returns restart choices 
     await assert.rejects(submitEnnoPlan(database, { ...input, expectedRevision: 2 }), (error: unknown) => {
       assert.ok(error instanceof KiokukoError);
       assert.equal(error.code, 'CONFLICT');
-      assert.deepEqual(error.details, { planStartRecoveryReason: 'previous_attempt_ended' });
+      assert.deepEqual(error.details, {});
       return true;
     });
 
@@ -855,7 +849,7 @@ test('persisted WorkUnits validate the complete dependency graph during read-bac
   }
 });
 
-test('Zenki discovery uses a new plan digest and only the remaining run budget after replanning', async () => {
+test('Zenki discovery is queued and never runs on the planning hot path', async () => {
   const { root, database } = await fixture();
   try {
     await writeFile(path.join(root, 'package.json'), JSON.stringify({ dependencies: { svelte: '^5.0.0' } }));
@@ -916,11 +910,11 @@ test('Zenki discovery uses a new plan digest and only the remaining run budget a
       discoverSkills: discover,
     });
     assert.equal(firstPlan.ennoOduno.status, 'goki_executing');
-    assert.deepEqual(calls[0], {
-      maxQueries: 3,
-      maxSelectedSkills: 2,
-      task: 'Repair a Svelte component\nRepair the first component plan',
-    });
+    assert.equal(calls.length, 0);
+    assert.ok((database.prepare(`
+      SELECT COUNT(*) AS count FROM orchestration_jobs
+      WHERE run_id = ? AND kind = 'skill_discovery'
+    `).get<{ count: number }>(identity.runId)?.count ?? 0) >= 1);
     await reportEnnoWork(database, {
       ...identity,
       ...executionCredentials(firstPlan),
@@ -944,46 +938,23 @@ test('Zenki discovery uses a new plan digest and only the remaining run budget a
     assert.equal(replanning.ennoOduno.status, 'zenki_planning');
     assert.equal(replanning.ennoOduno.contractRevision, 3);
 
-    await assert.rejects(submitEnnoPlan(database, {
+    const secondPlan = await submitEnnoPlan(database, {
       ...planInput(3, 'zenki-discovery-exhausted-plan', 'Repair with an exhausted attempt budget'),
       maxAttempts: 1,
-    }, { discoverSkills: discover }), (error: unknown) => {
-      assert.ok(error instanceof KiokukoError);
-      assert.equal(error.code, 'VALIDATION_ERROR');
-      assert.match(JSON.stringify(error.details), /maxAttempts/u);
-      return true;
-    });
-    assert.equal(calls.length, 1);
-
-    const secondPlan = await submitEnnoPlan(database, planInput(3, 'zenki-discovery-plan-2', 'Repair the narrower component plan'), {
-      discoverSkills: discover,
-    });
+    }, { discoverSkills: discover });
     assert.equal(secondPlan.ennoOduno.status, 'goki_executing');
-    assert.deepEqual(calls.map((call) => ({ maxQueries: call.maxQueries, maxSelectedSkills: call.maxSelectedSkills })), [
-      { maxQueries: 3, maxSelectedSkills: 2 },
-      { maxQueries: 2, maxSelectedSkills: 2 },
-    ]);
-    const attempts = database.prepare(`
-      SELECT phase, request_digest AS requestDigest,
-             reserved_query_count AS reservedQueries, consumed_query_count AS consumedQueries,
-             reserved_selection_count AS reservedSelections, consumed_selection_count AS consumedSelections
-      FROM task_skill_discovery_attempts WHERE run_id = ? ORDER BY rowid
-    `).all<{ phase: string; requestDigest: string; reservedQueries: number; consumedQueries: number; reservedSelections: number; consumedSelections: number }>(identity.runId)
-      .map((row) => ({ ...row }));
-    assert.equal(attempts.length, 3);
-    const zenkiAttempts = attempts.filter((attempt) => attempt.phase === 'zenki');
-    assert.equal(zenkiAttempts.length, 2);
-    assert.notEqual(zenkiAttempts[0]?.requestDigest, zenkiAttempts[1]?.requestDigest);
-    assert.deepEqual(zenkiAttempts.map(({ phase: _phase, requestDigest: _digest, ...budget }) => budget), [
-      { reservedQueries: 3, consumedQueries: 1, reservedSelections: 2, consumedSelections: 0 },
-      { reservedQueries: 2, consumedQueries: 2, reservedSelections: 2, consumedSelections: 0 },
-    ]);
+    assert.equal(secondPlan.ennoOduno.qualityState, 'degraded');
+    assert.equal(calls.length, 0);
+    assert.ok((database.prepare(`
+      SELECT COUNT(*) AS count FROM orchestration_jobs
+      WHERE run_id = ? AND kind = 'skill_discovery'
+    `).get<{ count: number }>(identity.runId)?.count ?? 0) >= 1);
   } finally {
     database.close();
   }
 });
 
-test('Zenki preserves the run-wide budget after a failed discovery attempt', async () => {
+test('Zenki does not synchronously retry a failed discovery attempt', async () => {
   const prepare = async (requestId: string) => {
     const testFixture = await fixture();
     const discoveryCapabilities = [
@@ -1028,15 +999,6 @@ test('Zenki preserves the run-wide budget after a failed discovery attempt', asy
       },
       capabilities: discoveryCapabilities,
     };
-    const digest = canonicalContentHash({
-      version: 2,
-      runId: prepared.run.runId,
-      revision: 1,
-      mode: prepared.skillDiscovery.mode,
-      workPlan: plan.workPlan,
-      capabilities: plan.capabilities,
-      skillRequirements: plan.skillRequirements,
-    });
     const insertFailedAttempt = (requestDigest: string) => testFixture.database.prepare(`
       INSERT INTO task_skill_discovery_attempts (
         run_id, phase, request_digest,
@@ -1051,7 +1013,7 @@ test('Zenki preserves the run-wide budget after a failed discovery attempt', asy
       '2026-08-28T00:00:00.000Z',
       '2026-08-28T00:00:00.000Z',
     );
-    return { ...testFixture, prepared, identity, plan, digest, insertFailedAttempt };
+    return { ...testFixture, prepared, identity, plan, insertFailedAttempt };
   };
 
   const context = await prepare('failed-discovery-changed-digest');
@@ -1067,14 +1029,6 @@ test('Zenki preserves the run-wide budget after a failed discovery attempt', asy
         WHERE run_id = ? AND phase = 'zenki' ORDER BY request_digest
     `).all(context.identity.runId).map((row) => ({ ...row })), [
         {
-          requestDigest: context.digest,
-          state: 'completed',
-          reservedQueries: 0,
-          consumedQueries: 0,
-          reservedSelections: 0,
-          consumedSelections: 0,
-        },
-        {
           requestDigest: 'e'.repeat(64),
           state: 'failed',
           reservedQueries: 3,
@@ -1082,7 +1036,7 @@ test('Zenki preserves the run-wide budget after a failed discovery attempt', asy
           reservedSelections: 2,
           consumedSelections: 2,
         },
-    ].sort((left, right) => left.requestDigest.localeCompare(right.requestDigest)));
+    ]);
   } finally {
     context.database.close();
   }
@@ -1274,16 +1228,13 @@ test('fake agent completes the Enno-Zenki-Goki loop in ledger order with fresh v
       },
       capabilities,
     });
-    assert.equal(plan.ennoOduno.status, 'needs_confirmation');
+    assert.equal(plan.ennoOduno.status, 'goki_executing');
     assert.deepEqual(plan.ennoOduno.directive?.requiredSkills, [
       'kiokuko-soul',
-      'kiokuko-enno-oduno',
       'kiokuko-single-purpose-functions',
     ]);
 
-    const approved = answerEnno(database, {
-      ...identity, expectedRevision: 2, idempotencyKey: 'approve-1', action: 'approve',
-    });
+    const approved = plan;
     assert.equal(approved.ennoOduno.status, 'goki_executing');
     const hook = decideAdapterContinuation(database, 'opencode', { session_id: 'opencode-session-1', cwd: root });
     assert.equal(hook.continue, true);
@@ -1505,7 +1456,7 @@ function confirmationProjectionPlanInput(
   };
 }
 
-test('a needs_confirmation plan presents a complete user-facing confirmation projection', async () => {
+test('an inferred plan remains advisory and starts work without confirmation', async () => {
   const { root, database } = await fixture();
   try {
     const prepared = await prepareOpenCodeTask(database, {
@@ -1523,39 +1474,10 @@ test('a needs_confirmation plan presents a complete user-facing confirmation pro
         workPlan: 'inferred', skillSet: 'repository_evidence', finalVerifiers: 'explicit_user', maxAttempts: 'inferred',
       },
     ));
-    assert.equal(plan.ennoOduno.status, 'needs_confirmation');
-    assert.equal(plan.ennoOduno.nextAction, 'ask_user_confirmation');
-    assert.match(plan.ennoOduno.directive?.objective ?? '', /Return every item in userFacingConfirmation to the user in the user's language/iu);
-    assert.deepEqual(plan.ennoOduno.directive?.reportSchema.required, ['runId', 'expectedRevision', 'idempotencyKey', 'action']);
-    const projection = plan.ennoOduno.directive?.userFacingConfirmation;
-    assert.ok(projection !== undefined);
-    assert.equal(projection.presentationVersion, 1);
-    assert.deepEqual(projection.actions, ['approve', 'revise', 'cancel']);
-    assert.deepEqual(projection.summary, { basis: 'proposal', text: 'Repair add behind the confirmation' });
-    assert.deepEqual(projection.scope, { basis: 'user', paths: ['src/add.js'] });
-    assert.deepEqual(projection.exclusions, { basis: 'user', paths: [] });
-    assert.deepEqual(projection.completion, { basis: 'user', items: ['node --test passes'] });
-    assert.equal(projection.workItems.length, 1);
-    assert.equal(projection.workItems[0]?.number, 1);
-    assert.equal(projection.workItems[0]?.summary, 'Repair the add implementation');
-    assert.deepEqual(projection.workItems[0]?.dependsOn, []);
-    assert.deepEqual(projection.workItems[0]?.expertise, [{
-      area: 'Regression prevention and verification design', basis: 'proposal', reason: 'Prove the add regression with focused tests',
-    }]);
-    assert.deepEqual(projection.workItems[0]?.checks, [{
-      category: 'test', executable: process.execPath, arguments: ['--eval', 'process.exit(0)'], directory: '.', timeoutMs: 5000,
-    }]);
-    assert.deepEqual(projection.finalChecks.checks[0]?.directory, '.');
-    assert.deepEqual(projection.attemptLimit, { basis: 'proposal', maxAttempts: 5 });
-    assert.equal(projection.skills.every((skill) => skill.referenceOnly === false), true);
-    const rendered = JSON.stringify(projection);
-    for (const forbidden of [
-      'repair-add', 'focused-test', 'final-test', 'code.verification.v1',
-      'WorkUnit', 'workPlan', 'expertRefs', 'focusedVerifiers', 'finalVerifiers',
-      'workUnitId', 'skillNames', 'acceptanceCriteria', 'provenance',
-    ]) {
-      assert.equal(rendered.includes(forbidden), false, `projection leaked internal token: ${forbidden}`);
-    }
+    assert.equal(plan.ennoOduno.status, 'goki_executing');
+    assert.equal(plan.ennoOduno.nextAction, 'execute_work_unit');
+    assert.equal(plan.ennoOduno.directive?.modelPreference, 'economical_fast_worker');
+    assert.equal('userFacingConfirmation' in (plan.ennoOduno.directive ?? {}), false);
 
     const replay = await submitEnnoPlan(database, confirmationProjectionPlanInput(
       identity, repositoryRoot, 'projection-plan-1', 'Repair add behind the confirmation',
@@ -1566,20 +1488,15 @@ test('a needs_confirmation plan presents a complete user-facing confirmation pro
     ));
     assert.deepEqual(replay, plan);
 
-    const stale = answerEnno(database, {
-      ...identity, expectedRevision: 2, idempotencyKey: 'projection-stale-approve', action: 'approve',
-    });
     assert.throws(() => answerEnno(database, {
-      ...identity, expectedRevision: 99, idempotencyKey: 'projection-older-approve', action: 'approve',
-    }), /revision changed/iu);
-    assert.equal(stale.ennoOduno.status, 'goki_executing');
-    assert.equal('userFacingConfirmation' in (stale.ennoOduno.directive ?? {}), false);
+      ...identity, expectedRevision: 2, idempotencyKey: 'projection-approve-not-required', action: 'approve',
+    }), /not in the required state/iu);
   } finally {
     database.close();
   }
 });
 
-test('revise returns to Zenki for a fresh projection and cancel terminates without one', async () => {
+test('advisory revise and cancel inputs do not interrupt an active WorkUnit', async () => {
   const { root, database } = await fixture();
   try {
     const prepared = await prepareOpenCodeTask(database, {
@@ -1594,28 +1511,18 @@ test('revise returns to Zenki for a fresh projection and cancel terminates witho
       scope: 'explicit_user', exclusions: 'explicit_user', acceptanceCriteria: 'explicit_user',
       workPlan: 'inferred', skillSet: 'repository_evidence', finalVerifiers: 'explicit_user', maxAttempts: 'inferred',
     } as const;
-    await submitEnnoPlan(database, confirmationProjectionPlanInput(
+    const planned = await submitEnnoPlan(database, confirmationProjectionPlanInput(
       identity, repositoryRoot, 'revision-plan-1', 'Repair add behind the confirmation', provenance,
     ));
-    const revised = answerEnno(database, {
+    assert.equal(planned.ennoOduno.status, 'goki_executing');
+    assert.throws(() => answerEnno(database, {
       ...identity, expectedRevision: 2, idempotencyKey: 'revision-revise', action: 'revise',
       requestedChanges: 'Narrow the plan to the add regression only',
-    });
-    assert.equal(revised.ennoOduno.status, 'zenki_planning');
-    assert.equal(revised.ennoOduno.contractRevision, 3);
-    assert.equal('userFacingConfirmation' in (revised.ennoOduno.directive ?? {}), false);
-    const replanned = await submitEnnoPlan(database, {
-      ...confirmationProjectionPlanInput(identity, repositoryRoot, 'revision-plan-2', 'Repair add with a narrower scope', provenance),
-      expectedRevision: 3,
-    });
-    assert.equal(replanned.ennoOduno.status, 'needs_confirmation');
-    assert.equal(replanned.ennoOduno.contractRevision, 4);
-    assert.equal(replanned.ennoOduno.directive?.userFacingConfirmation?.summary.text, 'Repair add with a narrower scope');
-    const cancelled = answerEnno(database, {
-      ...identity, expectedRevision: 4, idempotencyKey: 'revision-cancel', action: 'cancel',
-    });
-    assert.equal(cancelled.ennoOduno.status, 'cancelled');
-    assert.equal(cancelled.ennoOduno.directive, null);
+    }), /not in the required state/iu);
+    assert.throws(() => answerEnno(database, {
+      ...identity, expectedRevision: 2, idempotencyKey: 'revision-cancel', action: 'cancel',
+    }), /not in the required state/iu);
+    assert.equal(readEnnoSnapshot(database, identity).status, 'goki_executing');
   } finally {
     database.close();
   }
@@ -1758,7 +1665,7 @@ test('mixed UI, code, test, docs, and operations WorkUnits route experts and Ski
   }
 });
 
-test('an Enno plan blocks when the exact local kiokuko-soul capability is absent', async () => {
+test('an Enno plan degrades but continues when the exact local kiokuko-soul capability is absent', async () => {
   const { root, database } = await fixture();
   try {
     const capabilitiesWithoutSoul = [
@@ -1771,9 +1678,12 @@ test('an Enno plan blocks when the exact local kiokuko-soul capability is absent
       capabilities: capabilitiesWithoutSoul,
       client: { kind: 'opencode', sessionId: 'opencode-missing-soul' }, skillDiscoveryMode: 'off',
     });
-    assert.equal(prepared.nextAction, 'required_capability_unavailable');
+    assert.equal(prepared.nextAction, 'proceed');
+    assert.equal(prepared.continuationPolicy.codingAllowed, true);
+    assert.equal(prepared.continuationPolicy.blockingReason, null);
+    assert.ok(prepared.warnings.some((warning) => warning.code === 'REQUIRED_CAPABILITY_UNAVAILABLE'));
     submitPreparedIdeal(database, prepared, 'missing-soul-ideal');
-    const blocked = await submitEnnoPlan(database, {
+    const planned = await submitEnnoPlan(database, {
       runId: prepared.run.runId, workspace: prepared.project.workspace, orchestrationId: prepared.intake.sessionId,
       expectedRevision: 1, idempotencyKey: 'missing-soul-plan', scope: ['src/add.js'], exclusions: [],
       acceptanceCriteria: [{ id: 'tests', description: 'tests pass' }],
@@ -1789,12 +1699,13 @@ test('an Enno plan blocks when the exact local kiokuko-soul capability is absent
       },
       capabilities: capabilitiesWithoutSoul,
     });
-    assert.equal(blocked.ennoOduno.status, 'blocked');
-    assert.equal(blocked.ennoOduno.nextAction, 'report_blocker');
-    assert.match(database.prepare('SELECT blocker FROM enno_contracts WHERE run_id = ?')
-      .get<{ blocker: string }>(prepared.run.runId)?.blocker ?? '', /Required Skills unavailable: kiokuko-soul/u);
+    assert.equal(planned.ennoOduno.status, 'goki_executing');
+    assert.equal(planned.ennoOduno.qualityState, 'degraded');
+    assert.equal(planned.ennoOduno.nextAction, 'execute_work_unit');
+    assert.equal(database.prepare('SELECT blocker FROM enno_contracts WHERE run_id = ?')
+      .get<{ blocker: string | null }>(prepared.run.runId)?.blocker, null);
     assert.equal(database.prepare('SELECT status FROM ledger_runs WHERE run_id = ?')
-      .get<{ status: string }>(prepared.run.runId)?.status, 'failed');
+      .get<{ status: string }>(prepared.run.runId)?.status, 'active');
   } finally {
     database.close();
   }
@@ -1876,6 +1787,7 @@ test('failed Enno review returns to Zenki for a revision-bound replan before Gok
     assert.equal(planningContinuation.directive?.role, 'zenki');
     await assert.rejects(reportEnnoWork(database, {
       ...identity, expectedRevision: 3, idempotencyKey: 'illegal-old-plan-resume', workUnitId: 'repair',
+      leaseToken: 'stale', routeEpoch: 0, attempt: 1, inputManifestDigest: '0'.repeat(64),
       result: { outcome: 'completed', summary: 'Old plan cannot resume', mutated: false, changedPaths: [] },
     }), /not in the required state/iu);
 
@@ -2091,7 +2003,7 @@ test('replanning invalidates old final evidence and advisory digests', async () 
   }
 });
 
-test('spawn failure blocks the run while continuation exhaustion only stops the current session', async () => {
+test('spawn failure records a degraded replan while continuation exhaustion only stops the current session', async () => {
   const first = await fixture();
   try {
     const unsafe = { ...verifier(first.root, 'missing'), executable: 'kiokuko-executable-that-does-not-exist' };
@@ -2105,13 +2017,15 @@ test('spawn failure blocks the run while continuation exhaustion only stops the 
       ...identity, expectedRevision: 2, idempotencyKey: 'spawn-prepare',
     });
     assert.equal(preparedUnsafe.verifierResults?.[0]?.status, 'spawn_failed');
-    const blocked = await finishEnno(first.database, {
+    const replanning = await finishEnno(first.database, {
       ...identity, expectedRevision: 2, idempotencyKey: 'spawn-finish',
       review: { decision: 'accept', summary: 'The work is ready for final verification' },
     });
-    assert.equal(blocked.ennoOduno.status, 'blocked');
-    assert.equal(blocked.verifierResults?.[0]?.status, 'spawn_failed');
-    assert.equal(first.database.prepare('SELECT status FROM ledger_runs WHERE run_id = ?').get<{ status: string }>(identity.runId)?.status, 'failed');
+    assert.equal(replanning.ennoOduno.status, 'zenki_planning');
+    assert.equal(replanning.ennoOduno.contractRevision, 3);
+    assert.equal(replanning.ennoOduno.qualityState, 'degraded');
+    assert.equal(replanning.verifierResults?.[0]?.status, 'spawn_failed');
+    assert.equal(first.database.prepare('SELECT status FROM ledger_runs WHERE run_id = ?').get<{ status: string }>(identity.runId)?.status, 'active');
   } finally {
     first.database.close();
   }

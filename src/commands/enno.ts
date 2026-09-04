@@ -16,6 +16,9 @@ import {
   renderOpenCodeDecision,
 } from '../enno-oduno/adapters.js';
 import { parseOpenCodeHookRequest } from '../opencode/hook-protocol.js';
+import { parseCompactionHookRequest } from '../opencode/compaction-protocol.js';
+import { captureCompactionBoundary, queueCompactionMeditation } from '../meditation/compaction.js';
+import { canonicalContentHash } from '../serialization/validate.js';
 
 async function readInputFromStdin(): Promise<Buffer> {
   const chunks: Buffer[] = [];
@@ -86,6 +89,47 @@ export function registerEnnoCommand(root: Command, dependencies: EnnoCommandDepe
             ? 'invalid_response'
             : 'adapter_unavailable';
         process.stdout.write(serializeRoleOutput(failOpenAdapterOutput(client, code)));
+      }
+    });
+
+  enno.command('compaction')
+    .description('Persist one bounded OpenCode compaction boundary or post-compaction signal')
+    .requiredOption('--input-json <path>', 'Strict JSON input; v1 accepts stdin (-) only')
+    .action(async (options: { inputJson: string }) => {
+      if (options.inputJson !== '-' || dependencies.withDatabase === undefined) {
+        process.stdout.write(serializeRoleOutput({ accepted: false }));
+        return;
+      }
+      try {
+        const input = parseCompactionHookRequest(parseRoleJson(await readInputFromStdin()));
+        const result = await dependencies.withDatabase((database) => {
+          if (input.phase === 'before') {
+            return captureCompactionBoundary(database, {
+              clientSessionId: input.sessionId,
+              runId: input.boundary.runId,
+              workspace: input.boundary.workspace,
+              orchestrationId: input.boundary.orchestrationId,
+              contractRevision: input.boundary.contractRevision,
+              contextRevision: input.boundary.contextRevision,
+              routeEpoch: input.boundary.routeEpoch,
+              ...(input.boundary.terminalMessageId === undefined
+                ? {}
+                : { terminalMessageId: input.boundary.terminalMessageId }),
+            });
+          }
+          if (canonicalContentHash(input.summaryText) !== input.summaryDigest) {
+            throw new KiokukoError('CONFLICT', 'Compaction summary digest changed');
+          }
+          return queueCompactionMeditation(database, {
+            clientSessionId: input.sessionId,
+            runId: input.runId ?? null,
+            summaryMessageId: input.summaryMessageId,
+            summaryText: input.summaryText,
+          });
+        });
+        process.stdout.write(serializeRoleOutput({ accepted: result !== null }));
+      } catch {
+        process.stdout.write(serializeRoleOutput({ accepted: false }));
       }
     });
 }

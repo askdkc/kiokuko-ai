@@ -72,25 +72,17 @@ test('MCP tool timeout returns a stable public error and the same connection ser
   }
 });
 
-test('aborted task preparation closes the run and discovery attempt as failed', async () => {
+test('task preparation never waits for external discovery or turns its run into a timeout failure', async () => {
   const { root, databasePath } = await createMigratedDatabase();
   await writeFile(path.join(root, 'package.json'), '{"name":"timeout-fixture","dependencies":{"typescript":"^5.0.0"}}\n');
   const database = openConnection(databasePath);
-  const controller = new AbortController();
   let started = false;
-  const fetchImpl: typeof fetch = async (_input, init) => {
+  const fetchImpl: typeof fetch = async () => {
     started = true;
-    const signal = init?.signal;
-    return await new Promise<Response>((_resolve, reject) => {
-      if (signal?.aborted) {
-        reject(signal.reason);
-        return;
-      }
-      signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
-    });
+    throw new Error('external discovery must not run on task_prepare');
   };
   try {
-    const preparation = prepareOpenCodeTask(database, {
+    const prepared = await prepareOpenCodeTask(database, {
       requestId: 'mcp-timeout-run-recovery',
       cwd: root,
       task: 'Build a TypeScript service',
@@ -98,19 +90,14 @@ test('aborted task preparation closes the run and discovery attempt as failed', 
       capabilities: [{ kind: 'skill', name: 'kiokuko-soul' }, { kind: 'skill', name: 'memory-reasoning' }],
       skillDiscoveryMode: 'official',
       fetchImpl,
-      signal: controller.signal,
     });
-    const deadline = Date.now() + 1_000;
-    while (!started) {
-      if (Date.now() >= deadline) throw new Error('Timed out waiting for discovery');
-      await new Promise<void>((resolve) => setTimeout(resolve, 5));
-    }
-    controller.abort();
-    await assert.rejects(preparation);
+    assert.equal(prepared.nextAction, 'proceed');
+    assert.equal(started, false);
     const run = database.prepare('SELECT status FROM ledger_runs WHERE task_hash IS NOT NULL ORDER BY created_at DESC LIMIT 1').get<{ status: string }>();
-    assert.equal(run?.status, 'failed');
-    const attempt = database.prepare('SELECT state FROM task_skill_discovery_attempts ORDER BY started_at DESC LIMIT 1').get<{ state: string }>();
-    assert.equal(attempt?.state, 'failed');
+    assert.equal(run?.status, 'active');
+    const job = database.prepare("SELECT state FROM orchestration_jobs WHERE kind = 'skill_discovery' ORDER BY created_at DESC LIMIT 1")
+      .get<{ state: string }>();
+    assert.equal(job?.state, 'pending');
   } finally {
     database.close();
   }

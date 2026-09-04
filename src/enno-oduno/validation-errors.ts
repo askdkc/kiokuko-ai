@@ -11,6 +11,7 @@ export const ENNO_VALIDATION_OPERATIONS = [
   'advice_submit',
   'advice_read',
   'work_report',
+  'work_claim',
   'verify_prepare',
   'finish',
   'meditation_submit',

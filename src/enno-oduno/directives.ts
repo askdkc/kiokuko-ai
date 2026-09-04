@@ -204,10 +204,13 @@ export function directiveForRun(snapshot: EnnoRunSnapshot): RoleDirective | null
         'Select one to three versioned expertRefs per WorkUnit and do not load unselected fragments by default',
         'Do not create meaningless micro-functions or bundle unrelated responsibilities',
         'Submit one complete plan',
-        'Stop if a required capability is unavailable',
+        'Record unavailable capabilities as degraded-quality planning evidence and continue with a conservative WorkUnit',
         'Do not mutate the repository',
       ],
       reportSchema: advisoryAwareReportSchema(REPORT_SCHEMAS.plan, snapshot),
+      modelPreference: 'high_capability_planner',
+      planArtifact: snapshot.planArtifact ?? null,
+      qualityState: snapshot.qualityState ?? 'normal',
     ...(advisoryRound !== undefined && (snapshot.status !== 'enno_verifying' || snapshot.finalEvidenceReady) ? { advisoryRound } : {}),
     };
   }
@@ -237,6 +240,9 @@ export function directiveForRun(snapshot: EnnoRunSnapshot): RoleDirective | null
         'Stop and report when user judgment or unsafe execution is required',
       ],
       reportSchema: executionReportSchema(snapshot),
+      modelPreference: 'economical_fast_worker',
+      planArtifact: snapshot.planArtifact ?? null,
+      qualityState: snapshot.qualityState ?? 'normal',
     };
   }
   return {
@@ -280,6 +286,9 @@ export function directiveForRun(snapshot: EnnoRunSnapshot): RoleDirective | null
         : snapshot.finalEvidenceReady
           ? advisoryAwareReportSchema(REPORT_SCHEMAS.finalReview, snapshot)
           : REPORT_SCHEMAS.verificationPrepare,
+    modelPreference: 'current_model',
+    planArtifact: snapshot.planArtifact ?? null,
+    qualityState: snapshot.qualityState ?? 'normal',
     ...(advisoryRound === undefined ? {} : { advisoryRound }),
     ...(snapshot.status === 'needs_confirmation'
       ? { userFacingConfirmation: confirmationFor(snapshot) }
@@ -303,17 +312,19 @@ export function directiveForIntake(input: {
     harness: harnessDirective(input.clientKind, input.clientVersion, 'enno-oduno'),
     handoff: null,
     objective: boundedObjective(input.question === null
-      ? 'Keep the request in Enno-Oduno intake until Akinator produces an actionable task profile.'
-      : `Return Akinator's exact question to the user and wait for the answer: ${input.question.prompt}`),
+      ? 'Continue from repository evidence while Akinator enriches the task profile.'
+      : `Treat Akinator's question as advisory and continue from available evidence: ${input.question.prompt}`),
     requiredSkills: [STANDARD_SOUL_SKILL_NAME, STANDARD_ENNO_SKILL_NAME],
     workUnit: null,
     stopConditions: [
-      'Do not generate a WorkPlan during intake',
-      'Do not start Goki before Zenki submits a plan and required confirmation succeeds',
-      'Return control to the user for every unresolved Akinator question',
-      'Stop if a required capability is unavailable',
+      'Do not start Goki before Zenki submits a revision-bound plan',
+      'Preserve unresolved Akinator questions as advisory evidence',
+      'Continue conservatively when a non-safety capability is unavailable',
     ],
     reportSchema: REPORT_SCHEMAS.intake,
+    modelPreference: 'current_model',
+    planArtifact: null,
+    qualityState: 'degraded',
   };
 }
 

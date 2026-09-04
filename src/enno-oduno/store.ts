@@ -47,6 +47,7 @@ import {
 } from './advisory.js';
 import type { SkillDiscoveryMode, SkillDiscoverySummary } from '../skills/types.js';
 import { captureRepositoryState } from './repository-state.js';
+import { readPlanArtifact } from './plan-artifact.js';
 
 interface ContractRow extends SqliteRow {
   run_id: string;
@@ -408,7 +409,20 @@ export function readEnnoSnapshot(database: SqliteDatabase, identity: EnnoIdentit
     finalEvidence,
     blocker: row.blocker,
     advisoryPhaseState: { state: 'not_started' },
+    planArtifact: readPlanArtifact(database, row.run_id, row.revision),
+    qualityState: 'normal',
   };
+  snapshot.qualityState = snapshot.planArtifact?.state === 'failed'
+    || contract.skillSet.entries.some((entry) => entry.required && entry.availability === 'unavailable')
+    || database.prepare(`
+      SELECT 1 AS present
+      FROM ledger_events
+      WHERE run_id = ? AND event_type = 'enno.quality_degraded'
+        AND CAST(json_extract(payload_json, '$.contractRevision') AS INTEGER) = ?
+      LIMIT 1
+    `).get(snapshot.runId, row.revision) !== undefined
+    ? 'degraded'
+    : 'normal';
   const advisoryPhase = advisoryPhaseForStatus(status);
   const currentInputDigest = advisoryPhase === null || (advisoryPhase === 'final_review' && !finalEvidenceReady)
     ? undefined
@@ -592,8 +606,16 @@ export function replaceWorkUnitsInTransaction(database: SqliteDatabase, runId: s
     ) VALUES (?, ?, ?, ?, ?, 'pending', 0, NULL, ?, ?)
   `);
   const now = new Date().toISOString();
+  const resourceStatement = database.prepare(`
+    INSERT INTO enno_work_unit_resources (
+      run_id, contract_revision, work_unit_id, resource_key, access_mode, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?)
+  `);
   workPlan.units.forEach((unit, index) => {
     statement.run(runId, unit.id, revision, index, canonicalJson(unit), now, now);
+    for (const claim of unit.resourceClaims ?? []) {
+      resourceStatement.run(runId, revision, unit.id, claim.key, claim.access, now);
+    }
   });
 }
 
@@ -644,7 +666,8 @@ export function claimExecutionLeaseInTransaction(
            work_unit_id AS workUnitId, route_epoch AS routeEpoch,
            owner_client_kind AS ownerClientKind, owner_session_id AS ownerSessionId,
            lease_expires_at AS expiresAt
-    FROM enno_execution_leases WHERE run_id = ?
+    FROM enno_execution_leases
+    WHERE run_id = ? AND contract_revision = ? AND work_unit_id = ?
   `).get<{
     contractRevision: number;
     mutationRevision: number;
@@ -653,7 +676,7 @@ export function claimExecutionLeaseInTransaction(
     ownerClientKind: EnnoClientKind;
     ownerSessionId: string;
     expiresAt: string;
-  }>(snapshot.runId);
+  }>(snapshot.runId, snapshot.revision, workUnitId);
   if (existing !== undefined && existing.expiresAt > now
     && (existing.contractRevision !== snapshot.revision
       || existing.mutationRevision !== snapshot.mutationRevision
@@ -666,17 +689,28 @@ export function claimExecutionLeaseInTransaction(
   const leaseToken = randomUUID();
   const tokenHash = createHash('sha256').update(leaseToken, 'utf8').digest('hex');
   const expiresAt = new Date(nowDate.getTime() + EXECUTION_LEASE_MS).toISOString();
+  const storedUnit = snapshot.workUnits.find((unit) => unit.workUnit.id === workUnitId);
+  if (storedUnit === undefined) throw new KiokukoError('CONFLICT', 'Enno WorkUnit is not in the current plan');
+  // The token, route epoch, revision, and manifest digest fence every result.
+  // Saturating the legacy diagnostic counter avoids turning retry exhaustion
+  // into an agent-wide stop.
+  const attempt = Math.min(storedUnit.attemptCount + 1, 20);
+  const inputManifestDigest = storedUnit.workUnit.inputManifestDigest;
+  if (inputManifestDigest === undefined || !/^[0-9a-f]{64}$/u.test(inputManifestDigest)) {
+    throw new KiokukoError('INTEGRITY_ERROR', 'Enno WorkUnit input manifest is invalid');
+  }
   database.prepare(`
     INSERT INTO enno_execution_leases (
-      run_id, contract_revision, mutation_revision, work_unit_id, route_epoch,
+      run_id, contract_revision, mutation_revision, work_unit_id, attempt, route_epoch,
+      input_manifest_digest,
       owner_client_kind, owner_session_id, lease_token_hash, lease_expires_at,
       heartbeat_at, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(run_id) DO UPDATE SET
-      contract_revision = excluded.contract_revision,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(run_id, contract_revision, work_unit_id) DO UPDATE SET
       mutation_revision = excluded.mutation_revision,
-      work_unit_id = excluded.work_unit_id,
+      attempt = excluded.attempt,
       route_epoch = excluded.route_epoch,
+      input_manifest_digest = excluded.input_manifest_digest,
       owner_client_kind = excluded.owner_client_kind,
       owner_session_id = excluded.owner_session_id,
       lease_token_hash = excluded.lease_token_hash,
@@ -688,7 +722,9 @@ export function claimExecutionLeaseInTransaction(
     snapshot.revision,
     snapshot.mutationRevision,
     workUnitId,
+    attempt,
     snapshot.routeEpoch ?? 0,
+    inputManifestDigest,
     owner.clientKind,
     owner.sessionId,
     tokenHash,
@@ -703,6 +739,8 @@ export function claimExecutionLeaseInTransaction(
     contractRevision: snapshot.revision,
     mutationRevision: snapshot.mutationRevision,
     workUnitId,
+    attempt,
+    inputManifestDigest,
     expiresAt,
   };
 }
@@ -711,23 +749,29 @@ export function assertExecutionLeaseInTransaction(database: SqliteDatabase, snap
   workUnitId: string;
   leaseToken?: string | undefined;
   routeEpoch?: number | undefined;
+  attempt?: number | undefined;
+  inputManifestDigest?: string | undefined;
 }): void {
   const row = database.prepare(`
     SELECT contract_revision AS contractRevision, mutation_revision AS mutationRevision,
-           work_unit_id AS workUnitId, route_epoch AS routeEpoch,
+           work_unit_id AS workUnitId, attempt, route_epoch AS routeEpoch,
+           input_manifest_digest AS inputManifestDigest,
            owner_client_kind AS ownerClientKind, owner_session_id AS ownerSessionId,
            lease_token_hash AS tokenHash, lease_expires_at AS expiresAt
-    FROM enno_execution_leases WHERE run_id = ?
+    FROM enno_execution_leases
+    WHERE run_id = ? AND contract_revision = ? AND work_unit_id = ?
   `).get<{
     contractRevision: number;
     mutationRevision: number;
     workUnitId: string;
+    attempt: number;
     routeEpoch: number;
+    inputManifestDigest: string | null;
     ownerClientKind: EnnoClientKind;
     ownerSessionId: string;
     tokenHash: string;
     expiresAt: string;
-  }>(snapshot.runId);
+  }>(snapshot.runId, snapshot.revision, input.workUnitId);
   if (row === undefined) {
     if (input.leaseToken !== undefined || input.routeEpoch !== undefined) {
       throw new KiokukoError('CONFLICT', 'Enno execution lease is not active');
@@ -737,14 +781,18 @@ export function assertExecutionLeaseInTransaction(database: SqliteDatabase, snap
   const tokenHash = input.leaseToken === undefined
     ? null
     : createHash('sha256').update(input.leaseToken, 'utf8').digest('hex');
+  const expectedOwnerClientKind = snapshot.clientKind ?? 'opencode';
+  const expectedOwnerSessionId = snapshot.clientSessionId ?? snapshot.orchestrationId;
   if (row.expiresAt <= new Date().toISOString()
     || row.contractRevision !== snapshot.revision
     || row.mutationRevision !== snapshot.mutationRevision
     || row.workUnitId !== input.workUnitId
+    || row.attempt !== input.attempt
     || row.routeEpoch !== input.routeEpoch
+    || row.inputManifestDigest !== input.inputManifestDigest
     || row.routeEpoch !== (snapshot.routeEpoch ?? 0)
-    || row.ownerClientKind !== snapshot.clientKind
-    || row.ownerSessionId !== snapshot.clientSessionId
+    || row.ownerClientKind !== expectedOwnerClientKind
+    || row.ownerSessionId !== expectedOwnerSessionId
     || tokenHash !== row.tokenHash) {
     throw new KiokukoError('CONFLICT', 'Enno execution lease is stale or belongs to another actor');
   }
@@ -754,24 +802,81 @@ export function releaseExecutionLeaseInTransaction(database: SqliteDatabase, run
   database.prepare('DELETE FROM enno_execution_leases WHERE run_id = ?').run(runId);
 }
 
+export function releaseWorkUnitExecutionLeaseInTransaction(
+  database: SqliteDatabase,
+  runId: string,
+  contractRevision: number,
+  workUnitId: string,
+): void {
+  database.prepare(`
+    DELETE FROM enno_execution_leases
+    WHERE run_id = ? AND contract_revision = ? AND work_unit_id = ?
+  `).run(runId, contractRevision, workUnitId);
+}
+
+/**
+ * Fence expired workers before scheduling replacements. The attempt counter is
+ * deliberately preserved so the replacement lease receives a new identity.
+ */
+export function requeueExpiredExecutionLeasesInTransaction(
+  database: SqliteDatabase,
+  runId: string,
+  contractRevision: number,
+): string[] {
+  const now = new Date().toISOString();
+  const expired = database.prepare(`
+    SELECT work_unit_id AS workUnitId
+    FROM enno_execution_leases
+    WHERE run_id = ? AND contract_revision = ? AND lease_expires_at <= ?
+    ORDER BY work_unit_id
+  `).all<{ workUnitId: string }>(runId, contractRevision, now);
+  for (const { workUnitId } of expired) {
+    database.prepare(`
+      DELETE FROM enno_execution_leases
+      WHERE run_id = ? AND contract_revision = ? AND work_unit_id = ? AND lease_expires_at <= ?
+    `).run(runId, contractRevision, workUnitId, now);
+    database.prepare(`
+      UPDATE enno_work_units
+      SET status = 'pending', result_json = NULL, updated_at = ?
+      WHERE run_id = ? AND contract_revision = ? AND work_unit_id = ? AND status = 'in_progress'
+    `).run(now, runId, contractRevision, workUnitId);
+  }
+  return expired.map(({ workUnitId }) => workUnitId);
+}
+
 export function renewExecutionLeaseInTransaction(
   database: SqliteDatabase,
   snapshot: EnnoRunSnapshot,
-  input: { workUnitId: string; leaseToken?: string | undefined; routeEpoch?: number | undefined },
+  input: {
+    workUnitId: string;
+    leaseToken?: string | undefined;
+    routeEpoch?: number | undefined;
+    attempt?: number | undefined;
+    inputManifestDigest?: string | undefined;
+  },
   minimumLeaseMs: number,
 ): void {
   assertExecutionLeaseInTransaction(database, snapshot, input);
-  const existing = database.prepare('SELECT 1 AS present FROM enno_execution_leases WHERE run_id = ?')
-    .get<{ present: number }>(snapshot.runId);
+  const existing = database.prepare(`
+    SELECT 1 AS present FROM enno_execution_leases
+    WHERE run_id = ? AND contract_revision = ? AND work_unit_id = ?
+  `).get<{ present: number }>(snapshot.runId, snapshot.revision, input.workUnitId);
   if (existing === undefined) return;
   const now = new Date();
   const leaseExpiresAt = new Date(now.getTime() + Math.max(EXECUTION_LEASE_MS, minimumLeaseMs)).toISOString();
   const updated = database.prepare(`
     UPDATE enno_execution_leases
     SET lease_expires_at = ?, heartbeat_at = ?, updated_at = ?
-    WHERE run_id = ?
+    WHERE run_id = ? AND contract_revision = ? AND work_unit_id = ?
     RETURNING run_id AS runId
-  `).get<{ runId: string }>(leaseExpiresAt, now.toISOString(), now.toISOString(), snapshot.runId);
+  `).get<{ runId: string }>(
+    leaseExpiresAt,
+    now.toISOString(),
+    now.toISOString(),
+    snapshot.runId,
+    snapshot.revision,
+    input.workUnitId,
+  );
   if (updated?.runId !== snapshot.runId) throw new KiokukoError('CONFLICT', 'Enno execution lease changed concurrently');
 }
 

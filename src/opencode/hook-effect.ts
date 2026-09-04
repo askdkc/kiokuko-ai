@@ -7,6 +7,7 @@ import {
   OPENCODE_HOOK_PROTOCOL_VERSION,
   inspectOpenCodeHookResponse,
 } from './hook-protocol.js';
+import type { CompactionHookRequest } from './compaction-protocol.js';
 
 export const KIOKUKO_HOOK_TIMEOUT_MS = 10_000;
 const MAX_HOOK_OUTPUT_BYTES = 64 * 1024;
@@ -299,6 +300,73 @@ export async function runKiokukoHook(
     if (error instanceof Error && error.message === 'timeout') return { kind: 'failure', retryable: true, reason: 'timeout' };
     if (error instanceof Error && error.message === 'cancelled') return { kind: 'failure', retryable: true, reason: 'cancelled' };
     return { kind: 'failure', retryable: true, reason: 'hook_failed' };
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+    await settleChild(child);
+  }
+}
+
+/** Persist one compaction boundary/post event without affecting auto-continue. */
+export async function runKiokukoCompactionHook(
+  input: CompactionHookRequest extends infer Request
+    ? Request extends CompactionHookRequest
+      ? Omit<Request, 'protocolVersion' | 'packageVersion'>
+      : never
+    : never,
+  dependencies: HookEffectDependencies = {},
+): Promise<boolean> {
+  if (findSecretInValue(input) !== undefined || isAborted(dependencies.signal)
+    || dependencies.runtimeFailure !== undefined) return false;
+  const spawn = dependencies.spawn ?? runtimeSpawn();
+  if (spawn === undefined) return false;
+  const invocation = await trustedInvocation(dependencies);
+  if (invocation.argv === undefined) return false;
+  const payload = JSON.stringify({
+    protocolVersion: OPENCODE_HOOK_PROTOCOL_VERSION,
+    packageVersion: PACKAGE_VERSION,
+    ...input,
+  });
+  let child: BunChild | undefined;
+  try {
+    child = spawn([...invocation.argv, 'enno', 'compaction', '--input-json', '-'], {
+      stdin: 'pipe', stdout: 'pipe', stderr: 'pipe', cwd: input.cwd,
+    });
+    await Promise.resolve(child.stdin.write(payload));
+    await Promise.resolve(child.stdin.end());
+  } catch {
+    try { child?.kill(); } catch { /* best-effort hook cleanup */ }
+    if (child !== undefined) await settleChild(child);
+    return false;
+  }
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const stdout = readBounded(child.stdout);
+    const stderr = readBounded(child.stderr);
+    const work = Promise.all([stdout, stderr, child.exited]);
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        child!.kill();
+        reject(new Error('timeout'));
+      }, dependencies.timeoutMs ?? 1_500);
+    });
+    const cancellation = abortRace(dependencies.signal, child);
+    let settled;
+    try {
+      settled = await Promise.race(cancellation === undefined ? [work, timeout] : [work, timeout, cancellation.promise]);
+    } finally {
+      cancellation?.cleanup();
+    }
+    const [output, , code] = settled as [string, string, number];
+    if (code !== 0) return false;
+    try {
+      const parsed = JSON.parse(output) as { accepted?: unknown };
+      return parsed.accepted === true;
+    } catch {
+      return false;
+    }
+  } catch {
+    try { child.kill(); } catch { /* bounded settle below */ }
+    return false;
   } finally {
     if (timer !== undefined) clearTimeout(timer);
     await settleChild(child);

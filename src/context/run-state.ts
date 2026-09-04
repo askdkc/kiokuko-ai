@@ -370,7 +370,9 @@ export function readContextRunRetrievalState(
     integrity('Stored context run intake state is invalid');
   }
   const recommendedTags = validatedCurrentIntakeMetadata(link, session);
-  const expectedRunStatus = session.status === 'active' ? 'intake' : 'active';
+  // Akinator is advisory. An active intake session and an active execution run
+  // are a valid pair; only terminal ledger runs are excluded above.
+  const expectedRunStatus = 'active';
   if (run.status !== expectedRunStatus) {
     integrity('Context run status does not match its intake state');
   }

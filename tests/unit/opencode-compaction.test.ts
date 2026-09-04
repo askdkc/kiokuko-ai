@@ -6,6 +6,7 @@ function activeOutput(overrides: Record<string, unknown> = {}): string {
   return JSON.stringify({
     run: { runId: 'run-one' },
     project: { workspace: 'project:workspace-one' },
+    contextRevision: 7,
     executionLease: { leaseToken: 'lease-one', routeEpoch: 3 },
     ennoOduno: {
       applicable: true,
@@ -37,6 +38,8 @@ test('compaction state appends exact successful Enno continuation fields only to
   assert.match(ownerContext[0]!, /"workspace":"project:workspace-one"/u);
   assert.match(ownerContext[0]!, /"orchestrationId":"orchestration-one"/u);
   assert.match(ownerContext[0]!, /"contractRevision":4/u);
+  assert.match(ownerContext[0]!, /task_context_read.*afterContextRevision equal to contextRevision/u);
+  assert.match(ownerContext[0]!, /"contextRevision":7/u);
   assert.match(ownerContext[0]!, /"leaseToken":"lease-one"/u);
 });
 

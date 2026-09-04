@@ -1,6 +1,6 @@
 ---
 name: kiokuko-soul
-description: Use before every non-trivial Kiokuko-governed task as the mandatory first-read SOUL router. Run the Akinator intake gate before planning or implementation, then route applicable Enno-Oduno control, simple code work, general code work, and interactive UI work to the bundled specialist Skills.
+description: Use before non-trivial Kiokuko-guided work to retrieve memory and route optional Akinator and Enno-Oduno assistance without blocking coding when enrichment or recommended Skills are unavailable.
 ---
 
 <!-- KIOKUKO MANAGED STANDARD SKILL: kiokuko-soul -->
@@ -9,9 +9,9 @@ description: Use before every non-trivial Kiokuko-governed task as the mandatory
 
 ## Outcome
 
-Start every non-trivial Kiokuko-governed task by reading one stable router, resolving the Akinator intake gate, then reading the applicable compact specialist indexes and only the expert fragments required by the current role and work.
+Give the agent useful memory and a bounded plan before coding when possible, while keeping Kiokuko off the coding hot path.
 
-This Skill owns the entry sequence and routes work. Akinator is the mandatory intake state machine, not a specialist route. This Skill does not duplicate specialist instructions, invent an Enno-Oduno run, select another model, or authorize effects beyond the user request and current client permissions.
+This Skill routes memory, Akinator, and Enno-Oduno assistance. It does not authorize effects beyond the user request and current client permissions.
 
 ## Required entry
 
@@ -19,18 +19,18 @@ Read this Skill before any other bundled Kiokuko Skill.
 
 For every `task_prepare` call, set `soulRead: true` only after reading this
 complete local `SKILL.md` for the current logical request. `task_prepare` also
-requires the exact local `kiokuko-soul` capability for every task. Omission,
-false attestation, missing availability, unknown availability, aliases,
-namespaced copies, and fetched references fail closed. The attestation is an
-explicit client claim; it is not remote proof of model cognition.
+accepts the exact local `kiokuko-soul` capability when it is available. Missing
+or unknown Skills are reported as structured warnings and degraded quality;
+they do not stop coding. The attestation is a client claim, not remote proof of
+model cognition.
 
-Do not choose a planning or implementation route immediately after this read. Enter the Akinator intake gate below first. Treat every returned `nextAction`, role, required-Skill list, and stop condition as authoritative for that run.
+Use the initial lexical memory result immediately. Treat later context, questions, and Skill recommendations as advisory. Block only for safety, authorization, path or identity violations, database corruption, or stale revision/lease identity.
 
 Read the complete `SKILL.md` index for every applicable route before planning, implementation, review, or verification. Each specialist index defines versioned expert fragments. Read only fragments selected by the approved WorkUnit or concrete task risk; do not load every reference by default. Do not substitute this router's summary for a specialist core contract.
 
-## Akinator intake gate
+## Akinator advisory intake
 
-Akinator is the mandatory state machine between this SOUL read and every planning or implementation route. It applies whether or not Enno-Oduno is applicable.
+Akinator fills knowledge gaps from task and repository fingerprints. It is advisory unless an answer is required to authorize an irreversible action or enforce a safety boundary.
 
 Open the gate once for the current logical request:
 
@@ -41,15 +41,15 @@ Open the gate once for the current logical request:
 
 Follow the returned intake state without inventing missing facts:
 
-- **`needs_answer`** or **`nextAction=answer_from_evidence_or_ask_user`**: Akinator controls progress. Use its hypotheses and question purpose only to understand the distinction being tested. Answer the exact current question through `task_answer` only when the value is grounded in the user request or verified repository evidence; otherwise ask the user that question. Repeat the same capability catalog and context budget, inspect the new question and state after every answer, and continue until `ready` or `exhausted`. Do not plan, implement, verify, enter the simple/code/UI routes, or call `memory_checkpoint` while unresolved. If `ennoOduno.applicable=true`, read `kiokuko-enno-oduno` now because it owns the applicable run's intake interaction, but do not start Zenki or Goki.
+- **`needs_answer`**: preserve the unresolved question and continue coding when `continuationPolicy.codingAllowed=true`. Use `task_answer` only for a grounded answer. Ask the user only when the missing answer materially changes the task or is required for safety or authorization.
 - **`ready`**: obey top-level `nextAction`, capability requirements, memory policy, and any Enno-Oduno directive. Only then select the applicable routes below.
 - **`exhausted`**: no further Akinator question is available, but `intake.missingFields` may remain. Preserve that uncertainty, do not invent the missing answers or describe the intake as fully specified, and route only when top-level `nextAction` permits.
 
-If `task_prepare` is unavailable before a non-trivial build or debug request can obtain its policy, stop and report the unavailable policy. The sole exception is diagnosing or repairing Kiokuko itself after `task_prepare` fails before returning scoped context: continue only from repository evidence, and do not call `task_answer` or `memory_checkpoint` for that failed request.
+If `task_prepare` or Kiokuko is unavailable, continue from current repository evidence and report the missing enrichment. Do not invent memory.
 
 ## Routes
 
-Enter planning and implementation routes only after the Akinator gate reaches `ready` or `exhausted` and top-level `nextAction` permits progress. Select them from the finalized intake rather than from the raw prompt alone.
+Enter planning and implementation routes as soon as repository evidence is sufficient. Keep unresolved advisory intake visible without treating it as a gate.
 
 ### Enno-Oduno control
 
@@ -85,7 +85,7 @@ Routes compose. Read every applicable specialist index; never choose only one wh
 Use this order:
 
 1. `kiokuko-soul`;
-2. one Akinator `task_prepare`, followed by grounded `task_answer` calls until `ready` or `exhausted`;
+2. one Akinator `task_prepare`, followed by grounded `task_answer` calls when useful;
 3. `kiokuko-enno-oduno` as soon as the returned state makes Enno-Oduno control applicable, including during unresolved intake;
 4. `kiokuko-simple-work` when the finalized intake satisfies the simple-code activation boundary;
 5. `kiokuko-single-purpose-functions` for code planning or code work;
@@ -95,7 +95,7 @@ The current revision-bound directive may narrow which routes the active role per
 
 ## Availability and trust
 
-When a current directive or capability recommendation marks a routed Skill as required, stop on `required_capability_unavailable`, a blocked Enno-Oduno state, or equivalent unavailable-required-Skill result.
+When a routed Skill is unavailable, continue from repository evidence with a structured warning and `qualityState=degraded`. A blocked Enno-Oduno state is valid only for a safety or authorization boundary.
 
 Do not satisfy a required bundled Skill with a similarly named, namespaced, fetched, or reference-only Skill. Never install or execute external Skill content automatically.
 

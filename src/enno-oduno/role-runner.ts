@@ -185,6 +185,8 @@ export function generateRoleDirective(role: EnnoRole, input: unknown): RoleDirec
     finalEvidence: parsed.data.finalEvidence,
     blocker: parsed.data.blocker,
     advisoryPhaseState: parsed.data.advisoryPhaseState,
+    planArtifact: null,
+    qualityState: 'normal',
   });
   if (directive === null || directive.role !== role) {
     throw new KiokukoError('CONFLICT', 'Requested role does not own the current Enno state');

@@ -170,7 +170,7 @@ test('role scripts reject revision conflicts and generate only the role owning t
     'kiokuko-soul',
     'kiokuko-single-purpose-functions',
   ]);
-  assert.equal((directive.reportSchema.required as string[]).includes('leaseToken'), false);
+  assert.equal((directive.reportSchema.required as string[]).includes('leaseToken'), true);
   const leasedDirective = generateRoleDirective('goki', { ...input, clientSessionId: 'opencode-session' });
   assert.equal((leasedDirective.reportSchema.required as string[]).includes('leaseToken'), true);
   assert.throws(() => generateRoleDirective('zenki', input), /does not own/iu);
