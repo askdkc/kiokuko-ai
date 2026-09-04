@@ -5,6 +5,7 @@ import { withImmediateTransaction } from '../db/transaction.js';
 import { KiokukoError } from '../errors.js';
 import { detectRepositoryRoot } from '../repository/detect-root.js';
 import { canonicalContentHash } from '../serialization/validate.js';
+import { readTaskContextRevisions, type TaskContextRevision } from '../context/revisions.js';
 import { PACKAGE_VERSION } from '../package-version.js';
 import { OPENCODE_HOOK_PROTOCOL_VERSION } from '../opencode/hook-protocol.js';
 import { directiveForRun } from './directives.js';
@@ -104,14 +105,35 @@ function routeCandidateInTransaction(
   sessionId: string,
 ): CandidateRow {
   if (candidate.clientKind === client && candidate.clientSessionId === sessionId) return candidate;
-  const activeLease = database.prepare(`
-    SELECT owner_client_kind AS clientKind, owner_session_id AS sessionId,
-           lease_expires_at AS expiresAt
-    FROM enno_execution_leases WHERE run_id = ?
-  `).get<{ clientKind: EnnoClient; sessionId: string; expiresAt: string }>(candidate.runId);
-  if (activeLease !== undefined && activeLease.expiresAt > new Date().toISOString()
-    && (activeLease.clientKind !== client || activeLease.sessionId !== sessionId)) {
+  const conflictingLease = database.prepare(`
+    SELECT 1 AS present
+    FROM enno_execution_leases
+    WHERE run_id = ? AND lease_expires_at > ?
+      AND (owner_client_kind <> ? OR owner_session_id <> ?)
+      AND NOT (? IS NULL AND owner_client_kind = ? AND owner_session_id = ?)
+    LIMIT 1
+  `).get<{ present: number }>(
+    candidate.runId,
+    new Date().toISOString(),
+    client,
+    sessionId,
+    candidate.clientSessionId,
+    client,
+    candidate.orchestrationId,
+  );
+  if (conflictingLease !== undefined) {
     throw new KiokukoError('CONFLICT', 'An active Enno WorkUnit lease prevents automatic rerouting');
+  }
+  // A plan submitted through MCP may start before OpenCode supplies a concrete
+  // host session. Such leases are owned provisionally by the orchestration
+  // session. The first matching host continuation atomically revokes them,
+  // advances routeEpoch below, and receives fresh tokens. A lease owned by any
+  // concrete session remains a hard reroute fence.
+  if (candidate.clientSessionId === null) {
+    database.prepare(`
+      DELETE FROM enno_execution_leases
+      WHERE run_id = ? AND owner_client_kind = ? AND owner_session_id = ?
+    `).run(candidate.runId, client, candidate.orchestrationId);
   }
   const updated = database.prepare(`
     UPDATE enno_contracts
@@ -181,8 +203,9 @@ function continuationPrompt(
   resumeToken: string,
   routeEpoch: number,
   executionLease: EnnoExecutionLease | null,
+  lateContext: TaskContextRevision | null,
 ): string {
-  return `Enno-Oduno requires continuation. Follow this run-bound role directive exactly and do not claim completion early. Use the supplied resumeToken and routeEpoch for the next Enno operation; do not reuse credentials from an older route:\n${JSON.stringify({ resumeToken, routeEpoch, executionLease, directive })}`;
+  return `Enno-Oduno requires continuation. Follow this run-bound role directive exactly and do not claim completion early. Use the supplied resumeToken and routeEpoch for the next Enno operation; do not reuse credentials from an older route. Late context is advisory evidence read only at this idle boundary:\n${JSON.stringify({ resumeToken, routeEpoch, executionLease, directive, lateContext })}`;
 }
 
 function issueResumeTokenInTransaction(
@@ -384,7 +407,12 @@ export function decideAdapterContinuation(database: SqliteDatabase, client: stri
     const executionLease = receipt.allowed && directive.role === 'goki' && directive.workUnit !== null
       ? claimExecutionLeaseInTransaction(database, snapshot, directive.workUnit.id, { clientKind: supportedClient, sessionId })
       : null;
-    return { kind: 'continuation', snapshot, directive, claimed: receipt.allowed, replayed: receipt.replayed, resumeToken, executionLease } as const;
+    const lateContext = readTaskContextRevisions(database, {
+      runId: snapshot.runId,
+      afterContextRevision: 1,
+      limit: 100,
+    }).at(-1) ?? null;
+    return { kind: 'continuation', snapshot, directive, claimed: receipt.allowed, replayed: receipt.replayed, resumeToken, executionLease, lateContext } as const;
   });
   if (continuation.kind === 'none') {
     return {
@@ -444,6 +472,7 @@ export function decideAdapterContinuation(database: SqliteDatabase, client: stri
       continuation.resumeToken!,
       snapshot.routeEpoch ?? 0,
       continuation.executionLease,
+      continuation.lateContext,
     ),
     warning: null,
     resumeToken: continuation.resumeToken,

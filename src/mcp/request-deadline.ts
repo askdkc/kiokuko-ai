@@ -11,6 +11,7 @@ export const MCP_MUTATION_TIMEOUT_MS = 60_000;
 export type McpToolOperation =
   | 'task_prepare'
   | 'task_answer'
+  | 'task_context_read'
   | 'memory_checkpoint'
   | 'curator_check'
   | 'curator_globalize'
@@ -20,6 +21,7 @@ export type McpToolOperation =
   | 'enno_plan_submit'
   | 'enno_answer'
   | 'enno_work_report'
+  | 'enno_work_claim'
   | 'enno_verify_prepare'
   | 'enno_finish'
   | 'enno_meditation_submit';
@@ -95,6 +97,7 @@ const MUTATION_OPERATIONS: ReadonlySet<McpToolOperation> = new Set([
   'enno_plan_submit',
   'enno_answer',
   'enno_work_report',
+  'enno_work_claim',
   'enno_verify_prepare',
   'enno_finish',
   'enno_meditation_submit',

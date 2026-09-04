@@ -15,6 +15,11 @@ export interface OperatorRunSummary {
   readonly nextAction: string | null;
   readonly blocker: string | null;
   readonly revision: number | null;
+  readonly contextRevision: number | null;
+  readonly qualityState: 'normal' | 'degraded';
+  readonly planArtifactState: 'pending' | 'published' | 'failed' | null;
+  readonly pendingJobs: number;
+  readonly incompleteCompactions: number;
 }
 
 export interface OperatorOverview {
@@ -60,17 +65,20 @@ export interface OperatorSkillSnapshot {
 function roleForStatus(status: string): OperatorRunSummary['currentRole'] {
   if (status === 'zenki_planning' || status === 'needs_confirmation') return 'zenki';
   if (status === 'goki_executing') return 'goki';
-  if (status === 'intake' || status === 'enno_verifying' || status === 'completed' || status === 'blocked' || status === 'cancelled') return 'enno-oduno';
+  if (status === 'intake' || status === 'oduno_ideal' || status === 'enno_verifying'
+    || status === 'oduno_meditation' || status === 'completed' || status === 'blocked' || status === 'cancelled') return 'enno-oduno';
   return null;
 }
 
 function nextActionForStatus(status: string): string | null {
   const actions: Record<string, string> = {
     intake: 'answer_intake',
+    oduno_ideal: 'submit_ideal',
     zenki_planning: 'submit_plan',
     needs_confirmation: 'ask_user_confirmation',
     goki_executing: 'execute_work_unit',
     enno_verifying: 'run_final_verification',
+    oduno_meditation: 'submit_meditation',
     completed: 'complete',
     blocked: 'report_blocker',
     cancelled: 'complete',
@@ -78,9 +86,53 @@ function nextActionForStatus(status: string): string | null {
   return actions[status] ?? null;
 }
 
-function contractSummary(database: SqliteDatabase, runId: string): Pick<OperatorRunSummary, 'blocker' | 'revision'> {
-  const row = database.prepare('SELECT blocker, revision FROM enno_contracts WHERE run_id = ?').get<{ blocker: string | null; revision: number }>(runId);
-  return row === undefined ? { blocker: null, revision: null } : { blocker: row.blocker, revision: row.revision };
+function contractSummary(database: SqliteDatabase, runId: string): {
+  blocker: string | null;
+  revision: number | null;
+  status: string | null;
+  contextRevision: number | null;
+  qualityState: 'normal' | 'degraded';
+  planArtifactState: 'pending' | 'published' | 'failed' | null;
+  pendingJobs: number;
+  incompleteCompactions: number;
+} {
+  const row = database.prepare(`
+    SELECT ec.blocker, ec.revision, COALESCE(ec.phase, ec.status) AS status,
+           (SELECT MAX(context_revision) FROM task_context_revisions WHERE run_id = ec.run_id) AS contextRevision,
+           (SELECT state FROM enno_plan_artifacts
+             WHERE run_id = ec.run_id AND contract_revision = ec.revision) AS planArtifactState,
+           (SELECT COUNT(*) FROM orchestration_jobs
+             WHERE run_id = ec.run_id AND state IN ('pending', 'leased', 'failed', 'abandoned')) AS pendingJobs,
+           (SELECT COUNT(*) FROM compaction_cycles
+             WHERE run_id = ec.run_id AND state IN ('captured', 'compacted', 'queued')) AS incompleteCompactions,
+           EXISTS(
+             SELECT 1 FROM ledger_events
+             WHERE run_id = ec.run_id AND event_type = 'enno.quality_degraded'
+               AND CAST(json_extract(payload_json, '$.contractRevision') AS INTEGER) = ec.revision
+           ) AS degraded
+    FROM enno_contracts AS ec WHERE ec.run_id = ?
+  `).get<{
+    blocker: string | null;
+    revision: number;
+    status: string;
+    contextRevision: number | null;
+    planArtifactState: 'pending' | 'published' | 'failed' | null;
+    pendingJobs: number;
+    incompleteCompactions: number;
+    degraded: number;
+  }>(runId);
+  return row === undefined
+    ? { blocker: null, revision: null, status: null, contextRevision: null, qualityState: 'normal', planArtifactState: null, pendingJobs: 0, incompleteCompactions: 0 }
+    : {
+        blocker: row.blocker,
+        revision: row.revision,
+        status: row.status,
+        contextRevision: row.contextRevision,
+        qualityState: row.degraded === 1 || row.planArtifactState === 'failed' ? 'degraded' : 'normal',
+        planArtifactState: row.planArtifactState,
+        pendingJobs: row.pendingJobs,
+        incompleteCompactions: row.incompleteCompactions,
+      };
 }
 
 function runSummary(database: SqliteDatabase, row: { runId: string; status: string; title: string | null; updatedAt: string }): OperatorRunSummary {
@@ -90,10 +142,15 @@ function runSummary(database: SqliteDatabase, row: { runId: string; status: stri
     status: row.status,
     title: row.title,
     updatedAt: row.updatedAt,
-    currentRole: roleForStatus(row.status),
-    nextAction: nextActionForStatus(row.status),
+    currentRole: roleForStatus(contract.status ?? row.status),
+    nextAction: nextActionForStatus(contract.status ?? row.status),
     blocker: contract.blocker,
     revision: contract.revision,
+    contextRevision: contract.contextRevision,
+    qualityState: contract.qualityState,
+    planArtifactState: contract.planArtifactState,
+    pendingJobs: contract.pendingJobs,
+    incompleteCompactions: contract.incompleteCompactions,
   });
 }
 

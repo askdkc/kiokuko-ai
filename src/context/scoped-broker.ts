@@ -162,7 +162,11 @@ interface PreparedScopedContext {
   selectionWorkspaces: string[];
   pendingDelivery: ScopedDeliveryRequest | null;
   run: ScopedRunContext | null;
-  projectState: { project: ResolvedProjectWorkspace; fingerprint: ProjectFingerprint } | null;
+  projectState: {
+    project: ResolvedProjectWorkspace;
+    fingerprint: ProjectFingerprint;
+    reparseFingerprint: boolean;
+  } | null;
 }
 
 function semanticQueryIdentity(runtime: HybridSearchRuntime): Record<string, unknown> | null {
@@ -634,15 +638,18 @@ async function prepareScopedContext(
     && raw.fingerprint.manifestDigest !== manifestSnapshot.manifestDigest) {
     throw new KiokukoError('CONFLICT', 'Project manifest changed while task context was being prepared');
   }
-  const fingerprint = project === undefined || manifestSnapshot === undefined
+  // task_prepare may deliberately supply an empty, digest-bound fingerprint
+  // after a malformed manifest. Re-parsing here would turn an advisory
+  // enrichment failure back into a coding gate. The fresh manifest digest
+  // comparison above remains the synchronous race/identity fence.
+  const fingerprint = raw.fingerprint ?? (project === undefined || manifestSnapshot === undefined
     ? undefined
-    : resolveProjectFingerprint(database, project, manifestSnapshot);
-  if (raw.fingerprint !== undefined
-    && fingerprint !== undefined
-    && canonicalContentHash(raw.fingerprint) !== canonicalContentHash(fingerprint)) {
-    throw new KiokukoError('CONFLICT', 'Project manifest changed while task context was being prepared');
-  }
-  const projectState = project === undefined || fingerprint === undefined ? null : { project, fingerprint };
+    : resolveProjectFingerprint(database, project, manifestSnapshot));
+  const projectState = project === undefined || fingerprint === undefined ? null : {
+    project,
+    fingerprint,
+    reparseFingerprint: raw.fingerprint === undefined,
+  };
   ensureGlobalWorkspace(database);
   const limit = raw.limit ?? 20;
   const characterBudget = raw.characterBudget ?? SCOPED_CONTEXT_DEFAULT_CHARACTER_BUDGET;
@@ -767,14 +774,16 @@ function assertPreparedScopedState(database: SqliteDatabase, prepared: PreparedS
     if (manifestSnapshot.manifestDigest !== prepared.projectState.fingerprint.manifestDigest) {
       throw new KiokukoError('CONFLICT', 'Scoped context project state changed after ranking');
     }
-    const currentFingerprint = resolveProjectFingerprint(
-      database,
-      prepared.projectState.project,
-      manifestSnapshot,
-      { readOnly: true },
-    );
-    if (canonicalContentHash(currentFingerprint) !== canonicalContentHash(prepared.projectState.fingerprint)) {
-      throw new KiokukoError('CONFLICT', 'Scoped context project state changed after ranking');
+    if (prepared.projectState.reparseFingerprint) {
+      const currentFingerprint = resolveProjectFingerprint(
+        database,
+        prepared.projectState.project,
+        manifestSnapshot,
+        { readOnly: true },
+      );
+      if (canonicalContentHash(currentFingerprint) !== canonicalContentHash(prepared.projectState.fingerprint)) {
+        throw new KiokukoError('CONFLICT', 'Scoped context project state changed after ranking');
+      }
     }
   }
   if (prepared.run !== null) assertPreparedScopedRun(database, prepared.run);

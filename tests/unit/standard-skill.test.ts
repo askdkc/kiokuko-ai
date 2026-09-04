@@ -114,7 +114,8 @@ test('bundles every managed standard skill from a fixed manifest', async () => {
   const ennoSkill = ennoFiles.find((file) => file.relativePath === 'SKILL.md')?.content ?? '';
   assert.match(ennoSkill, new RegExp(`^---\\nname: ${STANDARD_ENNO_SKILL_NAME}\\ndescription: [^\\n]+\\n---\\n`));
   assert.match(ennoSkill, /Enno-Oduno alone owns this state machine/);
-  assert.match(ennoSkill, /Do not start Zenki or Goki/);
+  assert.match(ennoSkill, /General plan confirmation is advisory/);
+  assert.match(ennoSkill, /Attempt limits, verifier failures, role-script failures, missing Skills, and model fallback.*do not stop the agent/su);
   assert.match(ennoSkill, /Never select a repository-wide latest run/);
   assert.match(ennoSkill, /optional routing metadata, not authorization ownership/u);
   assert.match(ennoSkill, /leaves the run active for another local project client/u);
@@ -145,14 +146,14 @@ test('bundles every managed standard skill from a fixed manifest', async () => {
   const soulSkill = soulFiles.find((file) => file.relativePath === 'SKILL.md')?.content ?? '';
   assert.match(soulSkill, new RegExp(`^---\\nname: ${STANDARD_SOUL_SKILL_NAME}\\ndescription: [^\\n]+\\n---\\n`));
   assert.match(soulSkill, /Read this Skill before any other bundled Kiokuko Skill/);
-  assert.match(soulSkill, /Akinator is the mandatory state machine between this SOUL read and every planning or implementation route/);
-  assert.match(soulSkill, /It applies whether or not Enno-Oduno is applicable/);
+  assert.match(soulSkill, /Akinator fills knowledge gaps from task and repository fingerprints/);
+  assert.match(soulSkill, /advisory unless an answer is required to authorize an irreversible action or enforce a safety boundary/);
   assert.match(soulSkill, /Call `task_prepare` at most once.*complete capability catalog available in the current client/su);
-  assert.match(soulSkill, /`needs_answer`.*Akinator controls progress.*Do not plan, implement, verify, enter the simple\/code\/UI routes, or call `memory_checkpoint` while unresolved/su);
-  assert.match(soulSkill, /Repeat the same capability catalog and context budget.*continue until `ready` or `exhausted`/su);
-  assert.match(soulSkill, /If `ennoOduno\.applicable=true`, read `kiokuko-enno-oduno` now.*do not start Zenki or Goki/su);
+  assert.match(soulSkill, /`needs_answer`.*continue coding when `continuationPolicy\.codingAllowed=true`/su);
+  assert.match(soulSkill, /If `task_prepare` or Kiokuko is unavailable, continue from current repository evidence/);
+  assert.match(soulSkill, /`kiokuko-enno-oduno` as soon as the returned state makes Enno-Oduno control applicable, including during unresolved intake/);
   assert.match(soulSkill, /`exhausted`.*`intake\.missingFields` may remain.*do not invent the missing answers/su);
-  assert.match(soulSkill, /Enter planning and implementation routes only after the Akinator gate reaches `ready` or `exhausted` and top-level `nextAction` permits progress/);
+  assert.match(soulSkill, /Enter planning and implementation routes as soon as repository evidence is sufficient/);
   assert.match(soulSkill, /Do not invent a run, role, revision, WorkUnit, or state transition/);
   assert.match(soulSkill, /Read and apply `kiokuko-simple-work` when either condition is true/u);
   assert.match(soulSkill, /introduces no new architecture, dependency, data migration, public protocol, security or authorization policy, or cross-system orchestration/u);
@@ -167,10 +168,10 @@ test('bundles every managed standard skill from a fixed manifest', async () => {
     soulSkill,
     /1\. `kiokuko-soul`;[\s\S]*2\. one Akinator `task_prepare`[\s\S]*3\. `kiokuko-enno-oduno`[\s\S]*4\. `kiokuko-simple-work`[\s\S]*5\. `kiokuko-single-purpose-functions`[\s\S]*6\. `kiokuko-ui-design-soul`/u,
   );
-  assert.match(SOUL_ROUTING_ENTRY_CONTRACT, /Akinator is the mandatory intake state machine before every planning or implementation route/);
-  assert.match(SOUL_ROUTING_ENTRY_CONTRACT, /whether or not Enno-Oduno applies/);
-  assert.match(SOUL_ROUTING_ENTRY_CONTRACT, /do not plan, implement, verify, enter simple\/code\/UI routes, or checkpoint while `intake\.status=needs_answer`/);
-  assert.match(SOUL_ROUTING_ENTRY_CONTRACT, /Route only after intake reaches `ready` or `exhausted` and top-level `nextAction` permits progress/);
+  assert.match(SOUL_ROUTING_ENTRY_CONTRACT, /memory-and-plan sidecar, not a coding gate/);
+  assert.match(SOUL_ROUTING_ENTRY_CONTRACT, /unresolved advisory intake, missing Skills, failed enrichment, model fallback, verifier disagreement, and meditation delay/);
+  assert.match(SOUL_ROUTING_ENTRY_CONTRACT, /Only safety, missing authorization for an irreversible effect, path or identity violations, database corruption, and stale revision or lease identity may block adoption/);
+  assert.match(SOUL_ROUTING_ENTRY_CONTRACT, /`memory_checkpoint` may preserve the current profile and unresolved items/);
 });
 
 test('the packaged skill sources remain readable at their repository locations', async () => {

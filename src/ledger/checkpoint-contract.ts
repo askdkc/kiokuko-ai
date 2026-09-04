@@ -4,22 +4,22 @@ import { isWellFormedUnicode } from '../serialization/boundary-json.js';
 export const CHECKPOINT_RUN_NOT_ACTIVE_CODE = 'CHECKPOINT_RUN_NOT_ACTIVE' as const;
 
 export const CHECKPOINT_INTAKE_ERROR_MESSAGE =
-  'Checkpoint is blocked while the run awaits intake answers. Complete task_answer before retrying.';
+  'Checkpoint could not bind to an active run.';
 
 export const CHECKPOINT_TERMINAL_ERROR_MESSAGE =
   'Checkpoint is blocked because the run is terminal.';
 
 export const TASK_ANSWER_CONTRACT_FRAGMENT =
-  'Use the exact current question. If question.options is non-null, value must be exactly one returned option. If options is null, provide grounded non-empty text. Inspect the latest intake.question after every response. Repeat until intake.status is ready or exhausted; do not checkpoint while needs_answer. Not every intake question is a one-word enum: target and expected require grounded free text.';
+  'Use the exact current question. If question.options is non-null, value must be exactly one returned option. If options is null, provide grounded non-empty text. Answers are advisory enrichment: unresolved questions do not suspend coding. Preserve unresolved fields and evidence boundaries at checkpoint.';
 
 export const CHECKPOINT_CONTRACT_FRAGMENT =
-  'For a run-bound checkpoint, `runId` and `outcome` are required, the run must be active, and at least one of memories, feedback, or non-empty evidence must be supplied. outcome alone is an invalid empty checkpoint. Do not invent evidence fields such as checks; use commands and/or tests. Without `runId`, provide at least one memory. Do not supply `outcome`, `deliveryId`, `feedback`, or `evidence`. When `runId` is supplied, the run must be active. Do not call `memory_checkpoint` while `task_prepare` or `task_answer` reports `needs_answer` or `nextAction=answer_from_evidence_or_ask_user`; complete the required `task_answer` loop first. A successful terminal checkpoint is allowed at most once per logical request. A rejected precondition does not count as that successful checkpoint and may be retried only after the indicated run-state change.';
+  'For a run-bound checkpoint, `runId` and `outcome` are required, the run must be active, and at least one of memories, feedback, or non-empty evidence must be supplied. outcome alone is an invalid empty checkpoint. Do not invent evidence fields such as checks; use commands and/or tests. Without `runId`, provide at least one memory and omit run-bound fields. An unresolved advisory intake question does not block checkpointing: record the current profile, unresolved items, and evidence boundary. A successful terminal checkpoint is allowed at most once per logical request.';
 
 export const CHECKPOINT_TOOL_DESCRIPTION =
   `Store one final batch of durable facts, decisions, lessons, preferences, or references as untrusted candidate memory. ${CHECKPOINT_CONTRACT_FRAGMENT} After a successful terminal checkpoint, call no more tools and return the final response. Defaults to the current project. Use Curator for learned knowledge that may become global; choose direct global scope only when the user explicitly requested it. Secret-like content is rejected.`;
 
 export const CHECKPOINT_RUN_ID_DESCRIPTION =
-  'Exact run.runId returned by task_prepare. The run must have reached active; intake/needs_answer runs must complete task_answer first.';
+  'Exact run.runId returned by task_prepare. The run must be active; advisory intake questions may remain unresolved.';
 
 export const CHECKPOINT_OUTCOMES = ['completed', 'failed', 'cancelled', 'interrupted'] as const;
 export type CheckpointOutcome = (typeof CHECKPOINT_OUTCOMES)[number];

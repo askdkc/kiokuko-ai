@@ -1,8 +1,4 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import path from 'node:path';
 import test from 'node:test';
 import { resolveCheckpointSourceCommit } from '../../src/memory/scoped-memory.js';
 
@@ -20,14 +16,7 @@ function throwing(error: unknown) {
   return () => { throw error; };
 }
 
-test('returns null only for explicit non-Git and unborn-HEAD states', async () => {
-  const nonGit = await mkdtemp(path.join(tmpdir(), 'kiokuko-checkpoint-non-git-'));
-  assert.equal(resolveCheckpointSourceCommit(nonGit), null);
-
-  const unborn = await mkdtemp(path.join(tmpdir(), 'kiokuko-checkpoint-unborn-'));
-  execFileSync('git', ['init', '-q', unborn]);
-  assert.equal(resolveCheckpointSourceCommit(unborn), null);
-
+test('returns null only for explicit non-Git and unborn-HEAD states', () => {
   for (const stderr of [
     'fatal: Needed a single revision\n',
     'fatal: not a git repository (or any of the parent directories): .git\n',

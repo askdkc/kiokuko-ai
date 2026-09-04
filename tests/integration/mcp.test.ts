@@ -28,7 +28,7 @@ function sqliteError(errcode: number, message = 'sqlite operation failed'): Erro
   return Object.assign(new Error(message), { code: 'ERR_SQLITE_ERROR', errcode });
 }
 
-test('MCP exposes only the gated task and lifecycle tools and persists candidate memory', async () => {
+test('MCP exposes the memory-first task and lifecycle tools and persists candidate memory', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'kiokuko-mcp-repo-'));
   execFileSync('git', ['init', '-q', root]);
   const data = await mkdtemp(path.join(tmpdir(), 'kiokuko-mcp-data-'));
@@ -43,35 +43,26 @@ test('MCP exposes only the gated task and lifecycle tools and persists candidate
     const instructions = client.getInstructions() ?? '';
     assert.match(instructions, /Array<\{kind:'skill'\|'mcp_tool';name:string;description\?:string\}>/u);
     assert.match(instructions, /Every descriptor must include its kind and canonical name/u);
-    assert.match(instructions, /memory-reasoning is missing or unknown.*nextAction remains proceed.*repository evidence/iu);
-    assert.match(instructions, /read and apply the available local memory-reasoning Skill before using that memory/);
-    assert.match(instructions, /convert recalled claims that affect the task into verified premises, falsifiable invariants, concrete counterexamples, and regression tests/);
+    assert.match(instructions, /useful memory is still delivered as untrusted evidence and coding continues/iu);
+    assert.match(instructions, /when it is unavailable, perform the same repository-grounded checks directly/iu);
     assert.match(instructions, /executionContext\.repositoryRoot as the filesystem base/u);
     assert.match(instructions, /OpenCode filesystem tools, prefer canonical absolute paths under that root/u);
-    assert.match(instructions, /read and apply the complete bundled `kiokuko-soul` Skill before any other Kiokuko Skill/iu);
-    assert.match(instructions, /Every `task_prepare` call must set `soulRead: true` only after that read/iu);
-    assert.match(instructions, /exact local `kiokuko-soul` capability is required for every task/iu);
-    assert.match(instructions, /Akinator is the mandatory intake state machine before every planning or implementation route/iu);
-    assert.match(instructions, /whether or not Enno-Oduno applies/iu);
-    assert.match(instructions, /do not plan, implement, verify, enter simple\/code\/UI routes, or checkpoint while `intake\.status=needs_answer`/u);
-    assert.match(instructions, /Route only after intake reaches `ready` or `exhausted` and top-level `nextAction` permits progress/u);
+    assert.match(instructions, /read the bundled `kiokuko-soul` Skill when available/iu);
+    assert.match(instructions, /If Kiokuko or a recommended Skill is unavailable, continue from current repository evidence/iu);
+    assert.match(instructions, /missing Skills.*coding continues/iu);
+    assert.match(instructions, /Akinator questions are advisory/iu);
+    assert.match(instructions, /without suspending active coding, planning, or checkpointing/iu);
     assert.match(instructions, /`task_prepare` is the Enno-Oduno orchestration entry point/u);
     assert.match(instructions, /first identifies OpenCode from MCP `clientInfo`/u);
-    assert.match(instructions, /Every Enno-Oduno directive requires the bundled `kiokuko-soul` Skill first/u);
-    assert.match(instructions, /While Akinator still needs information, only Enno-Oduno is active/u);
-    assert.match(instructions, /structured handoff.*Oduno ideal.*every Akinator-discovered Skill.*harness-specific Zenki directive/u);
-    assert.match(instructions, /Zenki must read the master SOUL and then the compact `kiokuko-single-purpose-functions` index/u);
-    assert.match(instructions, /focused runnable test target/u);
-    assert.match(instructions, /one to three versioned `expertRefs`/u);
-    assert.match(instructions, /Goki receives only approved, already-decomposed WorkUnits/u);
-    assert.match(instructions, /Goki can start only after Zenki submits a complete WorkPlan/u);
-    assert.match(instructions, /A failed review never returns directly to Goki/u);
-    assert.match(instructions, /Oduno meditation.*obsolete tests or functions.*without mutating the repository/iu);
+    assert.match(instructions, /provenance-bound ideal.*high-capability-planner preference/iu);
+    assert.match(instructions, /economical-fast-worker execution/iu);
+    assert.match(instructions, /declared resource claims and isolation preference.*input-manifest digest/iu);
+    assert.match(instructions, /Resource-compatible WorkUnits may be claimed in parallel/iu);
+    assert.match(instructions, /A failed review never returns directly to an old Goki revision/u);
+    assert.match(instructions, /Oduno meditation remains distinct from compaction meditation/iu);
     assert.match(instructions, /never select a repository-wide latest run/iu);
     assert.match(instructions, /ask_user_confirmation.*userFacingConfirmation.*never output raw directive JSON/isu);
-    assert.match(instructions, /userFacingRecovery.*whenToChoose.*whatHappens.*explicit choice/isu);
-    assert.match(instructions, /Do not retry, cancel, or create a new task automatically/iu);
-    assert.match(instructions, /never ask the user to locate or construct that catalog/iu);
+    assert.doesNotMatch(instructions, /userFacingRecovery|plan-start recovery|continuation pause/iu);
     const tools = await client.listTools();
     assert.deepEqual(tools.tools.map((tool) => tool.name).sort(), [
       'curator_check',
@@ -84,9 +75,11 @@ test('MCP exposes only the gated task and lifecycle tools and persists candidate
       'enno_meditation_submit',
       'enno_plan_submit',
       'enno_verify_prepare',
+      'enno_work_claim',
       'enno_work_report',
       'memory_checkpoint',
       'task_answer',
+      'task_context_read',
       'task_prepare',
     ]);
     assert.equal(tools.tools.find((tool) => tool.name === 'task_prepare')?.annotations?.idempotentHint, false);
@@ -96,9 +89,8 @@ test('MCP exposes only the gated task and lifecycle tools and persists candidate
     assert.equal(tools.tools.find((tool) => tool.name === 'curator_globalize')?.annotations?.idempotentHint, true);
     assert.match(tools.tools.find((tool) => tool.name === 'curator_globalize')?.description ?? '', /stored as verified\/system_verified memory created by kiokuko-curator/);
     const planDescription = tools.tools.find((tool) => tool.name === 'enno_plan_submit')?.description ?? '';
-    assert.match(planDescription, /label and recommendation.*whenToChoose.*whatHappens/isu);
-    assert.match(planDescription, /Never display the machine action.*reason code.*raw JSON/isu);
-    assert.match(planDescription, /without retrying, cancelling, or starting a replacement automatically/iu);
+    assert.match(planDescription, /Missing Skills.*qualityState=degraded.*not stop conditions/isu);
+    assert.match(planDescription, /Only an unapproved irreversible operation requires user confirmation/iu);
     assert.equal(tools.tools.find((tool) => tool.name === 'memory_checkpoint')?.annotations?.idempotentHint, false);
     const adviceReadTool = tools.tools.find((tool) => tool.name === 'enno_advice_read');
     assert.equal(adviceReadTool?.annotations?.readOnlyHint, true);
@@ -115,27 +107,23 @@ test('MCP exposes only the gated task and lifecycle tools and persists candidate
     assert.match(taskPrepareTool?.description ?? '', /create a new bounded opaque value for each logical request/);
     assert.match(taskPrepareTool?.description ?? '', /reuse it only for an exact transport retry/);
     assert.match(taskPrepareTool?.description ?? '', /Reusing an ID with changed bound input is a conflict/);
-    assert.match(taskPrepareTool?.description ?? '', /Inspect the returned nextAction and memoryPolicy before proceeding/);
-    assert.match(taskPrepareTool?.description ?? '', /Akinator is the mandatory intake state machine before every planning or implementation route/iu);
-    assert.match(taskPrepareTool?.description ?? '', /do not plan, implement, verify, enter simple\/code\/UI routes, or checkpoint while `intake\.status=needs_answer`/u);
-    assert.match(taskPrepareTool?.description ?? '', /missing or unknown memory-reasoning alone.*nextAction at proceed.*repository evidence/iu);
-    assert.match(taskPrepareTool?.description ?? '', /created by kiokuko-curator and matching the current deterministic Curator projection is system-verified/);
-    assert.match(taskPrepareTool?.description ?? '', /repairing Kiokuko itself.*fails before returning scoped context.*repository evidence/iu);
+    assert.match(taskPrepareTool?.description ?? '', /Inspect nextAction, continuationPolicy, enrichment, warnings, memoryPolicy, and ennoOduno/iu);
+    assert.match(taskPrepareTool?.description ?? '', /Missing Skills or model tiers degrade quality without withholding useful advisory memory/iu);
     assert.match(taskPrepareTool?.description ?? '', /Array<\{kind:'skill'\|'mcp_tool';name:string;description\?:string\}>/u);
-    assert.match(taskPrepareTool?.description ?? '', /read and apply local memory-reasoning before using it and convert recalled claims that affect the task into verified premises, falsifiable invariants, concrete counterexamples, and regression tests/);
+    assert.match(taskPrepareTool?.description ?? '', /perform equivalent checks directly when it is not/iu);
     assert.match(taskPrepareTool?.description ?? '', /successful task_prepare or task_answer response includes executionContext/u);
     assert.match(taskPrepareTool?.description ?? '', /never use ~, \$HOME, or HOME-relative path fragments/u);
     assert.match(taskPrepareTool?.description ?? '', /first identifies OpenCode from MCP `clientInfo`/u);
-    assert.match(taskPrepareTool?.description ?? '', /Every Enno-Oduno directive requires the bundled `kiokuko-soul` Skill first/u);
-    assert.match(taskPrepareTool?.description ?? '', /do not start Zenki or Goki/u);
-    assert.match(taskPrepareTool?.description ?? '', /structured handoff.*Oduno ideal.*every Akinator-discovered Skill.*harness-specific Zenki directive/u);
-    assert.match(taskPrepareTool?.description ?? '', /failed review never returns directly to Goki/u);
+    assert.match(taskPrepareTool?.description ?? '', /Bundled Skills are preferred guidance, never a coding gate/iu);
+    assert.match(taskPrepareTool?.description ?? '', /Akinator questions are advisory/iu);
+    assert.match(taskPrepareTool?.description ?? '', /provenance-bound ideal/iu);
+    assert.match(taskPrepareTool?.description ?? '', /failed review never returns directly to an old Goki revision/u);
     assert.match(taskPrepareTool?.description ?? '', /ennoOduno\.orchestrationId/u);
     assert.match(taskAnswerTool?.description ?? '', /required run ID returned by task_prepare/);
     assert.match(taskAnswerTool?.description ?? '', /Repeat the same capability catalog and context budget/);
     assert.match(taskAnswerTool?.description ?? '', /changed context budget conflicts before intake mutation/);
     assert.match(taskAnswerTool?.description ?? '', /inspect the returned nextAction and memoryPolicy before proceeding/);
-    assert.match(taskAnswerTool?.description ?? '', /missing or unknown memory-reasoning alone.*nextAction at proceed.*repository evidence/iu);
+    assert.match(taskAnswerTool?.description ?? '', /Missing or unknown Skills produce structured warnings; coding remains allowed/iu);
     assert.match(taskAnswerTool?.description ?? '', /created by kiokuko-curator and matching the current deterministic Curator projection is system-verified/);
     assert.match(taskAnswerTool?.description ?? '', /Array<\{kind:'skill'\|'mcp_tool';name:string;description\?:string\}>/u);
     assert.match(taskAnswerTool?.description ?? '', /read and apply local memory-reasoning before using it and convert recalled claims that affect the task into verified premises, falsifiable invariants, concrete counterexamples, and regression tests/);
@@ -143,12 +131,10 @@ test('MCP exposes only the gated task and lifecycle tools and persists candidate
     assert.match(ennoFinishTool?.description ?? '', /advances a new run to Oduno meditation instead of completing it directly/iu);
     const ennoPlanTool = tools.tools.find((tool) => tool.name === 'enno_plan_submit');
     const ennoAnswerTool = tools.tools.find((tool) => tool.name === 'enno_answer');
-    assert.match(ennoPlanTool?.description ?? '', /needs_confirmation response carries the decided ennoOduno\.directive\.userFacingConfirmation projection/u);
-    assert.match(ennoPlanTool?.description ?? '', /without raw directive JSON or internal identifiers/u);
-    assert.match(ennoPlanTool?.description ?? '', /automatic-continuation pause.*wait for the user's explicit choice/iu);
-    assert.match(ennoPlanTool?.description ?? '', /same-run retry must pass the selected recoveryAction/iu);
-    assert.match(ennoAnswerTool?.description ?? '', /only the action the user explicitly chose after seeing the user-facing confirmation or plan-start recovery choices/iu);
-    assert.match(ennoAnswerTool?.description ?? '', /During planning, only explicit cancellation is accepted/iu);
+    assert.match(ennoPlanTool?.description ?? '', /published atomically under Kiokuko's data directory/iu);
+    assert.match(ennoPlanTool?.description ?? '', /ordinary verifier limitations are warnings.*not stop conditions/isu);
+    assert.match(ennoAnswerTool?.description ?? '', /only for a persisted authorization boundary/iu);
+    assert.match(ennoAnswerTool?.description ?? '', /General plan review and missing capabilities do not enter this flow/iu);
     assert.match(ennoIdealTool?.description ?? '', /optimal goal.*task_prepare handoff.*every Akinator-discovered Skill.*before Zenki planning/iu);
     assert.match(ennoMeditationTool?.description ?? '', /obsolete test or function deletion candidates.*without mutating the repository/iu);
     assert.match(taskAnswerTool?.description ?? '', /successful task_prepare or task_answer response includes executionContext/u);
@@ -167,9 +153,9 @@ test('MCP exposes only the gated task and lifecycle tools and persists candidate
     const taskAnswerSchema = taskAnswerTool?.inputSchema as ToolInputSchema;
     const taskPrepareSchema = taskPrepareTool?.inputSchema as ToolInputSchema;
     const ennoPlanSchema = ennoPlanTool?.inputSchema as ToolInputSchema;
-    assert.ok(taskPrepareSchema.required?.includes('soulRead'));
-    assert.equal(taskPrepareSchema.properties?.soulRead?.const, true);
-    assert.match(taskPrepareSchema.properties?.soulRead?.description ?? '', /self-attestation.*complete exact local kiokuko-soul/iu);
+    assert.equal(taskPrepareSchema.required?.includes('soulRead') ?? false, false);
+    assert.equal(taskPrepareSchema.properties?.soulRead?.type, 'boolean');
+    assert.match(taskPrepareSchema.properties?.soulRead?.description ?? '', /Advisory self-attestation.*never blocks task preparation/iu);
     assert.ok(taskPrepareSchema.required?.includes('requestId'));
     assert.ok(taskAnswerSchema.required?.includes('runId'));
     assert.match(taskPrepareSchema.properties?.client?.description ?? '', /normally identifies OpenCode from the MCP initialize clientInfo/u);
@@ -187,7 +173,7 @@ test('MCP exposes only the gated task and lifecycle tools and persists candidate
       assert.match(schema.properties?.capabilities?.description ?? '', /kind and canonical name/u);
     }
     assert.equal(ennoPlanSchema.properties?.capabilities?.type, 'array');
-    assert.match(ennoPlanSchema.properties?.capabilities?.description ?? '', /transport-optional.*user-facing recovery choice/iu);
+    assert.match(ennoPlanSchema.properties?.capabilities?.description ?? '', /Omission degrades plan quality but never prevents plan adoption/iu);
     for (const toolName of [
       'enno_advice_submit',
       'enno_advice_read',
@@ -210,12 +196,9 @@ test('MCP exposes only the gated task and lifecycle tools and persists candidate
     assert.match(tools.tools.find((tool) => tool.name === 'memory_checkpoint')?.description ?? '', /call no more tools/);
     const checkpointTool = tools.tools.find((tool) => tool.name === 'memory_checkpoint');
     assert.match(checkpointTool?.description ?? '', /runId.*active/u);
-    assert.match(checkpointTool?.description ?? '', /needs_answer/);
-    assert.match(checkpointTool?.description ?? '', /answer_from_evidence_or_ask_user/);
-    assert.match(checkpointTool?.description ?? '', /complete the required `task_answer` loop/);
+    assert.match(checkpointTool?.description ?? '', /unresolved advisory intake question does not block checkpointing/iu);
+    assert.match(checkpointTool?.description ?? '', /current profile, unresolved items, and evidence boundary/iu);
     assert.match(checkpointTool?.description ?? '', /successful terminal checkpoint.*at most once/u);
-    assert.match(checkpointTool?.description ?? '', /rejected precondition does not count as that successful checkpoint/u);
-    assert.match(checkpointTool?.description ?? '', /indicated run-state change/);
     assert.doesNotMatch(checkpointTool?.description ?? '', /Call at most once per user request/u);
     const checkpointSchema = checkpointTool?.inputSchema as ToolInputSchema;
     assert.equal(checkpointSchema.type, 'object');
@@ -236,7 +219,7 @@ test('MCP exposes only the gated task and lifecycle tools and persists candidate
     assert.equal(checkpointSchema.properties?.evidence?.properties?.errorSignatures?.maxItems, 200);
     assert.equal('checks' in (checkpointSchema.properties?.evidence?.properties ?? {}), false);
     assert.match(checkpointSchema.properties?.runId?.description ?? '', /active/u);
-    assert.match(checkpointSchema.properties?.runId?.description ?? '', /needs_answer/u);
+    assert.match(checkpointSchema.properties?.runId?.description ?? '', /advisory intake questions may remain unresolved/u);
     const globalizeSchema = tools.tools.find((tool) => tool.name === 'curator_globalize')?.inputSchema as { properties?: { confirmed?: { const?: unknown } }; required?: string[] };
     assert.equal(globalizeSchema.properties?.confirmed?.const, true);
     assert.ok(globalizeSchema.required?.includes('confirmed'));
@@ -252,7 +235,8 @@ test('MCP exposes only the gated task and lifecycle tools and persists candidate
       capabilities: [SOUL_CAPABILITY],
     }]) {
       const unattested = await client.callTool({ name: 'task_prepare', arguments: argumentsValue });
-      assert.equal(unattested.isError, true);
+      assert.equal(unattested.isError, undefined);
+      assert.equal((unattested.structuredContent as { continuationPolicy: { codingAllowed: boolean } }).continuationPolicy.codingAllowed, true);
     }
 
     const missingRequestId = await client.callTool({
@@ -398,7 +382,7 @@ test('MCP exposes only the gated task and lifecycle tools and persists candidate
     assert.equal(unclassifiedContent.ennoOduno.directive?.role, 'enno-oduno');
     assert.equal(unclassifiedContent.ennoOduno.directive?.handoff, null);
     assert.deepEqual(unclassifiedContent.ennoOduno.directive?.requiredSkills, ['kiokuko-soul', 'kiokuko-enno-oduno']);
-    assert.match(unclassifiedContent.ennoOduno.directive?.objective ?? '', /exact question.*user/iu);
+    assert.match(unclassifiedContent.ennoOduno.directive?.objective ?? '', /question as advisory.*continue/iu);
     assert.equal(unclassifiedContent.ennoOduno.nextAction, 'answer_intake');
 
     const research = await client.callTool({
@@ -422,7 +406,7 @@ test('MCP exposes only the gated task and lifecycle tools and persists candidate
       capabilities: { recommendations: Array<{ name: string; availability: string; required?: boolean }> };
     };
     assert.equal(researchContent.ennoOduno.applicable, false);
-    assert.equal(researchContent.nextAction, 'required_capability_unavailable');
+    assert.equal(researchContent.nextAction, 'proceed');
     assert.ok(researchContent.capabilities.recommendations.some((item) => item.name === 'kiokuko-soul'
       && item.availability === 'missing'
       && item.required === true));
@@ -453,10 +437,10 @@ test('MCP exposes only the gated task and lifecycle tools and persists candidate
     } & Record<string, unknown>;
     assert.equal(incompleteContent.intake.status, 'needs_answer');
     assert.equal(incompleteContent.intake.question.id, 'target');
-    assert.equal(incompleteContent.context, null);
+    assert.notEqual(incompleteContent.context, null);
     assert.equal('memory' in incompleteContent, false);
     assert.equal('references' in incompleteContent, false);
-    assert.equal(incompleteContent.nextAction, 'answer_from_evidence_or_ask_user');
+    assert.equal(incompleteContent.nextAction, 'proceed');
     assert.equal(incompleteContent.ennoOduno.applicable, true);
     assert.equal(incompleteContent.ennoOduno.status, 'intake');
     assert.equal(incompleteContent.ennoOduno.orchestrationId, incompleteContent.intake.sessionId);
@@ -464,7 +448,7 @@ test('MCP exposes only the gated task and lifecycle tools and persists candidate
     assert.equal(incompleteContent.ennoOduno.directive?.role, 'enno-oduno');
     assert.equal(incompleteContent.ennoOduno.directive?.handoff, null);
     assert.deepEqual(incompleteContent.ennoOduno.directive?.requiredSkills, ['kiokuko-soul', 'kiokuko-enno-oduno']);
-    assert.match(incompleteContent.ennoOduno.directive?.objective ?? '', /exact question.*user/iu);
+    assert.match(incompleteContent.ennoOduno.directive?.objective ?? '', /question as advisory.*continue/iu);
     assert.equal(incompleteContent.ennoOduno.nextAction, 'answer_intake');
 
     const missingRunId = await client.callTool({
@@ -549,7 +533,7 @@ test('MCP exposes only the gated task and lifecycle tools and persists candidate
       };
       assert.equal(pendingContent.intake.status, 'needs_answer');
       assert.equal(pendingContent.intake.question.id, 'target');
-      assert.equal(pendingContent.nextAction, 'required_capability_unavailable');
+      assert.equal(pendingContent.nextAction, 'proceed');
 
       const target = await client.callTool({
         name: 'task_answer',
@@ -564,7 +548,7 @@ test('MCP exposes only the gated task and lifecycle tools and persists candidate
       const targetContent = target.structuredContent as { intake: { status: string; question: { id: string } }; nextAction: string };
       assert.equal(targetContent.intake.status, 'needs_answer');
       assert.equal(targetContent.intake.question.id, 'expected');
-      assert.equal(targetContent.nextAction, 'required_capability_unavailable');
+      assert.equal(targetContent.nextAction, 'proceed');
 
       const stopped = await client.callTool({
         name: 'task_answer',
@@ -587,17 +571,13 @@ test('MCP exposes only the gated task and lifecycle tools and persists candidate
         nextAction: string;
       } & Record<string, unknown>;
       assert.equal(stoppedContent.intake.status, 'ready');
-      assert.equal(stoppedContent.nextAction, 'required_capability_unavailable');
+      assert.equal(stoppedContent.nextAction, 'proceed');
       assert.deepEqual(stoppedContent.memoryPolicy, {
         memoryReasoningRequired: true,
-        contextWithheld: true,
-        withheldReason: catalogAvailability === 'missing'
-          ? 'memory_reasoning_missing'
-          : 'memory_reasoning_unknown',
-        deliveryEmpty: true,
-        storedEntryCount: 1,
+        contextWithheld: false,
+        withheldReason: null,
       });
-      assert.equal(stoppedContent.context, null);
+      assert.notEqual(stoppedContent.context, null);
       assert.equal('memory' in stoppedContent, false);
       assert.equal('references' in stoppedContent, false);
       assert.ok(stoppedContent.capabilities.recommendations.some((item) => item.name === 'memory-reasoning'
@@ -628,8 +608,13 @@ test('MCP transport projects non-Enno input validation failures to the stable pu
   await server.connect(serverTransport);
   await client.connect(clientTransport);
   try {
+    const withoutSoul = await client.callTool({
+      name: 'task_prepare',
+      arguments: { requestId: 'missing-soul', task: 'review' },
+    });
+    assert.equal(withoutSoul.isError, undefined);
+    assert.equal((withoutSoul.structuredContent as { continuationPolicy: { codingAllowed: boolean } }).continuationPolicy.codingAllowed, true);
     const calls = [
-      { name: 'task_prepare', arguments: { requestId: 'missing-soul', task: 'review' } },
       { name: 'task_prepare', arguments: { soulRead: true, requestId: 'relative-cwd', task: 'review', cwd: 'relative/path' } },
       { name: 'task_answer', arguments: { sessionId: 'session', runId: 'run', questionId: 'wrong', value: 'answer' } },
       { name: 'task_prepare', arguments: { soulRead: true, requestId: 'extra-field', task: 'review', unexpected: true } },
@@ -736,7 +721,7 @@ test('task_prepare identifies OpenCode before Oduno derives the ideal', async ()
   }
 });
 
-test('enno_plan_submit returns the userFacingConfirmation projection over the MCP boundary', async () => {
+test('enno_plan_submit starts non-destructive work without a general plan-confirmation gate', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'kiokuko-mcp-confirmation-repo-'));
   execFileSync('git', ['init', '-q', root]);
   const data = await mkdtemp(path.join(tmpdir(), 'kiokuko-mcp-confirmation-data-'));
@@ -827,38 +812,17 @@ test('enno_plan_submit returns the userFacingConfirmation projection over the MC
       ennoOduno: {
         status: string;
         contractRevision: number;
-        directive: {
-          objective: string;
-          userFacingConfirmation?: {
-            presentationVersion: number;
-            summary: { basis: string; text: string };
-            scope: { basis: string; paths: string[] };
-            workItems: Array<{ number: number; summary: string; expertise: Array<{ area: string; reason: string }> }>;
-            finalChecks: { checks: Array<{ executable: string; arguments: string[]; directory: string; timeoutMs: number }> };
-            attemptLimit: { basis: string; maxAttempts: number };
-            actions: string[];
-          };
-        } | null;
+        nextAction: string;
+        directive: { userFacingConfirmation?: unknown } | null;
       };
+      executionLease?: { workUnitId: string; inputManifestDigest: string };
     };
-    assert.equal(planContent.ennoOduno.status, 'needs_confirmation');
+    assert.equal(planContent.ennoOduno.status, 'goki_executing');
     assert.equal(planContent.ennoOduno.contractRevision, 2);
-    assert.match(planContent.ennoOduno.directive?.objective ?? '', /Return every item in userFacingConfirmation/iu);
-    const projection = planContent.ennoOduno.directive?.userFacingConfirmation;
-    assert.ok(projection !== undefined);
-    assert.equal(projection.presentationVersion, 1);
-    assert.equal(projection.summary.basis, 'proposal');
-    assert.equal(projection.scope.basis, 'user');
-    assert.equal(projection.workItems[0]?.number, 1);
-    assert.equal(projection.workItems[0]?.expertise[0]?.area, 'Regression prevention and verification design');
-    assert.deepEqual(projection.finalChecks.checks[0], {
-      category: 'test', executable: process.execPath, arguments: ['--eval', 'process.exit(0)'], directory: '.', timeoutMs: 5000,
-    });
-    assert.deepEqual(projection.actions, ['approve', 'revise', 'cancel']);
-    const rendered = JSON.stringify(projection);
-    for (const forbidden of ['repair-add', 'final-test', 'code.verification.v1', 'expertRefs', 'focusedVerifiers', 'finalVerifiers', 'provenance']) {
-      assert.equal(rendered.includes(forbidden), false, `MCP projection leaked internal token: ${forbidden}`);
-    }
+    assert.equal(planContent.ennoOduno.nextAction, 'execute_work_unit');
+    assert.equal(planContent.ennoOduno.directive?.userFacingConfirmation, undefined);
+    assert.equal(planContent.executionLease?.workUnitId, 'repair-add');
+    assert.match(planContent.executionLease?.inputManifestDigest ?? '', /^[0-9a-f]{64}$/u);
   } finally {
     await client.close();
     if (server.isConnected()) await server.close();
@@ -1018,7 +982,17 @@ test('MCP transports advisory submission and final verification preparation with
       },
     });
     assert.equal(plan.isError, undefined, JSON.stringify(plan.content));
-    const planContent = plan.structuredContent as { ennoOduno: { status: string } };
+    const planContent = plan.structuredContent as {
+      ennoOduno: { status: string };
+      executionLease: {
+        leaseToken: string;
+        routeEpoch: number;
+        contractRevision: number;
+        workUnitId: string;
+        attempt: number;
+        inputManifestDigest: string;
+      };
+    };
     assert.equal(planContent.ennoOduno.status, 'goki_executing');
     const worked = await client.callTool({
       name: 'enno_work_report',
@@ -1027,6 +1001,10 @@ test('MCP transports advisory submission and final verification preparation with
         expectedRevision: 2,
         idempotencyKey: 'mcp-advisory-work',
         workUnitId: 'repair-add',
+        leaseToken: planContent.executionLease.leaseToken,
+        routeEpoch: planContent.executionLease.routeEpoch,
+        attempt: planContent.executionLease.attempt,
+        inputManifestDigest: planContent.executionLease.inputManifestDigest,
         result: { outcome: 'completed', summary: 'Repair completed', mutated: false, changedPaths: [] },
       },
     });
@@ -1065,7 +1043,7 @@ test('MCP transports advisory submission and final verification preparation with
   }
 });
 
-test('plan-start recovery exposes only concise user choices and leaves the same run reusable', async () => {
+test('plan capability loss degrades quality and leaves the same run executable', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'kiokuko-mcp-plan-recovery-repo-'));
   execFileSync('git', ['init', '-q', root]);
   const data = await mkdtemp(path.join(tmpdir(), 'kiokuko-mcp-plan-recovery-data-'));
@@ -1181,113 +1159,31 @@ test('plan-start recovery exposes only concise user choices and leaves the same 
       mutationApplied: false,
     });
 
-    const recovery = await client.callTool({
+    const degraded = await client.callTool({
       name: 'enno_plan_submit',
       arguments: { ...plan, idempotencyKey: 'mcp-plan-recovery-missing' },
     });
-    assert.equal(recovery.isError, true);
-    const recoveryContent = recovery.structuredContent as {
-      code: string;
-      reason: string;
-      effect: {
-        mutationApplied: boolean;
-        continuationPaused: boolean;
-        planPersisted: boolean;
-        advisoryConsumed: boolean;
-        operationReceiptCreated: boolean;
-        implementationStarted: boolean;
-      };
-      retry: { sameRunAllowed: boolean; requiresUserChoice: boolean };
-      userFacingRecovery: {
-        presentationVersion: number;
-        whatHappened: string;
-        workState: string;
-        resolution: string;
-        options: Array<{
-          action: string;
-          label: string;
-          recommended: boolean;
-          whenToChoose: string;
-          whatHappens: string;
-        }>;
-      };
+    assert.equal(degraded.isError, undefined);
+    const degradedContent = degraded.structuredContent as {
+      ennoOduno: { status: string; qualityState: string };
+      executionLease?: { workUnitId: string };
     };
-    assert.equal(recoveryContent.code, 'PLAN_START_RECOVERY_REQUIRED');
-    assert.equal(recoveryContent.reason, 'environment_information_missing');
-    assert.deepEqual(recoveryContent.effect, {
-      mutationApplied: false,
-      continuationPaused: true,
-      planPersisted: false,
-      advisoryConsumed: false,
-      operationReceiptCreated: false,
-      implementationStarted: false,
-    });
-    assert.deepEqual(recoveryContent.retry, { sameRunAllowed: true, requiresUserChoice: true });
-    assert.equal(recoveryContent.userFacingRecovery.presentationVersion, 1);
-    assert.match(recoveryContent.userFacingRecovery.whatHappened, /features available in this environment.*not carried into the plan/iu);
-    assert.match(recoveryContent.userFacingRecovery.workState, /did not begin new work or make additional code changes/iu);
-    assert.match(recoveryContent.userFacingRecovery.resolution, /continue with the same plan/iu);
-    assert.deepEqual(recoveryContent.userFacingRecovery.options, [
-      {
-        action: 'continue_same_plan',
-        label: 'Continue with the same plan',
-        recommended: true,
-        whenToChoose: 'The plan is still correct and only the current environment information needs to be attached.',
-        whatHappens: 'The current environment information is attached automatically, and the same attempt continues.',
-      },
-      {
-        action: 'revise_plan',
-        label: 'Review the plan',
-        recommended: false,
-        whenToChoose: 'You want to change the scope, work items, or verification before continuing.',
-        whatHappens: 'You are asked what to change, and implementation does not start until you answer.',
-      },
-      {
-        action: 'cancel',
-        label: 'Cancel',
-        recommended: false,
-        whenToChoose: 'You no longer want this work to continue.',
-        whatHappens: 'The current attempt is cancelled, and no replacement attempt is created.',
-      },
-    ]);
-    const visible = JSON.stringify(recovery.content);
-    for (const option of recoveryContent.userFacingRecovery.options) {
-      assert.match(visible, new RegExp(option.label, 'u'));
-      assert.match(visible, new RegExp(option.whenToChoose, 'u'));
-      assert.match(visible, new RegExp(option.whatHappens, 'u'));
-    }
-    assert.equal((visible.match(/Recommended/gu) ?? []).length, 1);
-    for (const forbidden of [
-      'enno_', 'capabilities', 'catalog', 'digest', 'revision', identity.runId,
-      'continue_same_plan', 'whenToChoose', 'whatHappens', 'presentationVersion',
-    ]) {
-      assert.equal(visible.toLowerCase().includes(forbidden.toLowerCase()), false, `recovery display leaked internal token: ${forbidden}`);
-    }
+    assert.equal(degradedContent.ennoOduno.status, 'goki_executing');
+    assert.equal(degradedContent.ennoOduno.qualityState, 'degraded');
+    assert.equal(degradedContent.executionLease?.workUnitId, 'repair-add');
     const inspection = openConnection(databasePath);
     try {
       assert.equal(inspection.prepare('SELECT status FROM ledger_runs WHERE run_id = ?')
         .get<{ status: string }>(identity.runId)?.status, 'active');
       const contract = inspection.prepare('SELECT status, revision FROM enno_contracts WHERE run_id = ?')
         .get<{ status: string; revision: number }>(identity.runId);
-      assert.deepEqual(contract === undefined ? undefined : { ...contract }, { status: 'zenki_planning', revision: 1 });
+      assert.deepEqual(contract === undefined ? undefined : { ...contract }, { status: 'goki_executing', revision: 2 });
       assert.equal(inspection.prepare("SELECT COUNT(*) AS count FROM enno_operation_receipts WHERE run_id = ? AND operation = 'plan_submit'")
-        .get<{ count: number }>(identity.runId)?.count, 0);
+        .get<{ count: number }>(identity.runId)?.count, 1);
     } finally {
       inspection.close();
     }
     await assert.rejects(access(path.join(root, 'src', 'add.js')));
-
-    const continued = await client.callTool({
-      name: 'enno_plan_submit',
-      arguments: {
-        ...plan,
-        idempotencyKey: 'mcp-plan-recovery-continued',
-        capabilities,
-        recoveryAction: 'continue_same_plan',
-      },
-    });
-    assert.equal(continued.isError, undefined);
-    assert.equal((continued.structuredContent as { ennoOduno: { status: string } }).ennoOduno.status, 'goki_executing');
   } finally {
     await client.close();
     if (server.isConnected()) await server.close();
@@ -1351,7 +1247,7 @@ test('malformed compatibility discovery degrades across task_prepare and enno_pl
     };
     assert.equal(preparedContent.ennoOduno.status, 'oduno_ideal');
     assert.deepEqual(preparedContent.skillDiscovery.selected, []);
-    assert.deepEqual(preparedContent.skillDiscovery.failures, [{ stage: 'search', code: 'registry_invalid_response' }]);
+    assert.deepEqual(preparedContent.skillDiscovery.failures, []);
     const identity = {
       runId: preparedContent.run.runId,
       workspace: preparedContent.project.workspace,
@@ -1412,7 +1308,7 @@ test('malformed compatibility discovery degrades across task_prepare and enno_pl
     assert.doesNotMatch(JSON.stringify(plan), /Internal integrity error/u);
     const planContent = plan.structuredContent as { ennoOduno: { status: string } };
     assert.equal(planContent.ennoOduno.status, 'goki_executing');
-    assert.equal(registryCalls, 2);
+    assert.equal(registryCalls, 0);
     assert.equal(sourceCalls, 0);
 
     const database = openConnection(databasePath);
@@ -1424,19 +1320,16 @@ test('malformed compatibility discovery degrades across task_prepare and enno_pl
         skillSet: { zenkiDiscovery: { selected: unknown[]; failures: Array<{ stage: string; code: string }> } };
       };
       assert.deepEqual(contract.skillSet.zenkiDiscovery.selected, []);
-      assert.deepEqual(contract.skillSet.zenkiDiscovery.failures, [{ stage: 'search', code: 'registry_invalid_response' }]);
+      assert.deepEqual(contract.skillSet.zenkiDiscovery.failures, []);
       assert.equal(database.prepare('SELECT COUNT(*) AS count FROM skill_discovery_cache').get<{ count: number }>()?.count, 0);
       assert.equal(database.prepare('SELECT COUNT(*) AS count FROM skill_audit_failure_cache').get<{ count: number }>()?.count, 0);
       assert.equal(database.prepare('SELECT COUNT(*) AS count FROM external_skills').get<{ count: number }>()?.count, 0);
       assert.equal(database.prepare('SELECT COUNT(*) AS count FROM external_skill_entries').get<{ count: number }>()?.count, 0);
       assert.equal(database.prepare('SELECT COUNT(*) AS count FROM entries').get<{ count: number }>()?.count, 0);
-      assert.deepEqual(database.prepare(`
-        SELECT phase, state FROM task_skill_discovery_attempts
-        WHERE run_id = ? ORDER BY phase
-      `).all(identity.runId).map((row) => ({ ...row })), [
-        { phase: 'intake', state: 'completed' },
-        { phase: 'zenki', state: 'completed' },
-      ]);
+      assert.equal(database.prepare(`
+        SELECT COUNT(*) AS count FROM orchestration_jobs
+        WHERE run_id = ? AND kind = 'skill_discovery' AND state = 'pending'
+      `).get<{ count: number }>(identity.runId)?.count, 2);
     } finally {
       database.close();
     }
@@ -1473,97 +1366,28 @@ test('memory_checkpoint returns actionable MCP guidance during intake and succee
       nextAction: string;
     };
     assert.equal(preparedContent.intake.status, 'needs_answer');
-    assert.equal(preparedContent.nextAction, 'answer_from_evidence_or_ask_user');
+    assert.equal(preparedContent.nextAction, 'proceed');
     const runId = preparedContent.run.runId;
-
-    const before = openConnection(databasePath);
-    let eventCount: number;
-    try {
-      eventCount = before.prepare('SELECT COUNT(*) AS count FROM ledger_events WHERE run_id = ?').get<{ count: number }>(runId)?.count ?? 0;
-    } finally {
-      before.close();
-    }
 
     const earlyCheckpoint = await client.callTool({
       name: 'memory_checkpoint',
       arguments: {
         runId,
         outcome: 'completed',
-        memories: [{ kind: 'lesson', title: 'Recovery sentinel', body: 'token=private-intake-checkpoint-sentinel must not persist during intake.' }],
+        memories: [{ kind: 'lesson', title: 'Advisory intake checkpoint', body: 'Unresolved intake fields remain advisory and are preserved at the evidence boundary.' }],
       },
     });
-    assert.equal(earlyCheckpoint.isError, true);
-    assert.equal(JSON.stringify(earlyCheckpoint).includes('private-intake-checkpoint-sentinel'), false);
-    assert.deepEqual(earlyCheckpoint.content, [{
-      type: 'text',
-      text: 'Checkpoint is blocked while the run awaits intake answers. Complete task_answer before retrying.',
-    }]);
-    assert.deepEqual(earlyCheckpoint.structuredContent, {
-      code: 'CHECKPOINT_RUN_NOT_ACTIVE',
-      reason: 'run_awaiting_intake_answer',
-      runStatus: 'intake',
-      nextAction: 'answer_from_evidence_or_ask_user',
-      retryableAfterStateChange: true,
-    });
-
-    const afterEarlyCheckpoint = openConnection(databasePath);
-    try {
-      assert.equal(afterEarlyCheckpoint.prepare('SELECT status FROM ledger_runs WHERE run_id = ?').get<{ status: string }>(runId)?.status, 'intake');
-      assert.equal(afterEarlyCheckpoint.prepare('SELECT COUNT(*) AS count FROM ledger_events WHERE run_id = ?').get<{ count: number }>(runId)?.count, eventCount);
-      assert.equal(afterEarlyCheckpoint.prepare('SELECT COUNT(*) AS count FROM entries').get<{ count: number }>()?.count, 0);
-      assert.equal(afterEarlyCheckpoint.prepare('SELECT COUNT(*) AS count FROM context_feedback').get<{ count: number }>()?.count, 0);
-    } finally {
-      afterEarlyCheckpoint.close();
-    }
-
-    const target = await client.callTool({
-      name: 'task_answer',
-      arguments: {
-        sessionId: preparedContent.intake.sessionId,
-        runId,
-        questionId: 'target',
-        value: 'src/mcp/server.ts',
-        capabilities,
-      },
-    });
-    const targetContent = target.structuredContent as { intake: { status: string; question: { id: string } }; nextAction: string };
-    assert.equal(targetContent.intake.status, 'needs_answer');
-    assert.equal(targetContent.intake.question.id, 'expected');
-    assert.equal(targetContent.nextAction, 'answer_from_evidence_or_ask_user');
-
-    const completed = await client.callTool({
-      name: 'task_answer',
-      arguments: {
-        sessionId: preparedContent.intake.sessionId,
-        runId,
-        questionId: 'expected',
-        value: 'Focused tests pass',
-        capabilities,
-      },
-    });
-    const completedContent = completed.structuredContent as { intake: { status: string }; nextAction: string };
-    assert.equal(completedContent.intake.status, 'ready');
-    assert.equal(completedContent.nextAction, 'proceed');
-
-    const finalCheckpoint = await client.callTool({
-      name: 'memory_checkpoint',
-      arguments: {
-        runId,
-        outcome: 'completed',
-        memories: [{ kind: 'lesson', title: 'Recovery lesson', body: 'Complete task_answer before checkpointing the run.' }],
-      },
-    });
-    assert.equal(finalCheckpoint.isError, undefined);
-    const finalContent = finalCheckpoint.structuredContent as { run: { runId: string; status: string }; entries: unknown[] };
-    assert.deepEqual(finalContent.run, {
+    assert.equal(earlyCheckpoint.isError, undefined);
+    const checkpointContent = earlyCheckpoint.structuredContent as { run: { runId: string; status: string }; entries: unknown[] };
+    assert.deepEqual(checkpointContent.run, {
       runId,
       status: 'completed',
       feedbackCount: 0,
       evidenceCount: 0,
-      reasoningPaths: 1,
+      reasoningPaths: 0,
       qualifiedReasoningPaths: 0,
     });
-    assert.equal(finalContent.entries.length, 1);
+    assert.equal(checkpointContent.entries.length, 1);
 
     const terminalRetry = await client.callTool({
       name: 'memory_checkpoint',
@@ -1617,19 +1441,17 @@ test('task_prepare degrades safely for oversized and malformed capability items'
       },
     });
     const knownMissingContent = knownMissing.structuredContent as {
-      context: null;
+      context: { items: unknown[] };
       nextAction: string;
       capabilities: { availability: string; recommendations: Array<{ name: string; availability: string }> };
       memoryPolicy: { memoryReasoningRequired: boolean; contextWithheld: boolean; withheldReason: string | null };
     };
-    assert.equal(knownMissingContent.context, null);
+    assert.equal(knownMissingContent.context.items.length, 1);
     assert.equal(knownMissingContent.nextAction, 'proceed');
     assert.deepEqual(knownMissingContent.memoryPolicy, {
       memoryReasoningRequired: true,
-      contextWithheld: true,
-      withheldReason: 'memory_reasoning_missing',
-      deliveryEmpty: true,
-      storedEntryCount: 1,
+      contextWithheld: false,
+      withheldReason: null,
     });
     assert.equal(knownMissingContent.capabilities.availability, 'known-nonempty');
     assert.ok(knownMissingContent.capabilities.recommendations.some(
@@ -1657,7 +1479,7 @@ test('task_prepare degrades safely for oversized and malformed capability items'
     const content = result.structuredContent as {
       run: { runId: string };
       nextAction: string;
-      context: null;
+      context: { items: unknown[] };
       capabilities: {
         availability: string;
         diagnostics: { received: number; accepted: number; truncated: number; dropped: number };
@@ -1667,13 +1489,11 @@ test('task_prepare degrades safely for oversized and malformed capability items'
       warnings: Array<{ message: string }>;
       memoryPolicy: { memoryReasoningRequired: boolean; contextWithheld: boolean; withheldReason: string | null };
     } & Record<string, unknown>;
-    assert.equal(content.context, null);
+    assert.equal(content.context.items.length, 1);
     assert.deepEqual(content.memoryPolicy, {
       memoryReasoningRequired: true,
-      contextWithheld: true,
-      withheldReason: 'memory_reasoning_unknown',
-      deliveryEmpty: true,
-      storedEntryCount: 1,
+      contextWithheld: false,
+      withheldReason: null,
     });
     assert.equal('memory' in content, false);
     assert.equal('references' in content, false);
@@ -1683,7 +1503,7 @@ test('task_prepare degrades safely for oversized and malformed capability items'
     assert.ok(content.capabilities.recommendations.some((item) => item.name === 'tdd' && item.availability === 'available'));
     assert.ok(content.capabilities.recommendations.some((item) => item.name === 'memory-reasoning' && item.availability === 'unknown'));
     assert.equal(content.nextAction, 'proceed');
-    assert.equal(content.capabilities.warnings.length, 3);
+    assert.equal(content.capabilities.warnings.length, 4);
     assert.deepEqual(content.warnings, content.capabilities.warnings);
     assert.match(JSON.stringify(content), /CAPABILITY_CATALOG_UNAVAILABLE|could not be safely classified/u);
     assert.equal(JSON.stringify(content).includes(sentinel), false);
@@ -1822,7 +1642,7 @@ test('task_prepare degrades safely for oversized and malformed capability items'
         deliveries: database.prepare('SELECT * FROM context_deliveries').all(),
       });
       assert.equal(persisted.includes(sentinel), false);
-      assert.equal(database.prepare('SELECT COUNT(*) AS count FROM context_deliveries WHERE run_id = ?').get<{ count: number }>(content.run.runId)?.count, 0);
+      assert.equal(database.prepare('SELECT COUNT(*) AS count FROM context_deliveries WHERE run_id = ?').get<{ count: number }>(content.run.runId)?.count, 1);
        assert.equal(database.prepare('SELECT policy_version FROM context_deliveries WHERE delivery_id = ?').get<{ policy_version: string }>(availableContent.context.deliveryId)?.policy_version, 'context-ranking-v6');
       const storedReasons = database.prepare(`
         SELECT selection_reason_json

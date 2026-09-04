@@ -1,5 +1,6 @@
 import { initializeDatabase, type InitOptions } from '../commands/init.js';
-import { getGlobalDatabasePath, type PathEnvironment } from '../config/paths.js';
+import path from 'node:path';
+import { getGlobalDatabasePath, getPlatformDataDirectory, type PathEnvironment } from '../config/paths.js';
 import { openConnection } from '../db/connection.js';
 import type { SqliteDatabase } from '../db/adapter.js';
 import { KiokukoError } from '../errors.js';
@@ -8,6 +9,7 @@ import { createEmbeddingRuntime } from '../embedding/runtime.js';
 import type { EmbeddingConfig, EmbeddingProvider, EmbeddingRuntime, VectorSearchBackend } from '../embedding/types.js';
 import { createEmbeddingWorker, type EmbeddingWorker } from '../embedding/worker.js';
 import { WriteQueue } from '../server/write-queue.js';
+import { createOrchestrationWorker, type OrchestrationWorker } from '../orchestration/worker.js';
 
 export interface McpRuntimeOwnerOptions extends PathEnvironment {
   readonly databasePath?: string;
@@ -17,6 +19,8 @@ export interface McpRuntimeOwnerOptions extends PathEnvironment {
   readonly embeddingConfig?: EmbeddingConfig;
   readonly embeddingProvider?: EmbeddingProvider;
   readonly embeddingBackend?: VectorSearchBackend;
+  readonly fetchImpl?: typeof fetch;
+  readonly orchestrationWorkerIntervalMs?: number;
 }
 
 export type McpDatabaseOperation<T> = (
@@ -33,6 +37,7 @@ interface OwnerState {
   readonly database: SqliteDatabase;
   readonly runtime: EmbeddingRuntime;
   readonly worker: EmbeddingWorker | undefined;
+  readonly orchestrationWorker: OrchestrationWorker;
   readonly queue: WriteQueue<unknown>;
 }
 
@@ -72,9 +77,22 @@ export class McpRuntimeOwner implements McpDatabaseOwner {
         enqueueWrite: <T>(operation: () => T | PromiseLike<T>) => queue.enqueue(operation) as Promise<T>,
       });
       const worker = runtime.profileId === null ? undefined : createEmbeddingWorker({ runtime });
-      const state = { database, runtime, worker, queue } satisfies OwnerState;
+      const dataDirectory = this.#options.databasePath === undefined
+        ? getPlatformDataDirectory(this.#options)
+        : path.dirname(databasePath);
+      const orchestrationWorker = createOrchestrationWorker({
+        database,
+        embeddingRuntime: runtime,
+        dataDirectory,
+        ...(this.#options.fetchImpl === undefined ? {} : { fetchImpl: this.#options.fetchImpl }),
+        ...(this.#options.orchestrationWorkerIntervalMs === undefined
+          ? {}
+          : { intervalMs: this.#options.orchestrationWorkerIntervalMs }),
+      });
+      const state = { database, runtime, worker, orchestrationWorker, queue } satisfies OwnerState;
       this.#state = state;
       worker?.start();
+      orchestrationWorker.start();
       return state;
     } catch (error) {
       const cleanupErrors: unknown[] = [];
@@ -128,6 +146,11 @@ export class McpRuntimeOwner implements McpDatabaseOwner {
         return;
       }
       const errors: unknown[] = [];
+      try {
+        await state.orchestrationWorker.close();
+      } catch (error) {
+        errors.push(error);
+      }
       try {
         await state.worker?.close();
       } catch (error) {

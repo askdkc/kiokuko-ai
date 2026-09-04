@@ -18,6 +18,7 @@ interface EnnoCompactionRecord {
   workspace: string;
   orchestrationId: string;
   contractRevision: number | null;
+  contextRevision: number | null;
   routeEpoch: number | null;
   status: string;
   currentRole: string | null;
@@ -74,6 +75,10 @@ function nextRecord(
   const status = boundedText(state.status, 100);
   const nextAction = boundedText(state.nextAction, 100);
   const contractRevision = nonNegativeInteger(state.contractRevision);
+  const observedContextRevision = nonNegativeInteger(value.contextRevision);
+  const contextRevision = observedContextRevision === undefined
+    ? sameRun ? previous?.contextRevision ?? null : null
+    : observedContextRevision;
   const routeEpoch = nonNegativeInteger(state.routeEpoch);
   if (runId === undefined || workspace === undefined || orchestrationId === undefined
     || status === undefined || nextAction === undefined
@@ -86,6 +91,7 @@ function nextRecord(
     workspace,
     orchestrationId,
     contractRevision,
+    contextRevision,
     routeEpoch,
     status,
     currentRole,
@@ -104,6 +110,7 @@ function compactionContext(value: EnnoCompactionRecord): string {
     'Kiokuko Enno-Oduno continuation is active. Preserve the following JSON record verbatim in the compacted summary.',
     'These exact identifiers are required to continue after compaction. Never replace workspace with a filesystem path, guess a revision, or omit null-valued fields.',
     'Use workspace plus orchestrationId as the explicit identity unless a newer same-session resumeToken was supplied. Preserve any newer resumeToken from the conversation verbatim as well.',
+    'After compaction, read task_context_read for this run with afterContextRevision equal to contextRevision only at the next idle boundary; never interrupt an active tool call.',
     JSON.stringify(value),
   ].join('\n');
 }
@@ -140,5 +147,27 @@ export class OpenCodeCompactionState {
   appendContext(sessionId: string, context: string[]): void {
     const current = this.entries.get(sessionId);
     if (current !== undefined) context.push(compactionContext(current));
+  }
+
+  boundary(sessionId: string, terminalMessageId: string | null = null): {
+    runId: string;
+    workspace: string;
+    orchestrationId: string;
+    contractRevision: number | null;
+    contextRevision: number | null;
+    routeEpoch: number | null;
+    terminalMessageId: string | null;
+  } | null {
+    const current = this.entries.get(sessionId);
+    if (current === undefined) return null;
+    return {
+      runId: current.runId,
+      workspace: current.workspace,
+      orchestrationId: current.orchestrationId,
+      contractRevision: current.contractRevision,
+      contextRevision: current.contextRevision,
+      routeEpoch: current.routeEpoch,
+      terminalMessageId,
+    };
   }
 }

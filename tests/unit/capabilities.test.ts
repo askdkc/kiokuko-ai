@@ -430,7 +430,7 @@ test('does not satisfy the required master SOUL with an alias or similarly named
   assert.equal(hasBlockingRequiredCapability(available), false);
 });
 
-test('requires memory-reasoning for actionable build memory and fails closed when unavailable', () => {
+test('recommends memory-reasoning for actionable build memory without withholding context', () => {
   const missing = resolveCapabilities({
     task: 'Implement repository tests for the beacon',
     profile: buildProfile,
@@ -463,7 +463,7 @@ test('requires memory-reasoning for actionable build memory and fails closed whe
     && item.required === true));
 });
 
-test('derives an explicit memory withholding policy for available, missing, unknown, and irrelevant contexts', () => {
+test('derives an explicit non-withholding memory policy for available, missing, unknown, and irrelevant contexts', () => {
   assert.deepEqual(deriveMemoryPolicy(buildProfile, 'actionable', [
     { kind: 'skill', name: MEMORY_REASONING_SKILL_NAME },
   ]), {
@@ -473,13 +473,13 @@ test('derives an explicit memory withholding policy for available, missing, unkn
   });
   assert.deepEqual(deriveMemoryPolicy(buildProfile, 'actionable', []), {
     memoryReasoningRequired: true,
-    contextWithheld: true,
-    withheldReason: 'memory_reasoning_missing',
+    contextWithheld: false,
+    withheldReason: null,
   });
   assert.deepEqual(deriveMemoryPolicy(buildProfile, 'actionable', undefined), {
     memoryReasoningRequired: true,
-    contextWithheld: true,
-    withheldReason: 'memory_reasoning_unknown',
+    contextWithheld: false,
+    withheldReason: null,
   });
   assert.deepEqual(deriveMemoryPolicy(buildProfile, 'none', []), {
     memoryReasoningRequired: false,

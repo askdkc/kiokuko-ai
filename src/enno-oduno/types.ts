@@ -306,6 +306,17 @@ export interface VerifierSpec {
 export const WORK_UNIT_ROUTES = ['code', 'ui', 'test', 'docs', 'operations'] as const;
 export type WorkUnitRoute = (typeof WORK_UNIT_ROUTES)[number];
 
+export const WORK_UNIT_RESOURCE_ACCESS = ['read', 'write', 'quota'] as const;
+export type WorkUnitResourceAccess = (typeof WORK_UNIT_RESOURCE_ACCESS)[number];
+
+export interface WorkUnitResourceClaim {
+  key: string;
+  access: WorkUnitResourceAccess;
+}
+
+export const WORK_UNIT_ISOLATION_PREFERENCES = ['read_only', 'isolated_worktree', 'shared_serial'] as const;
+export type WorkUnitIsolationPreference = (typeof WORK_UNIT_ISOLATION_PREFERENCES)[number];
+
 export interface ExpertRef {
   id: string;
   reason: string;
@@ -321,6 +332,14 @@ export interface WorkUnit {
   acceptanceCriteria: string[];
   focusedVerifiers: VerifierSpec[];
   routes: WorkUnitRoute[];
+  /** Optional on legacy/input objects; persisted v2 plans always materialize it. */
+  resourceClaims?: WorkUnitResourceClaim[] | undefined;
+  /** Optional on legacy/input objects; persisted v2 plans always materialize it. */
+  isolationPreference?: WorkUnitIsolationPreference | undefined;
+  /** SHA-256 over the immutable WorkUnit inputs. */
+  inputManifestDigest?: string | undefined;
+  /** Bounded description of the result that the worker must return. */
+  outputContract?: string | undefined;
 }
 
 export interface WorkPlan {
@@ -379,6 +398,15 @@ export interface OdunoMeditation {
   inspectedPaths: string[];
   deletionCandidates: OdunoDeletionCandidate[];
 }
+
+export interface PlanArtifact {
+  path: string;
+  digest: string;
+  state: 'pending' | 'published' | 'failed';
+}
+
+export type ModelPreference = 'high_capability_planner' | 'economical_fast_worker' | 'current_model';
+export type QualityState = 'normal' | 'degraded';
 
 export interface EnnoRequestHandoff {
   sourceRole: 'enno-oduno';
@@ -461,6 +489,9 @@ export interface RoleDirective {
   workUnit: WorkUnit | null;
   stopConditions: string[];
   reportSchema: Record<string, unknown>;
+  modelPreference: ModelPreference;
+  planArtifact: PlanArtifact | null;
+  qualityState: QualityState;
   advisoryRound?: AdvisoryFanoutDirective;
   userFacingConfirmation?: UserFacingConfirmation;
 }
@@ -484,6 +515,8 @@ export interface EnnoOdunoState {
   directive: RoleDirective | null;
   nextAction: EnnoNextAction;
   advisoryPhaseState: AdvisoryPhaseState;
+  planArtifact: PlanArtifact | null;
+  qualityState: QualityState;
 }
 
 export interface EnnoExecutionLease {
@@ -492,6 +525,8 @@ export interface EnnoExecutionLease {
   contractRevision: number;
   mutationRevision: number;
   workUnitId: string;
+  attempt: number;
+  inputManifestDigest: string;
   expiresAt: string;
 }
 
@@ -557,4 +592,6 @@ export interface EnnoRunSnapshot {
   finalEvidence: VerifierRunResult[];
   blocker: string | null;
   advisoryPhaseState?: AdvisoryPhaseState | undefined;
+  planArtifact?: PlanArtifact | null | undefined;
+  qualityState?: QualityState | undefined;
 }

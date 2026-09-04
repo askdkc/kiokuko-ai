@@ -8,15 +8,7 @@ import { openConnection } from '../../src/db/connection.js';
 import { migrateDatabase } from '../../src/db/migrate.js';
 import { prepareOpenCodeTask } from '../../src/akinator/opencode-task.js';
 
-async function waitFor(predicate: () => boolean): Promise<void> {
-  const deadline = Date.now() + 1_000;
-  while (!predicate()) {
-    if (Date.now() >= deadline) throw new Error('Timed out waiting for external discovery request');
-    await new Promise<void>((resolve) => setTimeout(resolve, 5));
-  }
-}
-
-test('task preparation propagates cancellation into external skill discovery without converting it to success', async () => {
+test('task preparation returns before external Skill discovery and queues enrichment durably', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'kiokuko-task-timeout-repo-'));
   execFileSync('git', ['init', '-q', root]);
   await writeFile(path.join(root, 'package.json'), '{"name":"timeout-fixture","dependencies":{"typescript":"^5.0.0"}}\n');
@@ -24,22 +16,13 @@ test('task preparation propagates cancellation into external skill discovery wit
   const databasePath = path.join(data, 'kiokuko-ai.sqlite');
   const database = openConnection(databasePath);
   migrateDatabase(database);
-  const controller = new AbortController();
   let started = false;
-  let observedSignal: AbortSignal | undefined;
-  const fetchImpl: typeof fetch = async (_input, init) => {
+  const fetchImpl: typeof fetch = async () => {
     started = true;
-    observedSignal = init?.signal ?? undefined;
-    return await new Promise<Response>((_resolve, reject) => {
-      if (observedSignal?.aborted) {
-        reject(observedSignal.reason);
-        return;
-      }
-      observedSignal?.addEventListener('abort', () => reject(observedSignal?.reason), { once: true });
-    });
+    throw new Error('external discovery must not run on task_prepare');
   };
   try {
-    const preparation = prepareOpenCodeTask(database, {
+    const prepared = await prepareOpenCodeTask(database, {
       requestId: 'task-prepare-timeout-fixture',
       cwd: root,
       task: 'Build a TypeScript service',
@@ -50,12 +33,12 @@ test('task preparation propagates cancellation into external skill discovery wit
       ],
       skillDiscoveryMode: 'official',
       fetchImpl,
-      signal: controller.signal,
     });
-    await waitFor(() => started);
-    controller.abort();
-    await assert.rejects(preparation, (error: unknown) => error === controller.signal.reason);
-    assert.equal(observedSignal?.aborted, true);
+    assert.equal(prepared.nextAction, 'proceed');
+    assert.equal(prepared.enrichment.skills, 'pending');
+    assert.equal(started, false);
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM orchestration_jobs WHERE kind = 'skill_discovery' AND state = 'pending'")
+      .get<{ count: number }>()?.count, 1);
   } finally {
     database.close();
   }

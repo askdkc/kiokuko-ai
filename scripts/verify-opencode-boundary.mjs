@@ -59,9 +59,10 @@ for (const file of files.sort()) {
 }
 
 const migrationEntries = await readdir('migrations');
-const migrationSqlFiles = migrationEntries.filter((entry) => entry.endsWith('.sql'));
-if (migrationSqlFiles.length !== 1 || migrationSqlFiles[0] !== '001_initial.sql') {
-  findings.push(`migrations: expected only 001_initial.sql, found [${migrationSqlFiles.join(', ')}]`);
+const migrationSqlFiles = migrationEntries.filter((entry) => entry.endsWith('.sql')).sort();
+const expectedMigrations = ['001_initial.sql', '002_non_blocking_orchestration.sql'];
+if (JSON.stringify(migrationSqlFiles) !== JSON.stringify(expectedMigrations)) {
+  findings.push(`migrations: expected [${expectedMigrations.join(', ')}], found [${migrationSqlFiles.join(', ')}]`);
 }
 
 for (const directory of removedGatewayDirectories) {

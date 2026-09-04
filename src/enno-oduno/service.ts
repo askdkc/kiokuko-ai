@@ -52,6 +52,7 @@ import {
   parsePlanSubmission,
   parseVerificationPrepare,
   parseWorkReport,
+  parseWorkClaim,
 } from './schemas.js';
 import {
   completeRequiredSkillList,
@@ -69,7 +70,9 @@ import {
   readEnnoSnapshot,
   readFreshFinalVerifierResults,
   readOperationReceipt,
+  requeueExpiredExecutionLeasesInTransaction,
   releaseExecutionLeaseInTransaction,
+  releaseWorkUnitExecutionLeaseInTransaction,
   renewExecutionLeaseInTransaction,
   resolveEnnoIdentity,
   replaceWorkUnitsInTransaction,
@@ -103,10 +106,9 @@ import {
   type VerifierRunResult,
 } from './types.js';
 import { runVerifiers, type VerifierDependencies } from './verifier.js';
+import { enqueueOrchestrationJob } from '../orchestration/jobs.js';
+import { stagePlanArtifactInTransaction } from './plan-artifact.js';
 import {
-  planStartRecoveryBlocker,
-  planStartRecoveryError,
-  planStartRecoveryReasonFromBlocker,
   type PlanStartRecoveryReason,
 } from './plan-recovery.js';
 import { ennoValidationError } from './validation-errors.js';
@@ -138,6 +140,7 @@ export interface EnnoOperationResponse {
   verifierResults?: VerifierRunResult[];
   advisoryRound?: StoredAdvisoryRound;
   executionLease?: EnnoExecutionLease;
+  executionLeases?: EnnoExecutionLease[];
 }
 
 export interface EnnoAdviceReadResponse {
@@ -149,6 +152,7 @@ export interface EnnoAdviceReadResponse {
 export interface EnnoServiceDependencies extends VerifierDependencies {
   discoverSkills?: typeof discoverSkills;
   fetchImpl?: typeof fetch;
+  maxParallelWorkUnits?: number;
 }
 
 interface PreparedTaskShape {
@@ -194,6 +198,8 @@ function stateForSnapshot(snapshot: EnnoRunSnapshot): EnnoOdunoState {
     directive,
     nextAction,
     advisoryPhaseState: snapshot.advisoryPhaseState ?? { state: 'not_started' },
+    planArtifact: snapshot.planArtifact ?? null,
+    qualityState: snapshot.qualityState ?? 'normal',
   };
 }
 
@@ -224,6 +230,8 @@ function intakeEnnoState(input: {
     directive,
     nextAction: 'answer_intake',
     advisoryPhaseState: { state: 'not_started' },
+    planArtifact: null,
+    qualityState: 'degraded',
   };
 }
 
@@ -241,6 +249,8 @@ export function inapplicableEnnoState(): EnnoOdunoState {
     directive: null,
     nextAction: 'complete',
     advisoryPhaseState: { state: 'not_started' },
+    planArtifact: null,
+    qualityState: 'normal',
   };
 }
 
@@ -622,34 +632,86 @@ function assertExpected(snapshot: EnnoRunSnapshot, expectedRevision: number, sta
   if (!statuses.includes(snapshot.status)) throw new KiokukoError('CONFLICT', 'Enno run is not in the required state');
 }
 
-function firstReadyUnit(snapshot: EnnoRunSnapshot): EnnoRunSnapshot['workUnits'][number] | undefined {
+function readyUnits(snapshot: EnnoRunSnapshot): EnnoRunSnapshot['workUnits'] {
   const completed = new Set(snapshot.workUnits.filter((unit) => unit.status === 'completed').map((unit) => unit.workUnit.id));
-  return snapshot.workUnits.find((unit) => unit.status === 'pending'
+  return snapshot.workUnits.filter((unit) => unit.status === 'pending'
     && unit.workUnit.dependencies.every((dependency) => completed.has(dependency)));
 }
 
-function startFirstReadyUnit(database: SqliteDatabase, snapshot: EnnoRunSnapshot): EnnoExecutionLease | undefined {
-  const next = firstReadyUnit(snapshot);
-  if (next === undefined) {
-    if (snapshot.workUnits.every((unit) => unit.status === 'completed')) return undefined;
+function normalizedMaximumParallel(value: number | undefined): number {
+  if (value === undefined) return 3;
+  if (!Number.isSafeInteger(value) || value < 1 || value > 8) {
+    throw new KiokukoError('VALIDATION_ERROR', 'Enno parallel WorkUnit limit must be between 1 and 8');
+  }
+  return value;
+}
+
+function claimsFor(unit: EnnoRunSnapshot['workUnits'][number]): Array<{ key: string; access: 'read' | 'write' | 'quota' }> {
+  const declared = unit.workUnit.resourceClaims ?? [];
+  if (declared.length > 0) return declared;
+  const access = unit.workUnit.isolationPreference === 'read_only' ? 'read' as const : 'write' as const;
+  return unit.workUnit.scope.map((key) => ({ key, access }));
+}
+
+function claimsConflict(
+  left: EnnoRunSnapshot['workUnits'][number],
+  right: EnnoRunSnapshot['workUnits'][number],
+): boolean {
+  if (left.workUnit.isolationPreference === 'isolated_worktree'
+    && right.workUnit.isolationPreference === 'isolated_worktree') return false;
+  const rightClaims = new Map(claimsFor(right).map((claim) => [claim.key, claim.access]));
+  return claimsFor(left).some((claim) => {
+    const other = rightClaims.get(claim.key);
+    return other !== undefined && (claim.access !== 'read' || other !== 'read');
+  });
+}
+
+function startReadyUnits(
+  database: SqliteDatabase,
+  snapshot: EnnoRunSnapshot,
+  configuredMaximum?: number,
+): EnnoExecutionLease[] {
+  const maximum = normalizedMaximumParallel(configuredMaximum);
+  const active = snapshot.workUnits.filter((unit) => unit.status === 'in_progress');
+  const selected: EnnoRunSnapshot['workUnits'] = [];
+  for (const candidate of readyUnits(snapshot)) {
+    if (active.length + selected.length >= maximum) break;
+    const parallelSafe = candidate.workUnit.isolationPreference === 'read_only'
+      || candidate.workUnit.isolationPreference === 'isolated_worktree';
+    if (!parallelSafe && active.length + selected.length > 0) continue;
+    if ([...active, ...selected].some((other) => claimsConflict(candidate, other))) continue;
+    selected.push(candidate);
+  }
+  if (selected.length === 0) {
+    if (snapshot.workUnits.every((unit) => unit.status === 'completed') || active.length > 0) return [];
     throw new KiokukoError('CONFLICT', 'Enno WorkPlan dependencies cannot advance');
   }
-  setWorkUnitStatusInTransaction(database, {
-    runId: snapshot.runId,
-    contractRevision: snapshot.revision,
-    workUnitId: next.workUnit.id,
-    from: 'pending',
-    to: 'in_progress',
-  });
-  appendEnnoEventInTransaction(database, snapshot.runId, 'goki.work_started', 'goki', 'started', {
-    workUnitId: next.workUnit.id,
-    contractRevision: snapshot.revision,
-  });
-  if (snapshot.clientKind === null || snapshot.clientSessionId === null) return undefined;
-  return claimExecutionLeaseInTransaction(database, snapshot, next.workUnit.id, {
-    clientKind: snapshot.clientKind,
-    sessionId: snapshot.clientSessionId,
-  });
+  const leases: EnnoExecutionLease[] = [];
+  for (const next of selected) {
+    // Attempt counters are diagnostics, not a global gate. Saturate the legacy
+    // persisted counter while the lease token remains the authoritative fence.
+    const attemptCount = Math.min(next.attemptCount + 1, 20);
+    setWorkUnitStatusInTransaction(database, {
+      runId: snapshot.runId,
+      contractRevision: snapshot.revision,
+      workUnitId: next.workUnit.id,
+      from: 'pending',
+      to: 'in_progress',
+      attemptCount,
+    });
+    appendEnnoEventInTransaction(database, snapshot.runId, 'goki.work_started', 'goki', 'started', {
+      workUnitId: next.workUnit.id,
+      contractRevision: snapshot.revision,
+      inputManifestDigest: next.workUnit.inputManifestDigest ?? null,
+    });
+    leases.push(claimExecutionLeaseInTransaction(database, snapshot, next.workUnit.id, {
+      clientKind: snapshot.clientKind ?? 'opencode',
+      // MCP clientInfo has no portable session ID. The orchestration session is
+      // the stable owner fallback; an explicit OpenCode session still wins.
+      sessionId: snapshot.clientSessionId ?? snapshot.orchestrationId,
+    }));
+  }
+  return leases;
 }
 
 function requiresConfirmation(provenance: EnnoOdunoContract['provenance']): boolean {
@@ -702,11 +764,10 @@ async function discoverZenkiSkills(
   database: SqliteDatabase,
   snapshot: EnnoRunSnapshot,
   plan: PlanSubmission,
-  dependencies: EnnoServiceDependencies,
+  _dependencies: EnnoServiceDependencies,
 ): Promise<SkillDiscoverySummary> {
   const intake = snapshot.contract.skillSet.intakeDiscovery;
   if (intake.mode === 'off') return emptyDiscovery(intake.mode);
-  const context = await readRunTaskContext(database, snapshot);
   const attempt = {
     runId: snapshot.runId,
     phase: 'zenki' as const,
@@ -723,35 +784,21 @@ async function discoverZenkiSkills(
   };
   const replay = readTaskSkillDiscoveryAttempt(database, attempt);
   if (replay !== undefined) return replay.summary;
-  const claimed = claimTaskSkillDiscoveryAttempt(database, attempt, {
-    queryBudget: ENNO_MAX_TOTAL_SKILL_QUERIES,
-    selectionBudget: ENNO_MAX_EXTERNAL_SKILLS,
-  });
-  if (claimed.kind === 'replay') return claimed.summary;
-  if (claimed.queryBudget === 0 || claimed.selectionBudget === 0) {
-    return completeTaskSkillDiscoveryAttempt(database, attempt, emptyDiscovery(intake.mode), () => {
-      assertExpected(readEnnoSnapshot(database, identity(database, plan)), plan.expectedRevision, ['zenki_planning']);
-    });
-  }
-  try {
-    const summary = await (dependencies.discoverSkills ?? discoverSkills)(database, {
-      ...context,
-      task: `${context.task}\n${plan.workPlan.objective}`,
-      capabilities: plan.capabilities,
+  enqueueOrchestrationJob(database, {
+    kind: 'skill_discovery',
+    runId: snapshot.runId,
+    payload: {
+      phase: 'zenki',
+      workspace: snapshot.workspace,
+      repositoryRoot: snapshot.repositoryRoot,
+      contractRevision: snapshot.revision,
       mode: intake.mode,
-      maxQueries: claimed.queryBudget as 1 | 2 | 3,
-      maxSelectedSkills: claimed.selectionBudget as 1 | 2,
-      ...(dependencies.fetchImpl === undefined ? {} : { fetchImpl: dependencies.fetchImpl }),
-    }, {
-      ...(dependencies.fetchImpl === undefined ? {} : { fetchImpl: dependencies.fetchImpl }),
-      assertBeforePersist: () => assertExpected(readEnnoSnapshot(database, identity(database, plan)), plan.expectedRevision, ['zenki_planning']),
-    });
-    return completeTaskSkillDiscoveryAttempt(database, attempt, summary, () => {
-      assertExpected(readEnnoSnapshot(database, identity(database, plan)), plan.expectedRevision, ['zenki_planning']);
-    });
-  } catch (error) {
-    failTaskSkillDiscoveryAttempt(database, attempt, error);
-  }
+      objective: plan.workPlan.objective,
+      requirements: plan.skillRequirements.map((requirement) => requirement.name),
+      requestDigest: attempt.requestDigest,
+    },
+  });
+  return emptyDiscovery(intake.mode);
 }
 
 function planChangesCode(plan: PlanSubmission, taskType: EnnoRunSnapshot['taskType']): boolean {
@@ -795,28 +842,6 @@ function planCapabilityRecoveryReason(
     }
     throw error;
   }
-}
-
-function pausePlanStartRecovery(
-  database: SqliteDatabase,
-  snapshot: EnnoRunSnapshot,
-  reason: PlanStartRecoveryReason,
-): never {
-  withImmediateTransaction(database, () => {
-    const updated = database.prepare(`
-      UPDATE enno_contracts
-      SET blocker = ?, updated_at = ?
-      WHERE run_id = ? AND revision = ? AND status = 'zenki_planning'
-      RETURNING run_id AS runId
-    `).get<{ runId: string }>(
-      planStartRecoveryBlocker(reason),
-      new Date().toISOString(),
-      snapshot.runId,
-      snapshot.revision,
-    );
-    if (updated?.runId !== snapshot.runId) throw new KiokukoError('CONFLICT', 'Enno plan state changed concurrently');
-  });
-  throw planStartRecoveryError(reason);
 }
 
 function endedBeforeWorkBecausePlanCatalogWasLost(
@@ -909,31 +934,12 @@ export async function submitEnnoPlan(
   const parsedInput = parsePlanSubmission(rawInput);
   const current = readEnnoSnapshot(database, identity(database, parsedInput));
   const input = sanitizePlanSubmission(parsedInput, current.repositoryRoot);
-  if (endedBeforeWorkBecausePlanCatalogWasLost(database, current, input.capabilities)) {
-    throw planStartRecoveryError('previous_attempt_ended');
-  }
   const operation = operationIdentity('plan_submit', input.idempotencyKey, input);
   const replay = readOperationReceipt<EnnoOperationResponse>(database, input.runId, operation);
   if (replay !== undefined) return replay;
   const before = current;
   assertExpected(before, input.expectedRevision, ['zenki_planning']);
-  const pendingRecovery = planStartRecoveryReasonFromBlocker(before.blocker);
-  if (pendingRecovery === 'environment_information_missing') {
-    if (input.recoveryAction === undefined) throw planStartRecoveryError(pendingRecovery);
-  } else if (pendingRecovery !== null) {
-    throw planStartRecoveryError(pendingRecovery);
-  } else if (input.recoveryAction !== undefined) {
-    throw new KiokukoError('CONFLICT', 'Enno plan has no pending same-run recovery choice');
-  }
-  if (input.maxAttempts <= before.attempts) {
-    throw ennoValidationError('plan_submit', [{
-      path: ['maxAttempts'],
-      reasonCode: 'too_few_items',
-      expected: { minItems: before.attempts + 1 },
-    }]);
-  }
   const recoveryReason = planCapabilityRecoveryReason(database, input, before.workspace);
-  if (recoveryReason !== null) pausePlanStartRecovery(database, before, recoveryReason);
   if (input.advisoryRoundDigest !== undefined) {
     requireAdvisoryRound(database, before, 'planning', before.mutationRevision, advisoryContextForSubmission(before, 'planning'), input.advisoryRoundDigest);
   }
@@ -957,6 +963,39 @@ export async function submitEnnoPlan(
   });
   const unavailable = unavailableRequiredSkills(entries);
   const nextRevision = input.expectedRevision + 1;
+  const normalizedUnits = input.workPlan.units.map((unit) => {
+    const resourceClaims = unit.resourceClaims.length > 0
+      ? unit.resourceClaims.map((claim) => ({ ...claim }))
+      : unit.scope.map((key) => ({
+          key,
+          access: unit.isolationPreference === 'read_only' ? 'read' as const : 'write' as const,
+        }));
+    const normalized = {
+      ...unit,
+      scope: [...unit.scope],
+      dependencies: [...unit.dependencies],
+      routes: [...unit.routes],
+      skillNames: orderedUniqueSkillNames([
+        STANDARD_SOUL_SKILL_NAME,
+        ...(unit.routes.includes('code') || unit.routes.includes('ui') ? [STANDARD_FUNCTION_SKILL_NAME] : []),
+        ...(unit.routes.includes('ui') ? [STANDARD_UI_SKILL_NAME] : []),
+      ], unit.skillNames),
+      expertRefs: unit.expertRefs.map((reference) => ({ ...reference })),
+      acceptanceCriteria: [...unit.acceptanceCriteria],
+      focusedVerifiers: unit.focusedVerifiers.map((verifier) => ({ ...verifier, args: [...verifier.args] })),
+      resourceClaims,
+      isolationPreference: unit.isolationPreference,
+      outputContract: unit.outputContract,
+    };
+    return {
+      ...normalized,
+      inputManifestDigest: canonicalContentHash({
+        version: 1,
+        contractRevision: nextRevision,
+        workUnit: normalized,
+      }),
+    };
+  });
   const contract = {
     revision: nextRevision,
     scope: [...input.scope],
@@ -964,20 +1003,7 @@ export async function submitEnnoPlan(
     acceptanceCriteria: input.acceptanceCriteria.map((item) => ({ ...item })),
     workPlan: {
       objective: input.workPlan.objective,
-      units: input.workPlan.units.map((unit) => ({
-        ...unit,
-        scope: [...unit.scope],
-        dependencies: [...unit.dependencies],
-        routes: [...unit.routes],
-        skillNames: orderedUniqueSkillNames([
-          STANDARD_SOUL_SKILL_NAME,
-          ...(unit.routes.includes('code') || unit.routes.includes('ui') ? [STANDARD_FUNCTION_SKILL_NAME] : []),
-          ...(unit.routes.includes('ui') ? [STANDARD_UI_SKILL_NAME] : []),
-        ], unit.skillNames),
-        expertRefs: unit.expertRefs.map((reference) => ({ ...reference })),
-        acceptanceCriteria: [...unit.acceptanceCriteria],
-        focusedVerifiers: unit.focusedVerifiers.map((verifier) => ({ ...verifier, args: [...verifier.args] })),
-      })),
+      units: normalizedUnits,
     },
     skillSet: {
       entries,
@@ -989,7 +1015,10 @@ export async function submitEnnoPlan(
     provenance: { ...input.provenance },
   };
   assertContractVerifierCwds(before.repositoryRoot, contract);
-  const needsConfirmation = requiresConfirmation(contract.provenance);
+  // General plan agreement and inferred fields are advisory. Authorization for
+  // irreversible side effects remains a host-level safety boundary.
+  const needsConfirmation = false;
+  const attemptLimitReached = before.attempts >= input.maxAttempts;
   return withImmediateTransaction(database, () => {
     const replayed = readOperationReceipt<EnnoOperationResponse>(database, input.runId, operation);
     if (replayed !== undefined) return replayed;
@@ -1005,12 +1034,8 @@ export async function submitEnnoPlan(
       input.advisoryRoundDigest,
       input.advisoryDisposition as AdvisoryDisposition[] | undefined,
     );
-    const status = unavailable.length > 0
-      ? 'blocked' as const
-      : needsConfirmation ? 'needs_confirmation' as const : 'goki_executing' as const;
-    const blocker = unavailable.length === 0
-      ? null
-      : `Required Skills unavailable: ${unavailable.map((skill) => skill.name).join(', ')}`;
+    const status = needsConfirmation ? 'needs_confirmation' as const : 'goki_executing' as const;
+    const blocker = null;
     updateContractInTransaction(database, current, {
       contract,
       status,
@@ -1019,31 +1044,106 @@ export async function submitEnnoPlan(
       planDigest: canonicalContentHash(contract.workPlan),
     });
     replaceWorkUnitsInTransaction(database, input.runId, nextRevision, contract.workPlan);
+    const planArtifact = stagePlanArtifactInTransaction(database, {
+      workspace: current.workspace,
+      repositoryRoot: current.repositoryRoot,
+      runId: input.runId,
+      contract,
+    });
+    enqueueOrchestrationJob(database, {
+      kind: 'plan_publish',
+      runId: input.runId,
+      payload: {
+        runId: input.runId,
+        contractRevision: nextRevision,
+        planDigest: planArtifact.digest,
+      },
+    });
     appendEnnoEventInTransaction(database, input.runId, 'zenki.plan_created', 'zenki', 'created', {
       contractRevision: nextRevision,
       workUnitIds: contract.workPlan.units.map((unit) => unit.id),
+      planDigest: planArtifact.digest,
+      qualityState: unavailable.length > 0 || recoveryReason !== null || attemptLimitReached ? 'degraded' : 'normal',
     });
-    let updated = readEnnoSnapshot(database, identity(database, input));
-    let executionLease: EnnoExecutionLease | undefined;
-    if (status === 'blocked') {
-      appendEnnoEventInTransaction(database, input.runId, 'enno.blocked', 'enno-oduno', 'blocked', {
-        reason: blocker,
+    if (unavailable.length > 0 || recoveryReason !== null || attemptLimitReached) {
+      appendEnnoEventInTransaction(database, input.runId, 'enno.quality_degraded', 'enno-oduno', 'warning', {
         contractRevision: nextRevision,
+        unavailableSkills: unavailable.map((skill) => skill.name),
+        capabilityCatalog: recoveryReason,
+        attemptLimitReached,
       });
-      terminalizeLedgerRunInTransaction(database, input.runId, 'failed');
-    } else if (status === 'goki_executing') {
+    }
+    let updated = readEnnoSnapshot(database, identity(database, input));
+    let executionLeases: EnnoExecutionLease[] = [];
+    if (status === 'goki_executing') {
       appendEnnoEventInTransaction(database, input.runId, 'enno.plan_confirmed', 'enno-oduno', 'not_required', {
         contractRevision: nextRevision,
       });
-      executionLease = startFirstReadyUnit(database, updated);
+      executionLeases = startReadyUnits(database, updated, dependencies.maxParallelWorkUnits);
       updated = readEnnoSnapshot(database, identity(database, input));
     }
     const response: EnnoOperationResponse = {
       ennoOduno: stateForSnapshot(updated),
       ...(advisoryRound === undefined ? {} : { advisoryRound }),
-      ...(executionLease === undefined ? {} : { executionLease }),
+      ...(executionLeases[0] === undefined ? {} : { executionLease: executionLeases[0] }),
+      ...(executionLeases.length === 0 ? {} : { executionLeases }),
     };
     completeOperationInTransaction(database, input.runId, operation, operationOwner, response);
+    return response;
+  });
+}
+
+/** Atomically claim every currently runnable, resource-compatible WorkUnit. */
+export function claimEnnoWork(database: SqliteDatabase, rawInput: unknown): EnnoOperationResponse {
+  const input = parseWorkClaim(rawInput);
+  const requestDigest = canonicalContentHash({
+    version: 1,
+    operation: 'work_claim',
+    runId: input.runId,
+    expectedRevision: input.expectedRevision,
+    maxParallel: input.maxParallel,
+  });
+  return withImmediateTransaction(database, () => {
+    const existing = database.prepare(`
+      SELECT request_digest AS requestDigest, response_json AS responseJson
+      FROM enno_work_claim_receipts
+      WHERE run_id = ? AND idempotency_key = ?
+    `).get<{ requestDigest: string; responseJson: string }>(input.runId, input.idempotencyKey);
+    if (existing !== undefined) {
+      if (existing.requestDigest !== requestDigest) {
+        throw new KiokukoError('CONFLICT', 'Enno WorkUnit claim idempotency key was reused with different input');
+      }
+      let parsed: unknown;
+      try { parsed = JSON.parse(existing.responseJson); } catch {
+        throw new KiokukoError('INTEGRITY_ERROR', 'Stored Enno WorkUnit claim receipt is invalid');
+      }
+      if (canonicalJson(parsed) !== existing.responseJson) {
+        throw new KiokukoError('INTEGRITY_ERROR', 'Stored Enno WorkUnit claim receipt is invalid');
+      }
+      return parsed as EnnoOperationResponse;
+    }
+    let current = readEnnoSnapshot(database, identity(database, input));
+    assertExpected(current, input.expectedRevision, ['goki_executing']);
+    const expired = requeueExpiredExecutionLeasesInTransaction(database, current.runId, current.revision);
+    for (const workUnitId of expired) {
+      appendEnnoEventInTransaction(database, current.runId, 'goki.work_failed', 'goki', 'lease_expired', {
+        contractRevision: current.revision,
+        workUnitId,
+      });
+    }
+    if (expired.length > 0) current = readEnnoSnapshot(database, identity(database, input));
+    const executionLeases = startReadyUnits(database, current, input.maxParallel);
+    const updated = readEnnoSnapshot(database, identity(database, input));
+    const response: EnnoOperationResponse = {
+      ennoOduno: stateForSnapshot(updated),
+      executionLeases,
+      ...(executionLeases[0] === undefined ? {} : { executionLease: executionLeases[0] }),
+    };
+    database.prepare(`
+      INSERT INTO enno_work_claim_receipts (
+        run_id, idempotency_key, request_digest, response_json, created_at
+      ) VALUES (?, ?, ?, ?, ?)
+    `).run(input.runId, input.idempotencyKey, requestDigest, canonicalJson(response), new Date().toISOString());
     return response;
   });
 }
@@ -1067,7 +1167,7 @@ export function answerEnno(
     );
     const operationOwner = startOperationInTransaction(database, input.runId, operation);
     let next: EnnoRunSnapshot;
-    let executionLease: EnnoExecutionLease | undefined;
+    let executionLeases: EnnoExecutionLease[] = [];
     if (input.action === 'approve') {
       updateContractInTransaction(database, current, {
         contract: current.contract,
@@ -1078,7 +1178,7 @@ export function answerEnno(
         contractRevision: current.revision,
       });
       next = readEnnoSnapshot(database, identity(database, input));
-      executionLease = startFirstReadyUnit(database, next);
+      executionLeases = startReadyUnits(database, next);
       next = readEnnoSnapshot(database, identity(database, input));
     } else if (input.action === 'revise') {
       const revisedContract = {
@@ -1106,7 +1206,8 @@ export function answerEnno(
     }
     const response = {
       ennoOduno: stateForSnapshot(next),
-      ...(executionLease === undefined ? {} : { executionLease }),
+      ...(executionLeases[0] === undefined ? {} : { executionLease: executionLeases[0] }),
+      ...(executionLeases.length === 0 ? {} : { executionLeases }),
     };
     completeOperationInTransaction(database, input.runId, operation, operationOwner, response);
     return response;
@@ -1162,41 +1263,6 @@ function sanitizedReviewSummary(summary: string, repositoryRoot: string): string
   return (sanitizeJson({ summary }, { workspace: repositoryRoot }).value as { summary: string }).summary;
 }
 
-function blockedForAttemptLimit(database: SqliteDatabase, snapshot: EnnoRunSnapshot, operation: OperationIdentity): EnnoOperationResponse {
-  const operationOwner = startOperationInTransaction(database, snapshot.runId, operation);
-  const activeUnit = snapshot.workUnits.find((candidate) => candidate.status === 'in_progress');
-  if (activeUnit !== undefined) {
-    setWorkUnitStatusInTransaction(database, {
-      runId: snapshot.runId,
-      contractRevision: snapshot.revision,
-      workUnitId: activeUnit.workUnit.id,
-      from: 'in_progress',
-      to: 'blocked',
-      attemptCount: activeUnit.attemptCount,
-      result: activeUnit.result,
-    });
-  }
-  releaseExecutionLeaseInTransaction(database, snapshot.runId);
-  updateContractInTransaction(database, snapshot, {
-    contract: snapshot.contract,
-    status: 'blocked',
-    confirmationState: snapshot.confirmationState,
-    blocker: 'Enno attempt limit reached',
-  });
-  appendEnnoEventInTransaction(database, snapshot.runId, 'enno.blocked', 'enno-oduno', 'blocked', {
-    reason: 'attempt_limit',
-    attempts: snapshot.attempts,
-  });
-  terminalizeLedgerRunInTransaction(database, snapshot.runId, 'failed');
-  const response = { ennoOduno: stateForSnapshot(readEnnoSnapshot(database, {
-    runId: snapshot.runId,
-    workspace: snapshot.workspace,
-    orchestrationId: snapshot.orchestrationId,
-  })) };
-  completeOperationInTransaction(database, snapshot.runId, operation, operationOwner, response);
-  return response;
-}
-
 export async function reportEnnoWork(
   database: SqliteDatabase,
   rawInput: unknown,
@@ -1212,14 +1278,6 @@ export async function reportEnnoWork(
   assertExpected(before, input.expectedRevision, ['goki_executing']);
   const unit = before.workUnits.find((candidate) => candidate.workUnit.id === input.workUnitId);
   if (unit === undefined || unit.status !== 'in_progress') throw new KiokukoError('CONFLICT', 'Reported Enno WorkUnit is not active');
-  if (before.attempts >= before.contract.maxAttempts) {
-    return withImmediateTransaction(database, () => {
-      const current = readEnnoSnapshot(database, identity(database, input));
-      assertExpected(current, input.expectedRevision, ['goki_executing']);
-      assertExecutionLeaseInTransaction(database, current, input);
-      return blockedForAttemptLimit(database, current, operation);
-    });
-  }
   if (input.result.outcome !== 'completed') {
     return withImmediateTransaction(database, () => {
       const current = readEnnoSnapshot(database, identity(database, input));
@@ -1227,35 +1285,39 @@ export async function reportEnnoWork(
       assertExecutionLeaseInTransaction(database, current, input);
       const operationOwner = startOperationInTransaction(database, input.runId, operation);
       const currentUnit = current.workUnits.find((candidate) => candidate.workUnit.id === input.workUnitId)!;
-      const attempts = current.attempts + 1;
-      const mustBlock = input.result.outcome === 'blocked' || attempts >= current.contract.maxAttempts;
+      const attempts = Math.min(current.attempts + 1, 20);
+      const replanNote = `Goki WorkUnit ${input.workUnitId} failed: ${input.result.summary}`.slice(0, 16_384);
       setWorkUnitStatusInTransaction(database, {
         runId: input.runId,
         contractRevision: current.revision,
         workUnitId: input.workUnitId,
         from: 'in_progress',
-        to: mustBlock ? 'blocked' : 'in_progress',
-        attemptCount: currentUnit.attemptCount + 1,
+        to: input.result.outcome === 'blocked' ? 'blocked' : 'failed',
+        attemptCount: currentUnit.attemptCount,
         result: input.result,
       });
+      const nextContract = { ...current.contract, revision: current.revision + 1 };
       updateContractInTransaction(database, current, {
-        contract: current.contract,
-        status: mustBlock ? 'blocked' : 'goki_executing',
-        confirmationState: current.confirmationState,
+        contract: nextContract,
+        status: 'zenki_planning',
+        confirmationState: 'revision_requested',
         attempts,
-        blocker: mustBlock ? input.result.summary : null,
+        blocker: replanNote,
       });
       appendEnnoEventInTransaction(database, input.runId, 'goki.work_failed', 'goki', input.result.outcome, {
         workUnitId: input.workUnitId,
         attempt: attempts,
       });
-      if (mustBlock) {
-        releaseExecutionLeaseInTransaction(database, input.runId);
-        appendEnnoEventInTransaction(database, input.runId, 'enno.blocked', 'enno-oduno', 'blocked', {
-          reason: input.result.summary,
-        });
-        terminalizeLedgerRunInTransaction(database, input.runId, 'failed');
-      }
+      releaseExecutionLeaseInTransaction(database, input.runId);
+      appendEnnoEventInTransaction(database, input.runId, 'enno.replan_requested', 'enno-oduno', 'requested', {
+        fromContractRevision: current.revision,
+        toContractRevision: nextContract.revision,
+        reason: replanNote,
+      });
+      appendEnnoEventInTransaction(database, input.runId, 'enno.quality_degraded', 'enno-oduno', 'warning', {
+        contractRevision: nextContract.revision,
+        reason: input.result.outcome === 'blocked' ? 'worker_blocked' : 'work_failed',
+      });
       const response = { ennoOduno: stateForSnapshot(readEnnoSnapshot(database, identity(database, input))) };
       completeOperationInTransaction(database, input.runId, operation, operationOwner, response);
       return response;
@@ -1295,43 +1357,44 @@ export async function reportEnnoWork(
     assertExecutionLeaseInTransaction(database, current, input);
     finishVerifierRunsInTransaction(database, verifierRunIds, results);
     const passed = results.every((result) => result.status === 'passed');
-    const unsafe = results.some((result) => result.status === 'spawn_failed');
-    const attempts = current.attempts + (passed ? 0 : 1);
-    const mustBlock = unsafe || (!passed && attempts >= current.contract.maxAttempts);
+    const attempts = Math.min(current.attempts + (passed ? 0 : 1), 20);
     const currentUnit = current.workUnits.find((candidate) => candidate.workUnit.id === input.workUnitId)!;
+    const replanNote = passed
+      ? null
+      : `Focused verification rejected WorkUnit ${input.workUnitId}: ${results.map((result) => `${result.verifier.id}=${result.status}`).join('; ')}`.slice(0, 16_384);
     setWorkUnitStatusInTransaction(database, {
       runId: input.runId,
       contractRevision: current.revision,
       workUnitId: input.workUnitId,
       from: 'in_progress',
-      to: passed ? 'completed' : mustBlock ? 'blocked' : 'in_progress',
-      attemptCount: currentUnit.attemptCount + 1,
+      to: passed ? 'completed' : 'failed',
+      attemptCount: currentUnit.attemptCount,
       result: input.result,
     });
+    const nextContract = passed
+      ? current.contract
+      : { ...current.contract, revision: current.revision + 1 };
     updateContractInTransaction(database, current, {
-      contract: current.contract,
-      status: mustBlock ? 'blocked' : 'goki_executing',
-      confirmationState: current.confirmationState,
+      contract: nextContract,
+      status: passed ? 'goki_executing' : 'zenki_planning',
+      confirmationState: passed ? current.confirmationState : 'revision_requested',
       attempts,
       mutationRevision: current.mutationRevision + (input.result.mutated ? 1 : 0),
-      blocker: mustBlock
-        ? unsafe ? 'Focused verifier could not be started safely' : 'Focused verification failed at the attempt limit'
-        : null,
+      blocker: replanNote,
     });
     appendEnnoEventInTransaction(database, input.runId, passed ? 'goki.work_completed' : 'goki.work_failed', 'goki', passed ? 'completed' : 'verification_failed', {
       workUnitId: input.workUnitId,
       mutated: input.result.mutated,
       changedPaths: input.result.changedPaths,
     });
-    releaseExecutionLeaseInTransaction(database, input.runId);
+    if (passed) {
+      releaseWorkUnitExecutionLeaseInTransaction(database, input.runId, current.revision, input.workUnitId);
+    } else {
+      releaseExecutionLeaseInTransaction(database, input.runId);
+    }
     let next = readEnnoSnapshot(database, identity(database, input));
-    let executionLease: EnnoExecutionLease | undefined;
-    if (mustBlock) {
-      appendEnnoEventInTransaction(database, input.runId, 'enno.blocked', 'enno-oduno', 'blocked', {
-        reason: unsafe ? 'spawn_failed' : 'focused_verification_failed',
-      });
-      terminalizeLedgerRunInTransaction(database, input.runId, 'failed');
-    } else if (passed) {
+    let executionLeases: EnnoExecutionLease[] = [];
+    if (passed) {
       if (next.workUnits.every((candidate) => candidate.status === 'completed')) {
         updateContractInTransaction(database, next, {
           contract: next.contract,
@@ -1339,14 +1402,25 @@ export async function reportEnnoWork(
           confirmationState: next.confirmationState,
         });
       } else {
-        executionLease = startFirstReadyUnit(database, next);
+        executionLeases = startReadyUnits(database, next, dependencies.maxParallelWorkUnits);
       }
       next = readEnnoSnapshot(database, identity(database, input));
+    } else {
+      appendEnnoEventInTransaction(database, input.runId, 'enno.replan_requested', 'enno-oduno', 'requested', {
+        fromContractRevision: current.revision,
+        toContractRevision: nextContract.revision,
+        reason: replanNote,
+      });
+      appendEnnoEventInTransaction(database, input.runId, 'enno.quality_degraded', 'enno-oduno', 'warning', {
+        contractRevision: nextContract.revision,
+        reason: 'focused_verification_failed',
+      });
     }
     const response = {
       ennoOduno: stateForSnapshot(next),
       verifierResults: results,
-      ...(executionLease === undefined ? {} : { executionLease }),
+      ...(executionLeases[0] === undefined ? {} : { executionLease: executionLeases[0] }),
+      ...(executionLeases.length === 0 ? {} : { executionLeases }),
     };
     completeOperationInTransaction(database, input.runId, operation, operationOwner, response);
     return response;
@@ -1366,9 +1440,6 @@ export async function prepareEnnoVerification(
   assertExpected(before, input.expectedRevision, ['enno_verifying']);
   const preRepositoryState = captureRepositoryState(before.repositoryRoot);
   const verifierSpecDigest = canonicalContentHash(before.contract.finalVerifiers);
-  if (before.attempts >= before.contract.maxAttempts) {
-    return withImmediateTransaction(database, () => blockedForAttemptLimit(database, readEnnoSnapshot(database, identity(database, input)), operation));
-  }
   let verifierRunIds: string[] = [];
   let operationOwner = '';
   let cachedResults: VerifierRunResult[] | undefined;
@@ -1465,9 +1536,6 @@ export async function finishEnno(
     requireAdvisoryRound(database, before, 'final_review', before.mutationRevision, advisoryContextForSubmission(before, 'final_review'), input.advisoryRoundDigest);
   }
   const reviewSummary = sanitizedReviewSummary(input.review.summary, before.repositoryRoot);
-  if (before.attempts >= before.contract.maxAttempts) {
-    return withImmediateTransaction(database, () => blockedForAttemptLimit(database, readEnnoSnapshot(database, identity(database, input)), operation));
-  }
   return withImmediateTransaction(database, () => {
     const current = readEnnoSnapshot(database, identity(database, input));
     assertExpected(current, input.expectedRevision, ['enno_verifying']);
@@ -1507,27 +1575,18 @@ export async function finishEnno(
       verifierIds: current.contract.finalVerifiers.map((verifier) => verifier.id),
     });
     const passed = results.length > 0 && results.every((result) => result.status === 'passed');
-    const unsafe = results.some((result) => result.status === 'spawn_failed');
-    const attempts = current.attempts + 1;
+    const attempts = Math.min(current.attempts + 1, 20);
     const accepted = passed && input.review.decision === 'accept';
-    const mustBlock = unsafe || (!accepted && attempts >= current.contract.maxAttempts);
-    const reviewFeedback = accepted || mustBlock
-      ? null
-      : finalReviewFeedback(current.revision, reviewSummary, results);
+    const reviewFeedback = accepted ? null : finalReviewFeedback(current.revision, reviewSummary, results);
     const nextContract = reviewFeedback === null
       ? current.contract
       : { ...current.contract, revision: current.revision + 1 };
-    const blockedReason = unsafe
-      ? 'Final verifier could not be started safely'
-      : input.review.decision === 'replan' && passed
-        ? 'Enno review requested replanning at the attempt limit'
-        : 'Final verification reached the attempt limit';
     updateContractInTransaction(database, current, {
       contract: nextContract,
-      status: accepted ? 'oduno_meditation' : mustBlock ? 'blocked' : 'zenki_planning',
+      status: accepted ? 'oduno_meditation' : 'zenki_planning',
       confirmationState: reviewFeedback === null ? current.confirmationState : 'revision_requested',
       attempts,
-      blocker: mustBlock ? blockedReason : reviewFeedback,
+      blocker: reviewFeedback,
     });
     appendEnnoEventInTransaction(database, input.runId, passed ? 'enno.verification_passed' : 'enno.verification_failed', 'enno-oduno', passed ? 'passed' : 'failed', {
       contractRevision: current.revision,
@@ -1541,16 +1600,15 @@ export async function finishEnno(
         mutationRevision: current.mutationRevision,
         summary: reviewSummary,
       });
-    } else if (mustBlock) {
-      appendEnnoEventInTransaction(database, input.runId, 'enno.blocked', 'enno-oduno', 'blocked', {
-        reason: unsafe ? 'spawn_failed' : 'attempt_limit',
-      });
-      terminalizeLedgerRunInTransaction(database, input.runId, 'failed');
     } else {
       appendEnnoEventInTransaction(database, input.runId, 'enno.replan_requested', 'enno-oduno', 'requested', {
         fromContractRevision: current.revision,
         toContractRevision: next.revision,
         reason: reviewFeedback,
+      });
+      appendEnnoEventInTransaction(database, input.runId, 'enno.quality_degraded', 'enno-oduno', 'warning', {
+        contractRevision: next.revision,
+        reason: 'final_review_replan',
       });
       next = readEnnoSnapshot(database, identity(database, input));
     }

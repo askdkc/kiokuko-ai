@@ -879,7 +879,7 @@ function validateGraph(records: Map<ArchiveRecordType, ArchiveRecord[]>, workspa
     if (run.status === 'active') {
       const intake = intakeByRun.get(runId);
       const session = intake ? byId(records, 'sessions', String(intake.session_id)) : undefined;
-      if (!intake || !session || !['ready', 'exhausted'].includes(String(session.status))) integrity();
+      if (!intake || !session || !['needs_answer', 'ready', 'exhausted'].includes(String(session.status))) integrity();
     }
   }
   for (const intake of intakes) {

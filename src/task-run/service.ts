@@ -189,12 +189,13 @@ export class TaskRunService {
             recommendedTags: result.recommendedTags,
             missingFields: result.missingFields,
           }, now));
-          events.push(this.lifecycleEvent('run.started', {
-            intakeStatus: result.status,
-            profileHash: profileHash(result.session.profile),
-            recommendedTags: result.recommendedTags,
-          }, now));
         }
+        events.push(this.lifecycleEvent('run.started', {
+          intakeStatus: result.status,
+          advisoryIntake: result.status === 'needs_answer',
+          profileHash: profileHash(result.session.profile),
+          recommendedTags: result.recommendedTags,
+        }, now));
         store.appendBatchInTransaction(runId, { events });
         if (result.status === 'ready' || result.status === 'exhausted') {
           finalizeRunIntakeLink(this.database, {
@@ -204,8 +205,11 @@ export class TaskRunService {
             recommendedTags: result.recommendedTags,
             finalizedAt: now,
           });
-          finalRun = store.updateRunStatusInTransaction(runId, 'active', now);
         }
+        // Intake questions enrich the task profile but no longer own the coding
+        // gate. The run is active immediately and may receive memory/context
+        // while Akinator remains advisory.
+        finalRun = store.updateRunStatusInTransaction(runId, 'active', now);
         return this.intakeResult(runId, finalRun.status, result);
       },
     ));
@@ -243,7 +247,7 @@ export class TaskRunService {
           if (mutation.replayed) {
             return this.intakeResult(run.runId, this.requireRun(run.runId).status, mutation.result);
           }
-          if (run.status !== 'intake') conflict('Task run is not waiting for intake');
+          if (run.status !== 'active') conflict('Task run is not active');
           markRunIntakeProfileSource(this.database, {
             workspace: run.workspace,
             runId: run.runId,
@@ -260,11 +264,6 @@ export class TaskRunService {
               recommendedTags: mutation.result.recommendedTags,
               missingFields: mutation.result.missingFields,
             }, now));
-            events.push(this.lifecycleEvent('run.started', {
-              intakeStatus: mutation.result.status,
-              profileHash: profileHash(mutation.result.session.profile),
-              recommendedTags: mutation.result.recommendedTags,
-            }, now));
           }
           this.ledgerStore(run.workspace).appendBatchInTransaction(run.runId, { events });
           let finalRun = this.requireRun(run.runId);
@@ -276,7 +275,6 @@ export class TaskRunService {
               recommendedTags: mutation.result.recommendedTags,
               finalizedAt: now,
             });
-            finalRun = this.ledgerStore(run.workspace).updateRunStatusInTransaction(run.runId, 'active', now);
           }
           return this.intakeResult(run.runId, finalRun.status, mutation.result);
         },

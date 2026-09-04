@@ -40,7 +40,7 @@ export interface NormalizedCapabilityCatalog {
 }
 
 export interface CapabilityWarning {
-  code: 'CAPABILITY_CATALOG_COMPACTED' | 'CAPABILITY_CATALOG_ITEMS_DROPPED' | 'CAPABILITY_CATALOG_BUDGET_EXCEEDED' | 'CAPABILITY_CATALOG_UNAVAILABLE';
+  code: 'CAPABILITY_CATALOG_COMPACTED' | 'CAPABILITY_CATALOG_ITEMS_DROPPED' | 'CAPABILITY_CATALOG_BUDGET_EXCEEDED' | 'CAPABILITY_CATALOG_UNAVAILABLE' | 'REQUIRED_CAPABILITY_UNAVAILABLE';
   message: string;
 }
 
@@ -146,12 +146,12 @@ export function deriveMemoryPolicy(
   if (availability === 'available') {
     return { memoryReasoningRequired: true, contextWithheld: false, withheldReason: null, ...emptyDelivery };
   }
+  // Missing reasoning assistance lowers confidence and produces a capability
+  // warning, but it must not hide otherwise useful memory from the agent.
   return {
     memoryReasoningRequired: true,
-    contextWithheld: true,
-    withheldReason: availability === 'missing'
-      ? 'memory_reasoning_missing'
-      : 'memory_reasoning_unknown',
+    contextWithheld: false,
+    withheldReason: null,
     ...emptyDelivery,
   };
 }
@@ -466,12 +466,25 @@ export function resolveCapabilities(input: {
         : {}),
     };
   });
+  const missingRequired = skills.filter((skill) => skill.required === true && skill.availability !== 'available');
+  const warnings = normalizedCatalogWarningList(
+    normalized.availability,
+    normalized.diagnostics,
+    input.capabilities !== undefined,
+    normalized.budgetExceeded,
+  );
+  if (missingRequired.length > 0) {
+    warnings.push({
+      code: 'REQUIRED_CAPABILITY_UNAVAILABLE',
+      message: `Recommended local capabilities are unavailable: ${missingRequired.map((skill) => skill.name).join(', ')}. Continue from current repository evidence.`,
+    });
+  }
   return {
     availability: normalized.availability,
     catalogProvided,
     availableSkillCount: normalized.availability === 'unknown' ? null : normalized.skills.length,
     diagnostics: normalized.diagnostics,
-    warnings: normalizedCatalogWarningList(normalized.availability, normalized.diagnostics, input.capabilities !== undefined, normalized.budgetExceeded),
+    warnings,
     recommendations: [...skills, ...relevantCatalogCapabilities(input.task, input.profile, catalog, desiredSkillNames)],
   };
 }

@@ -4,6 +4,8 @@ import { OpenCodeIdleState } from './idle-state.js';
 import { parseOpenCodePluginOptions } from './runtime-invocation.js';
 import { OpenCodeCompactionState } from './compaction.js';
 import { OpenCodePluginLifecycle } from './lifecycle.js';
+import { runKiokukoCompactionHook } from './hook-effect.js';
+import { canonicalContentHash } from '../serialization/validate.js';
 
 /**
  * OpenCode's plugin entrypoint.
@@ -17,6 +19,7 @@ export const KiokukoPlugin: Plugin = async ({ client, directory }, options) => {
   const compactionState = new OpenCodeCompactionState();
   const flights = new OpenCodeSessionFlights();
   const lifecycle = new OpenCodePluginLifecycle();
+  const compactionFlights = new Map<string, Promise<void>>();
   const reconciliationState = { sessionUpdates: new Map<string, number>(), retrySessionIds: new Set<string>() };
   const idleDependencies: IdleContinuationDependencies = {
     state,
@@ -35,7 +38,65 @@ export const KiokukoPlugin: Plugin = async ({ client, directory }, options) => {
     },
   };
   const handleEvent = createOpenCodeIdleHandler(client, directory, idleDependencies);
-  const event = (input: { event: unknown }) => lifecycle.run(() => handleEvent(input));
+  const compactionHookDependencies = {
+    signal: lifecycle.signal,
+    timeoutMs: 1_500,
+    ...(options === undefined ? {} : runtime === undefined
+      ? { runtimeFailure: 'version_mismatch' as const }
+      : { runtime }),
+  };
+  const postCompaction = (sessionId: string): void => {
+    if (!lifecycle.isActive() || compactionFlights.has(sessionId)) return;
+    const operation = lifecycle.run(async () => {
+      try {
+        for (let attempt = 0; attempt < 3 && lifecycle.isActive(); attempt += 1) {
+          if (attempt > 0) await new Promise<void>((resolve) => setTimeout(resolve, attempt * 50));
+          const response = await client.session.messages({ path: { id: sessionId } });
+          const messages = typeof response === 'object' && response !== null && 'data' in response
+            ? (response as { data?: unknown }).data
+            : response;
+          if (!Array.isArray(messages)) continue;
+          const summary = [...messages].reverse().find((message) => {
+            const info = typeof message === 'object' && message !== null && 'info' in message
+              ? (message as { info?: unknown }).info
+              : undefined;
+            return typeof info === 'object' && info !== null && (info as { summary?: unknown }).summary === true;
+          }) as { info?: { id?: unknown }; parts?: unknown } | undefined;
+          if (summary === undefined || typeof summary.info?.id !== 'string' || !Array.isArray(summary.parts)) continue;
+          const summaryText = summary.parts.flatMap((part) => {
+            if (typeof part !== 'object' || part === null) return [];
+            const value = part as { type?: unknown; text?: unknown };
+            return value.type === 'text' && typeof value.text === 'string' ? [value.text] : [];
+          }).join('\n').trim();
+          if (summaryText.length === 0 || summaryText.length > 64 * 1024) return;
+          const boundary = compactionState.boundary(sessionId);
+          await runKiokukoCompactionHook({
+            phase: 'after',
+            sessionId,
+            cwd: directory,
+            runId: boundary?.runId ?? null,
+            summaryMessageId: summary.info.id,
+            summaryText,
+            summaryDigest: canonicalContentHash(summaryText),
+          }, compactionHookDependencies);
+          return;
+        }
+      } catch (error) {
+        if (!lifecycle.signal.aborted) await idleDependencies.log?.('OpenCode compaction meditation enqueue failed', { reason: 'compaction_post_failed' });
+      }
+    });
+    compactionFlights.set(sessionId, operation);
+    void operation.finally(() => compactionFlights.delete(sessionId)).catch(() => undefined);
+  };
+  const event = (input: { event: unknown }) => {
+    const value = typeof input.event === 'object' && input.event !== null
+      ? input.event as { type?: unknown; properties?: { sessionID?: unknown } }
+      : undefined;
+    if (value?.type === 'session.compacted' && typeof value.properties?.sessionID === 'string') {
+      postCompaction(value.properties.sessionID);
+    }
+    return lifecycle.run(() => handleEvent(input));
+  };
   const reconcile = () => lifecycle.reconcile(async () => {
     try {
       await reconcileOpenCodeIdle(client, directory, idleDependencies);
@@ -68,6 +129,18 @@ export const KiokukoPlugin: Plugin = async ({ client, directory }, options) => {
     'experimental.session.compacting': async ({ sessionID }, output) => {
       if (!lifecycle.isActive()) return;
       compactionState.appendContext(sessionID, output.context);
+      const boundary = compactionState.boundary(sessionID);
+      if (boundary !== null) {
+        await runKiokukoCompactionHook({
+          phase: 'before',
+          sessionId: sessionID,
+          cwd: directory,
+          boundary,
+        }, compactionHookDependencies);
+      }
+    },
+    'experimental.compaction.autocontinue': async ({ sessionID }) => {
+      if (lifecycle.isActive()) postCompaction(sessionID);
     },
     dispose: () => lifecycle.dispose(() => clearInterval(timer)),
   };
