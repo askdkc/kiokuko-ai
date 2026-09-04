@@ -1,5 +1,5 @@
 import type { Plugin } from '@opencode-ai/plugin';
-import { createOpenCodeIdleHandler, OpenCodeSessionFlights, reconcileOpenCodeIdle, type IdleContinuationDependencies } from './idle.js';
+import { createOpenCodeIdleHandler, KIOKUKO_OPENCODE_API_TIMEOUT_MS, OpenCodeSessionFlights, reconcileOpenCodeIdle, type IdleContinuationDependencies } from './idle.js';
 import { OpenCodeIdleState } from './idle-state.js';
 import { parseOpenCodePluginOptions } from './runtime-invocation.js';
 import { OpenCodeCompactionState } from './compaction.js';
@@ -51,7 +51,11 @@ export const KiokukoPlugin: Plugin = async ({ client, directory }, options) => {
       try {
         for (let attempt = 0; attempt < 3 && lifecycle.isActive(); attempt += 1) {
           if (attempt > 0) await new Promise<void>((resolve) => setTimeout(resolve, attempt * 50));
-          const response = await client.session.messages({ path: { id: sessionId } });
+          const response = await client.session.messages({
+            path: { id: sessionId },
+            signal: AbortSignal.any([lifecycle.signal, AbortSignal.timeout(KIOKUKO_OPENCODE_API_TIMEOUT_MS)]),
+          });
+          if (!lifecycle.isActive()) return;
           const messages = typeof response === 'object' && response !== null && 'data' in response
             ? (response as { data?: unknown }).data
             : response;
