@@ -187,7 +187,10 @@ async function sendPendingPrompt(
   try {
     await client.session.prompt({
       path: { id: sessionId },
-      body: { messageID: pending.messageId, parts: [{ type: 'text', text: pending.text }] },
+      body: {
+        messageID: attempted.messageId,
+        parts: [{ type: 'text', text: attempted.text, synthetic: true }],
+      },
       ...requestSignal(dependencies),
     });
   } catch {

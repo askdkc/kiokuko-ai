@@ -56,6 +56,27 @@ test('idle continuation ignores child and stale events and deduplicates one term
   assert.equal(prompts.length, 2);
 });
 
+test('continuation prompt is delivered as a synthetic part hidden from the user timeline', async () => {
+  const state = new OpenCodeIdleState();
+  let parts: Array<Record<string, unknown>> = [];
+  let delivered: string | undefined;
+  const client = {
+    session: {
+      get: async () => ({ data: { id: 'synthetic-session', directory: '/repo' } }),
+      messages: async () => ({ data: [assistant('synthetic-terminal'), ...(delivered === undefined ? [] : [{ info: { id: delivered } }])] }),
+      prompt: async ({ body }: { body: { messageID: string; parts: Array<Record<string, unknown>> } }) => {
+        parts = body.parts;
+        delivered = body.messageID;
+      },
+    },
+  };
+  await handleOpenCodeIdle(client as never, '/repo', idle('synthetic-session', 'synthetic-terminal'), {
+    state,
+    runHook: async () => ({ kind: 'continue' as const, text: 'run-bound continuation directive' }),
+  });
+  assert.deepEqual(parts, [{ type: 'text', text: 'run-bound continuation directive', synthetic: true }]);
+});
+
 test('idle failure is fail-open and only emits bounded sanitized diagnostics', async () => {
   const warnings: Array<{ message: string; extra?: Record<string, unknown> }> = [];
   const client = {
