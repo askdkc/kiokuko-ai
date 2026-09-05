@@ -476,6 +476,12 @@ async function collectDoctorResult(
   const unboundCompactionPosts = count(database, `
     SELECT COUNT(*) AS count FROM compaction_post_events WHERE bound_cycle_id IS NULL
   `);
+  // Older plugins stored ordinary session notifications without a Kiokuko run.
+  // Keep those visible, but only run-bound posts imply a missing boundary.
+  const unboundRunCompactionPosts = count(database, `
+    SELECT COUNT(*) AS count FROM compaction_post_events
+    WHERE bound_cycle_id IS NULL AND run_id IS NOT NULL
+  `);
   const failedCompactions = count(database, `
     SELECT COUNT(*) AS count FROM compaction_cycles WHERE state = 'failed'
   `);
@@ -491,12 +497,12 @@ async function collectDoctorResult(
     WHERE event_type = 'enno.quality_degraded'
       AND json_extract(payload_json, '$.reason') = 'model_fallback'
   `);
-  const orchestrationFindings = expiredExecutionLeases + failedCompactions + unboundCompactionPosts
+  const orchestrationFindings = expiredExecutionLeases + failedCompactions + unboundRunCompactionPosts
     + planPublishFailures + autoPromotionFailures;
   const orchestration = {
     ok: orchestrationFindings === 0,
     count: orchestrationFindings,
-    detail: `queue=${jobDiagnostics.pending + jobDiagnostics.leased + jobDiagnostics.failed}, pending=${jobDiagnostics.pending}, leased=${jobDiagnostics.leased}, failed=${jobDiagnostics.failed}, oldest=${jobDiagnostics.oldestPendingAt ?? 'none'}, expiredLeases=${expiredExecutionLeases}, incompleteCompactions=${incompleteCompactions}, unboundCompactionPosts=${unboundCompactionPosts}, failedCompactions=${failedCompactions}, planPublishFailures=${planPublishFailures}, autoPromotionFailures=${autoPromotionFailures}, modelFallbacks=${modelFallbacks}`,
+    detail: `queue=${jobDiagnostics.pending + jobDiagnostics.leased + jobDiagnostics.failed}, pending=${jobDiagnostics.pending}, leased=${jobDiagnostics.leased}, failed=${jobDiagnostics.failed}, oldest=${jobDiagnostics.oldestPendingAt ?? 'none'}, expiredLeases=${expiredExecutionLeases}, incompleteCompactions=${incompleteCompactions}, unboundCompactionPosts=${unboundCompactionPosts}, unboundRunCompactionPosts=${unboundRunCompactionPosts}, failedCompactions=${failedCompactions}, planPublishFailures=${planPublishFailures}, autoPromotionFailures=${autoPromotionFailures}, modelFallbacks=${modelFallbacks}`,
   };
   const checks = {
     integrity: { ok: integrity === 'ok', detail: integrity },

@@ -241,6 +241,9 @@ export function queueCompactionMeditation(database: SqliteDatabase, input: Compa
     LIMIT 1
   `).get<CycleRow>(input.clientSessionId, input.runId ?? null, input.runId ?? null);
   if (row === undefined) {
+    // Ordinary OpenCode sessions also emit post-compaction events. Without a
+    // run or a captured boundary there is no Kiokuko cycle to recover later.
+    if (input.runId === undefined || input.runId === null) return null;
     const now = new Date().toISOString();
     database.prepare(`
       INSERT INTO compaction_post_events (

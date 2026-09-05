@@ -27,6 +27,45 @@ async function temporaryDatabase(prefix: string) {
   return { database, databasePath, directory };
 }
 
+test('doctor keeps anonymous compaction posts visible without failing orchestration', async () => {
+  const value = await temporaryDatabase('anonymous-compaction');
+  try {
+    for (let index = 0; index < 4; index += 1) {
+      value.database.prepare(`
+        INSERT INTO compaction_post_events (
+          client_session_id, summary_digest, run_id, summary_message_id,
+          claims_json, bound_cycle_id, created_at
+        ) VALUES (?, ?, NULL, ?, '[]', NULL, ?)
+      `).run(`ordinary-session-${index}`, String(index).repeat(64), `summary-${index}`, new Date().toISOString());
+    }
+    const options = {
+      databasePath: value.databasePath,
+      runtimeDescriptorPath: path.join(value.directory, 'runtime', 'server.json'),
+    };
+    const result = await runDoctor(options);
+    assert.equal(result.ok, true);
+    assert.equal(result.checks.orchestration.ok, true);
+    assert.equal(result.checks.orchestration.count, 0);
+    assert.match(result.checks.orchestration.detail ?? '', /unboundCompactionPosts=4,/u);
+    assert.match(result.checks.orchestration.detail ?? '', /unboundRunCompactionPosts=0,/u);
+    assert.equal(value.database.prepare('SELECT COUNT(*) AS count FROM compaction_post_events')
+      .get<{ count: number }>()?.count, 4);
+
+    value.database.prepare(`
+      INSERT INTO compaction_cycles (
+        cycle_id, client_session_id, boundary_digest, state, created_at
+      ) VALUES ('failed-cycle', 'failed-session', ?, 'failed', ?)
+    `).run('a'.repeat(64), new Date().toISOString());
+    const failed = await runDoctor(options);
+    assert.equal(failed.ok, false);
+    assert.equal(failed.checks.orchestration.ok, false);
+    assert.equal(failed.checks.orchestration.count, 1);
+    assert.match(failed.checks.orchestration.detail ?? '', /failedCompactions=1,/u);
+  } finally {
+    value.database.close();
+  }
+});
+
 function register(database: ReturnType<typeof openConnection>, name: string, canonicalRoot: string): void {
   registerRepositoryAndLocation(database, {
     repositoryId: `repo_doctor_${name}`,

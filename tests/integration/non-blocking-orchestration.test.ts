@@ -6,6 +6,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { prepareOpenCodeTask } from '../../src/akinator/opencode-task.js';
 import { initializeDatabase } from '../../src/commands/init.js';
+import { runDoctor } from '../../src/commands/doctor.js';
 import { readTaskContextRevisions, recordTaskContextRevision } from '../../src/context/revisions.js';
 import { openConnection } from '../../src/db/connection.js';
 import { publishPlanArtifact } from '../../src/enno-oduno/plan-artifact.js';
@@ -273,6 +274,25 @@ test('expired orchestration-job ownership cannot settle or overwrite a reclaimed
   }
 });
 
+test('compaction posts without a run or captured boundary leave no pending records', async () => {
+  const { database } = await fixture();
+  try {
+    for (const runId of [undefined, null]) {
+      assert.equal(queueCompactionMeditation(database, {
+        clientSessionId: 'ordinary-session',
+        ...(runId === undefined ? {} : { runId }),
+        summaryMessageId: 'ordinary-summary', summaryText: 'Ordinary session summary',
+      }), null);
+    }
+    assert.equal(database.prepare('SELECT COUNT(*) AS count FROM compaction_post_events')
+      .get<{ count: number }>()?.count, 0);
+    assert.equal(database.prepare('SELECT COUNT(*) AS count FROM orchestration_jobs')
+      .get<{ count: number }>()?.count, 0);
+  } finally {
+    database.close();
+  }
+});
+
 test('compaction meditation coalesces duplicates and verifies only boundary-supported claims', async () => {
   const { root, database } = await fixture();
   try {
@@ -294,6 +314,11 @@ test('compaction meditation coalesces duplicates and verifies only boundary-supp
     });
     assert.equal(queued?.cycleId, boundary.cycleId);
     assert.equal(replay?.cycleId, boundary.cycleId);
+    const recovered = queueCompactionMeditation(database, {
+      clientSessionId: 'session-compaction', runId: null, summaryMessageId: 'summary-1',
+      summaryText: 'Contract revision: 1\nA claim with no evidence must remain unknown\nAKIA1234567890ABCDEF',
+    });
+    assert.equal(recovered?.cycleId, boundary.cycleId);
     const [job] = claimOrchestrationJobs(database, { owner: 'test-worker', kinds: ['compaction_meditation'] });
     assert.ok(job);
     const result = await processCompactionMeditationJob(database, job);
@@ -311,7 +336,7 @@ test('compaction meditation coalesces duplicates and verifies only boundary-supp
 });
 
 test('a post-compaction event arriving before its boundary is durably coalesced', async () => {
-  const { root, database } = await fixture();
+  const { root, dataDirectory, database } = await fixture();
   try {
     const prepared = await prepare(database, root, 'compaction-reverse-order');
     const identity = { runId: prepared.run.runId, workspace: prepared.project.workspace, orchestrationId: prepared.intake.sessionId };
@@ -324,6 +349,13 @@ test('a post-compaction event arriving before its boundary is durably coalesced'
       SELECT COUNT(*) AS count FROM compaction_post_events
       WHERE client_session_id = ? AND bound_cycle_id IS NULL
     `).get<{ count: number }>('session-compaction-reverse')?.count, 1);
+    const health = await runDoctor({
+      databasePath: path.join(dataDirectory, 'kiokuko-ai.sqlite'),
+      runtimeDescriptorPath: path.join(dataDirectory, 'runtime', 'server.json'),
+    });
+    assert.equal(health.checks.orchestration.ok, false);
+    assert.equal(health.checks.orchestration.count, 1);
+    assert.match(health.checks.orchestration.detail ?? '', /unboundRunCompactionPosts=1,/u);
     const boundary = captureCompactionBoundary(database, {
       clientSessionId: 'session-compaction-reverse', ...identity, contractRevision: 1,
       contextRevision: prepared.contextRevision, routeEpoch: 0, terminalMessageId: 'terminal-after-summary',
