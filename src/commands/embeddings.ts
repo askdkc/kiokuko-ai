@@ -384,7 +384,7 @@ export function registerEmbeddingsCommands(cli: Command, dependencies: Embedding
   embeddings.command('setup')
     .description('Install semantic search and configure OpenCode')
     .option('--preset <name>', 'Embedding preset', 'local-small')
-    .option('--command <path>', 'Kiokuko executable name or absolute path', 'kiokuko-ai')
+    .option('--command <path>', 'Kiokuko executable name or absolute path')
     .option('--dry-run', 'Plan setup without downloading or mutating anything')
     .option('--no-standard-skills', 'Skip installing bundled Kiokuko standard skills')
     .option('--skill-discovery <mode>', 'External Skill discovery: off,official,community')
@@ -394,7 +394,7 @@ export function registerEmbeddingsCommands(cli: Command, dependencies: Embedding
     .option('--json', 'Emit one JSON response')
     .action(async (options: {
       preset: string;
-      command: string;
+      command?: string;
       dryRun?: boolean;
       standardSkills: boolean;
       skillDiscovery?: string;
@@ -415,7 +415,7 @@ export function registerEmbeddingsCommands(cli: Command, dependencies: Embedding
         if (!dryRun) await ensureOptionalRuntime(dependencies);
         const setup = await runSetupFlow<Pick<SetupResult, 'client' | 'projectAgentFiles'>>({
           ...(dependencies.pathEnvironment === undefined ? {} : { environment: dependencies.pathEnvironment }),
-          command: options.command,
+          ...(options.command === undefined ? {} : { command: options.command }),
           dryRun,
           standardSkills: options.standardSkills,
           ...(skillDiscoveryMode === undefined ? {} : { skillDiscoveryMode }),
