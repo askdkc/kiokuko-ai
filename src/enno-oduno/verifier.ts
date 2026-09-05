@@ -1,11 +1,11 @@
 import { createHash } from 'node:crypto';
-import { execFileSync, spawn, type ChildProcessByStdio } from 'node:child_process';
+import { spawn, type ChildProcessByStdio } from 'node:child_process';
 import { unwatchFile, watchFile, type Stats } from 'node:fs';
 import type { Readable } from 'node:stream';
 import { performance } from 'node:perf_hooks';
 import path from 'node:path';
 import { canonicalDirectory } from '../repository/detect-root.js';
-import { captureRepositoryState } from './repository-state.js';
+import { captureRepositoryState, repositoryStatePaths } from './repository-state.js';
 import { assertVerifierCwd, parseVerifierSpec } from './schemas.js';
 import type { VerifierRunResult, VerifierSpec } from './types.js';
 
@@ -36,9 +36,7 @@ function repositoryMutationAudit(repositoryRoot: string): { close: () => void; o
     }
   };
   try {
-    const paths = execFileSync('git', [
-      '-C', repositoryRoot, 'ls-files', '--cached', '--others', '--exclude-standard', '-z',
-    ], { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] }).split('\0').filter(Boolean);
+    const paths = repositoryStatePaths(repositoryRoot);
     const targets = new Set([repositoryRoot]);
     const trackedFiles = new Set<string>();
     for (const candidate of paths) {
