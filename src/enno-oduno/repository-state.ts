@@ -96,12 +96,19 @@ function fallbackPaths(root: string): string[] {
   return paths.sort();
 }
 
-function captureRepositoryStateOnce(root: string, ancestors: ReadonlySet<string>): RepositoryStateSnapshot {
+// Snapshots and mutation monitoring must use the same file-selection policy,
+// including ordinary directories where Git metadata is unavailable.
+export function repositoryStatePaths(root: string): string[] {
   const trackedAndUntracked = gitOutput(root, ['ls-files', '-z', '--cached', '--others', '--exclude-standard']);
   const paths = trackedAndUntracked === undefined
     ? fallbackPaths(root)
     : [...new Set(nulPaths(trackedAndUntracked))].sort();
   if (paths.length > MAX_FILES) throw new KiokukoError('SECURITY_REJECTION', 'Repository snapshot exceeds the file-count safety limit');
+  return paths;
+}
+
+function captureRepositoryStateOnce(root: string, ancestors: ReadonlySet<string>): RepositoryStateSnapshot {
+  const paths = repositoryStatePaths(root);
   const head = gitOutput(root, ['rev-parse', '--verify', 'HEAD'])?.toString('utf8').trim() ?? null;
   const index = gitOutput(root, ['ls-files', '-s', '-z'])?.toString('base64') ?? null;
   const status = gitOutput(root, ['status', '--porcelain=v1', '-z', '--untracked-files=all'])?.toString('base64') ?? null;

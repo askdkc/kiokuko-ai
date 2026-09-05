@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
-import { mkdtemp, rename, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
@@ -743,60 +743,85 @@ test('verifier uses shell false semantics, bounds output, and rejects repository
   assert.equal(timeout.status, 'timeout');
 });
 
-test('verifier batches remember transient and delayed descendant repository mutations', async () => {
-  const root = await mkdtemp(path.join(tmpdir(), 'kiokuko-enno-verifier-mutation-'));
-  const tracked = path.join(root, 'tracked.txt');
-  await writeFile(tracked, 'original\n');
-  execFileSync('git', ['init', '-q', root]);
-  execFileSync('git', ['-C', root, 'config', 'user.email', 'tests@example.invalid']);
-  execFileSync('git', ['-C', root, 'config', 'user.name', 'Kiokuko Tests']);
-  execFileSync('git', ['-C', root, 'add', 'tracked.txt']);
-  execFileSync('git', ['-C', root, 'commit', '-qm', 'fixture']);
-  const mutateRestore = await runVerifiers([{
-    id: 'mutate-restore', kind: 'test', executable: process.execPath,
-    args: ['--eval', `const fs=require('node:fs');const p=${JSON.stringify(tracked)};const v=fs.readFileSync(p);fs.writeFileSync(p,'temporary\\n');setTimeout(()=>fs.writeFileSync(p,v),60);`],
-    cwd: root,
-    timeoutMs: 5_000,
-  }], root, { descendantSettleMs: 100 });
-  assert.equal(mutateRestore[0]?.status, 'passed');
-  assert.equal(mutateRestore[0]?.changedDuringVerification, true);
+for (const baseline of ['modified', 'deleted', 'renamed', 'dangling-symlink', 'non-git'] as const) {
+  test(`read-only verification accepts the existing ${baseline} workspace state`, async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'kiokuko-enno-verifier-baseline-'));
+    await writeFile(path.join(root, 'answer.txt'), 'answer\n');
+    await writeFile(path.join(root, 'original.txt'), 'original\n');
+    if (baseline !== 'non-git') {
+      execFileSync('git', ['init', '-q', root]);
+      execFileSync('git', ['-C', root, 'add', '.']);
+    }
+    if (baseline === 'modified') await writeFile(path.join(root, 'original.txt'), 'edited before verification\n');
+    if (baseline === 'deleted') await rm(path.join(root, 'original.txt'));
+    if (baseline === 'renamed') await rename(path.join(root, 'original.txt'), path.join(root, 'renamed.txt'));
+    if (baseline === 'dangling-symlink') await symlink('missing.txt', path.join(root, 'link'));
+    const before = captureRepositoryState(root);
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const results = await runVerifiers([{
+        id: 'read-only', kind: 'test', executable: 'test', args: ['-f', 'answer.txt'], cwd: '.', timeoutMs: 5_000,
+      }], root, { descendantSettleMs: 100 });
+      assert.equal(results[0]?.status, 'passed');
+      assert.equal(results[0]?.changedDuringVerification, false);
+      assert.equal(captureRepositoryState(root).digest, before.digest);
+    }
+  });
+}
 
-  const delayedDescendant = await runVerifiers([{
-    id: 'delayed-descendant', kind: 'test', executable: process.execPath,
-    args: ['--eval', `const {spawn}=require('node:child_process');const p=${JSON.stringify(tracked)};spawn(process.execPath,['--eval',${JSON.stringify(`setTimeout(()=>require('node:fs').writeFileSync(${JSON.stringify(tracked)},'late\\n'),100)`)}],{detached:true,stdio:'ignore'}).unref();`],
-    cwd: root,
-    timeoutMs: 5_000,
-  }], root, { descendantSettleMs: 300 });
-  assert.equal(delayedDescendant[0]?.status, 'passed');
-  assert.equal(delayedDescendant[0]?.changedDuringVerification, true);
-});
+for (const gitManaged of [true, false]) {
+  test(`verifier batches remember transient and delayed descendant mutations (git=${gitManaged})`, async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'kiokuko-enno-verifier-mutation-'));
+    const tracked = path.join(root, 'tracked.txt');
+    await writeFile(tracked, 'original\n');
+    if (gitManaged) {
+      execFileSync('git', ['init', '-q', root]);
+      execFileSync('git', ['-C', root, 'add', 'tracked.txt']);
+    }
+    const mutateRestore = await runVerifiers([{
+      id: 'mutate-restore', kind: 'test', executable: process.execPath,
+      args: ['--eval', `const fs=require('node:fs');const p=${JSON.stringify(tracked)};const v=fs.readFileSync(p);fs.writeFileSync(p,'temporary\\n');setTimeout(()=>fs.writeFileSync(p,v),60);`],
+      cwd: root,
+      timeoutMs: 5_000,
+    }], root, { descendantSettleMs: 100 });
+    assert.equal(mutateRestore[0]?.status, 'passed');
+    assert.equal(mutateRestore[0]?.changedDuringVerification, true);
 
-test('verifier ignores generated files under ignored directories but detects normal untracked files', async () => {
-  const root = await mkdtemp(path.join(tmpdir(), 'kiokuko-enno-verifier-ignored-'));
-  await writeFile(path.join(root, '.gitignore'), 'dist/\n');
-  await writeFile(path.join(root, 'tracked.txt'), 'original\n');
-  execFileSync('git', ['init', '-q', root]);
-  execFileSync('git', ['-C', root, 'config', 'user.email', 'tests@example.invalid']);
-  execFileSync('git', ['-C', root, 'config', 'user.name', 'Kiokuko Tests']);
-  execFileSync('git', ['-C', root, 'add', '.gitignore', 'tracked.txt']);
-  execFileSync('git', ['-C', root, 'commit', '-qm', 'fixture']);
+    const delayedDescendant = await runVerifiers([{
+      id: 'delayed-descendant', kind: 'test', executable: process.execPath,
+      args: ['--eval', `const {spawn}=require('node:child_process');const p=${JSON.stringify(tracked)};spawn(process.execPath,['--eval',${JSON.stringify(`setTimeout(()=>require('node:fs').writeFileSync(${JSON.stringify(tracked)},'late\\n'),100)`)}],{detached:true,stdio:'ignore'}).unref();`],
+      cwd: root,
+      timeoutMs: 5_000,
+    }], root, { descendantSettleMs: 300 });
+    assert.equal(delayedDescendant[0]?.status, 'passed');
+    assert.equal(delayedDescendant[0]?.changedDuringVerification, true);
+  });
 
-  const ignoredOutput = await runVerifiers([{
-    id: 'ignored-output', kind: 'build', executable: process.execPath,
-    args: ['--eval', "const fs=require('node:fs');fs.mkdirSync('dist',{recursive:true});fs.writeFileSync('dist/generated.js','build');"],
-    cwd: '.', timeoutMs: 5_000,
-  }], root, { descendantSettleMs: 100 });
-  assert.equal(ignoredOutput[0]?.status, 'passed');
-  assert.equal(ignoredOutput[0]?.changedDuringVerification, false);
+  test(`verifier ignores generated directories but detects normal new files (git=${gitManaged})`, async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'kiokuko-enno-verifier-ignored-'));
+    await writeFile(path.join(root, '.gitignore'), 'dist/\n');
+    await writeFile(path.join(root, 'tracked.txt'), 'original\n');
+    if (gitManaged) {
+      execFileSync('git', ['init', '-q', root]);
+      execFileSync('git', ['-C', root, 'add', '.gitignore', 'tracked.txt']);
+    }
 
-  const untrackedFile = await runVerifiers([{
-    id: 'untracked-output', kind: 'test', executable: process.execPath,
-    args: ['--eval', "require('node:fs').writeFileSync('untracked.txt','changed');"],
-    cwd: '.', timeoutMs: 5_000,
-  }], root, { descendantSettleMs: 100 });
-  assert.equal(untrackedFile[0]?.status, 'passed');
-  assert.equal(untrackedFile[0]?.changedDuringVerification, true);
-});
+    const ignoredOutput = await runVerifiers([{
+      id: 'ignored-output', kind: 'build', executable: process.execPath,
+      args: ['--eval', "const fs=require('node:fs');fs.mkdirSync('dist',{recursive:true});fs.writeFileSync('dist/generated.js','build');"],
+      cwd: '.', timeoutMs: 5_000,
+    }], root, { descendantSettleMs: 100 });
+    assert.equal(ignoredOutput[0]?.status, 'passed');
+    assert.equal(ignoredOutput[0]?.changedDuringVerification, false);
+
+    const untrackedFile = await runVerifiers([{
+      id: 'untracked-output', kind: 'test', executable: process.execPath,
+      args: ['--eval', "require('node:fs').writeFileSync('untracked.txt','changed');"],
+      cwd: '.', timeoutMs: 5_000,
+    }], root, { descendantSettleMs: 100 });
+    assert.equal(untrackedFile[0]?.status, 'passed');
+    assert.equal(untrackedFile[0]?.changedDuringVerification, true);
+  });
+}
 
 test('repository-state evidence changes for staged, untracked, renamed, and symlink state', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'kiokuko-enno-state-'));

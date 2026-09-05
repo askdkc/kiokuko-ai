@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawn as nodeSpawn } from 'node:child_process';
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { prepareOpenCodeTask } from '../../src/akinator/opencode-task.js';
 import { initializeDatabase } from '../../src/commands/init.js';
+import { useRepository } from '../../src/commands/use.js';
 import { openConnection } from '../../src/db/connection.js';
 import { withImmediateTransaction } from '../../src/db/transaction.js';
 import { recordTaskContextRevision } from '../../src/context/revisions.js';
@@ -2356,6 +2357,41 @@ test('final verification preparation reuses fresh evidence across keys and finis
       SELECT COUNT(*) AS count FROM enno_verifier_runs
       WHERE run_id = ? AND work_unit_id IS NULL AND contract_revision = 2 AND mutation_revision = 0
     `).get<{ count: number }>(planned.identity.runId)?.count, 1);
+  } finally {
+    database.close();
+  }
+});
+
+test('read-only final verification accepts pre-existing work in a non-Git directory without replan', async () => {
+  const { root, database, databasePath } = await fixture();
+  try {
+    await rm(path.join(root, '.git'), { recursive: true });
+    await useRepository({ root, databasePath, noAgentFile: true });
+    const planned = await plannedExecution(database, root, 'non-git-final', {
+      id: 'answer-exists', kind: 'test', executable: 'test', args: ['-f', 'answer.txt'], cwd: '.', timeoutMs: 5_000,
+    });
+    // WorkUnit output belongs to the verification baseline, even when it is uncommitted.
+    await writeFile(path.join(root, 'answer.txt'), 'Completed answer\n');
+    await reportEnnoWork(database, {
+      ...planned.identity, ...executionCredentials(planned), expectedRevision: 2,
+      idempotencyKey: 'non-git-work', workUnitId: 'repair',
+      result: { outcome: 'completed', summary: 'Wrote the answer before verification', mutated: true, changedPaths: ['answer.txt'] },
+    });
+    const baseline = captureRepositoryState(root);
+    const prepared = await prepareEnnoVerification(database, {
+      ...planned.identity, expectedRevision: 2, idempotencyKey: 'non-git-prepare',
+    });
+    assert.equal(prepared.verifierResults?.[0]?.status, 'passed');
+    assert.equal(prepared.verifierResults?.[0]?.changedDuringVerification, false);
+    assert.equal(prepared.verifierResults?.[0]?.repositoryStateDigest, baseline.digest);
+    assert.equal(readEnnoSnapshot(database, planned.identity).finalEvidenceReady, true);
+    const finished = await finishEnno(database, {
+      ...planned.identity, expectedRevision: 2, idempotencyKey: 'non-git-finish',
+      review: { decision: 'accept', summary: 'Read-only verification passed on the completed work' },
+    });
+    assert.equal(finished.ennoOduno.status, 'oduno_meditation');
+    assert.equal(readEnnoSnapshot(database, planned.identity).revision, 2);
+    assert.equal(captureRepositoryState(root).digest, baseline.digest);
   } finally {
     database.close();
   }
