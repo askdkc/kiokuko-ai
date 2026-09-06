@@ -33,6 +33,8 @@ const taskRunTables = [
   'enno_plan_artifacts',
   'enno_work_unit_resources',
   'enno_work_claim_receipts',
+  'orcareplay_trace_cursors',
+  'orcareplay_trace_context',
 ] as const;
 
 const taskRunIndexes = [
@@ -128,9 +130,9 @@ test('fresh migration applies the current schema and every task-run table and in
       taskRunIndexes.filter((index) => !exists(database, 'index', index)),
       [],
     );
-    assert.deepEqual(CURRENT_MIGRATION_VERSIONS, [1, 2]);
-    assert.equal(database.prepare('SELECT COUNT(*) AS count FROM schema_migrations').get<{ count: number }>()?.count, 2);
-    assert.equal(database.prepare('PRAGMA user_version').get<{ user_version: number }>()?.user_version, 2);
+    assert.deepEqual(CURRENT_MIGRATION_VERSIONS, [1, 2, 3]);
+    assert.equal(database.prepare('SELECT COUNT(*) AS count FROM schema_migrations').get<{ count: number }>()?.count, 3);
+    assert.equal(database.prepare('PRAGMA user_version').get<{ user_version: number }>()?.user_version, 3);
     for (const removed of ['gateway_idempotency', 'agent_task_skill_discovery_attempts', 'enno_client_continuations', 'enno_client_continuation_receipts']) {
       assert.equal(exists(database, 'table', removed), false);
     }
@@ -242,6 +244,7 @@ test('migration assets are present and checksums remain file-based', async () =>
   assert.deepEqual((await readdir(migrationsDirectory)).filter((name) => name.endsWith('.sql')), [
     '001_initial.sql',
     '002_non_blocking_orchestration.sql',
+    '003_orcareplay_trace.sql',
   ]);
   const sql = await readFile(path.join(migrationsDirectory, '001_initial.sql'), 'utf8');
   assert.match(sql, /CREATE TABLE ledger_runs/);
@@ -249,6 +252,10 @@ test('migration assets are present and checksums remain file-based', async () =>
   const orchestration = await readFile(path.join(migrationsDirectory, '002_non_blocking_orchestration.sql'), 'utf8');
   assert.match(orchestration, /CREATE TABLE orchestration_jobs/);
   assert.match(orchestration, /CREATE TABLE compaction_cycles/);
+  const trace = await readFile(path.join(migrationsDirectory, '003_orcareplay_trace.sql'), 'utf8');
+  assert.match(trace, /CREATE TABLE orcareplay_trace_cursors/);
+  assert.match(trace, /CREATE TABLE orcareplay_trace_context/);
+  assert.match(trace, /'trace_ingestion'/);
 });
 
 test('idempotency schema has composite uniqueness, bounded hash checks, and no raw key/request columns', async () => {

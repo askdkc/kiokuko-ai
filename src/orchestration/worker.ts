@@ -9,6 +9,7 @@ import { publishPlanArtifact } from '../enno-oduno/plan-artifact.js';
 import { KiokukoError } from '../errors.js';
 import type { JsonObject, JsonValue } from '../serialization/validate.js';
 import { processCompactionMeditationJob } from '../meditation/compaction.js';
+import { ingestTraceRun, requireTraceRunId } from '../trace/ingest.js';
 import { LedgerStore } from '../ledger/store.js';
 import {
   claimOrchestrationJobs,
@@ -149,6 +150,25 @@ async function processSkillDiscovery(options: OrchestrationWorkerOptions, job: O
   return { searched: queries.length > 0, contextRevision: revision.contextRevision, candidateCount: candidates.length };
 }
 
+async function processTraceIngestion(options: OrchestrationWorkerOptions, job: OrchestrationJob): Promise<unknown> {
+  const payload = objectPayload(job.payload, 'Trace ingestion');
+  const traceRunId = requireTraceRunId(payload.traceRunId);
+  const runsDirectory = payload.directory;
+  const fromSeq = payload.fromSeq;
+  if (typeof runsDirectory !== 'string' || runsDirectory.length === 0) {
+    throw new KiokukoError('VALIDATION_ERROR', 'Trace ingestion runs directory is invalid');
+  }
+  if (typeof fromSeq !== 'number' || !Number.isSafeInteger(fromSeq) || fromSeq < 0) {
+    throw new KiokukoError('VALIDATION_ERROR', 'Trace ingestion cursor origin is invalid');
+  }
+  return ingestTraceRun(options.database, {
+    runsDirectory,
+    traceRunId,
+    fromSeq,
+    ...(options.fetchImpl === undefined ? {} : { fetchImpl: options.fetchImpl }),
+  });
+}
+
 async function processJob(options: OrchestrationWorkerOptions, job: OrchestrationJob): Promise<unknown> {
   if (job.kind === 'plan_publish') {
     const payload = objectPayload(job.payload, 'Plan publish');
@@ -165,6 +185,7 @@ async function processJob(options: OrchestrationWorkerOptions, job: Orchestratio
   }
   if (job.kind === 'semantic_context') return processSemanticContext(options, job);
   if (job.kind === 'skill_discovery') return processSkillDiscovery(options, job);
+  if (job.kind === 'trace_ingestion') return processTraceIngestion(options, job);
   if (job.kind === 'compaction_meditation') {
     return options.processCompactionMeditation === undefined
       ? processCompactionMeditationJob(options.database, job)

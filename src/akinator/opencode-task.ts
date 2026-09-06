@@ -71,6 +71,13 @@ import { enqueueOrchestrationJob } from '../orchestration/jobs.js';
 import { recordTaskContextRevision } from '../context/revisions.js';
 import { detectSkillGap } from '../skills/gap-detection.js';
 import { buildSkillQueries } from '../skills/query-builder.js';
+import { findSecretInValue } from '../memory/secrets.js';
+import {
+  ORCA_TRACE_CONTEXT_MAX_BYTES,
+  readStoredTraceContext,
+  requireTraceRunId,
+} from '../trace/ingest.js';
+import { orcaRunsDirectory } from '../trace/scan.js';
 
 export interface PrepareOpenCodeTaskInput {
   requestId: string;
@@ -116,6 +123,7 @@ export interface PreparedOpenCodeTask {
   run: { runId: string; status: 'intake' | 'active' };
   skillDiscovery: SkillDiscoverySummary;
   context: ScopedContextResult | null;
+  traceContext?: OpenCodeTraceAdvisoryContext;
   memoryPolicy: MemoryPolicy;
   warnings: StructuredWarning[];
   nextAction: 'proceed';
@@ -131,6 +139,16 @@ export interface PreparedOpenCodeTask {
   };
   securityNotice: string;
   ennoOduno: EnnoOdunoState;
+}
+
+export interface OpenCodeTraceAdvisoryContext {
+  readonly source: 'orcareplay';
+  readonly referenceOnly: true;
+  readonly autoInstall: false;
+  readonly autoExecute: false;
+  readonly traceRunId: string;
+  readonly digest: string;
+  readonly context: JsonObject;
 }
 
 export type StructuredWarning = CapabilityWarning | {
@@ -256,6 +274,43 @@ function assertTaskContextRequestBinding(metadata: JsonObject, maxContextChars: 
   if (binding.maxContextChars !== maxContextChars) {
     throw new KiokukoError('CONFLICT', 'Task context request differs from the request bound when the run was opened');
   }
+}
+
+function readTraceAdvisoryContext(
+  database: SqliteDatabase,
+  project: ResolvedProjectWorkspace,
+): OpenCodeTraceAdvisoryContext | undefined {
+  const directory = orcaRunsDirectory(project.repositoryRoot);
+  const row = database.prepare(`
+    SELECT trace_run_id AS traceRunId
+    FROM orcareplay_trace_context
+    WHERE directory = ?
+    ORDER BY updated_at DESC, trace_run_id DESC
+    LIMIT 1
+  `).get<{ traceRunId: unknown }>(directory);
+  if (row === undefined) return undefined;
+  const traceRunId = requireTraceRunId(row.traceRunId);
+  const stored = readStoredTraceContext(database, directory, traceRunId);
+  if (stored === undefined
+    || !/^[0-9a-f]{64}$/u.test(stored.digest)
+    || stored.digest !== canonicalContentHash(stored.context)) {
+    throw new KiokukoError('INTEGRITY_ERROR', 'Stored OrcaReplay trace context is invalid');
+  }
+  if (Buffer.byteLength(JSON.stringify(stored.context), 'utf8') > ORCA_TRACE_CONTEXT_MAX_BYTES) {
+    throw new KiokukoError('INTEGRITY_ERROR', 'Stored OrcaReplay trace context exceeds its bound');
+  }
+  if (findSecretInValue(stored.context) !== undefined) {
+    throw new KiokukoError('SECURITY_REJECTION', 'Stored OrcaReplay trace context contains secret-shaped material');
+  }
+  return {
+    source: 'orcareplay',
+    referenceOnly: true,
+    autoInstall: false,
+    autoExecute: false,
+    traceRunId,
+    digest: stored.digest,
+    context: stored.context,
+  };
 }
 
 function memoryCapabilityUnavailableForTask(context: AkinatorContext, capabilities: unknown): boolean {
@@ -481,6 +536,7 @@ function buildPreparedTaskBase(
   skillDiscovery: SkillDiscoverySummary,
   memoryUseOverride?: MemoryUseSignal,
   additionalWarnings: readonly StructuredWarning[] = [],
+  traceContext?: OpenCodeTraceAdvisoryContext,
 ): Omit<PreparedOpenCodeTask, 'ennoOduno'> {
   const memoryUse = context.status === 'ready'
     ? memoryUseOverride ?? deriveMemoryUseSignal(scopedContext)
@@ -526,6 +582,7 @@ function buildPreparedTaskBase(
     run,
     skillDiscovery,
     context: scopedContext,
+    ...(traceContext === undefined ? {} : { traceContext }),
     memoryPolicy: deriveMemoryPolicy(context.session.profile, memoryUse, capabilities, deliveryObservation),
     warnings: [...capabilityResolution.warnings, ...additionalWarnings],
     nextAction: 'proceed',
@@ -859,10 +916,11 @@ async function finalizeOpenCodeTask(input: FinalizeOpenCodeTaskInput): Promise<P
   const selected = await selectFinalTaskContext({ input, prepared, context, missingMemoryCapability: false });
   context = selected.context;
   run = selected.run;
+  const traceContext = readTraceAdvisoryContext(input.database, input.project);
   return withPreparedEnno(input.database, buildPreparedTaskBase(input.database, input.project, input.executionContext, context, input.capabilities, {
     runId: input.runId,
     status: run.status,
-  }, selected.scopedContext, skillDiscovery, selected.memoryUse, prepared.warnings));
+    }, selected.scopedContext, skillDiscovery, selected.memoryUse, prepared.warnings, traceContext));
 }
 
 function withPreparedEnno(
@@ -878,6 +936,7 @@ function withPreparedEnno(
     context: {
       intake: result.intake as unknown as JsonObject,
       context: result.context as unknown as JsonObject | null,
+      ...(result.traceContext === undefined ? {} : { traceContext: result.traceContext as unknown as JsonObject }),
       skillDiscovery: result.skillDiscovery as unknown as JsonObject,
       memoryPolicy: result.memoryPolicy as unknown as JsonObject,
       warnings: result.warnings as unknown as JsonObject[],

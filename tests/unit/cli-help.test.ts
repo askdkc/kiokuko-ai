@@ -77,10 +77,21 @@ test('registers exactly the supported OpenCode and operator commands', () => {
     'skills',
     'enno',
     'embeddings',
+    'trace',
     'web',
     'export',
     'import',
   ]);
+});
+
+test('exposes the bounded OrcaReplay trace scan command', () => {
+  const trace = buildCli().commands.find((command) => command.name() === 'trace');
+  assert.ok(trace);
+  const scan = trace.commands.find((command) => command.name() === 'scan');
+  assert.ok(scan);
+  assert.match(scan.helpInformation(), /--project-root <path>/u);
+  assert.match(scan.helpInformation(), /--max-runs <number>/u);
+  assert.match(scan.helpInformation(), /--json/u);
 });
 
 test('does not synthesize an agent-file override when the use flag is omitted', () => {

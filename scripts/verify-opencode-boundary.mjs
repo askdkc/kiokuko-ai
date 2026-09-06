@@ -60,7 +60,7 @@ for (const file of files.sort()) {
 
 const migrationEntries = await readdir('migrations');
 const migrationSqlFiles = migrationEntries.filter((entry) => entry.endsWith('.sql')).sort();
-const expectedMigrations = ['001_initial.sql', '002_non_blocking_orchestration.sql'];
+const expectedMigrations = ['001_initial.sql', '002_non_blocking_orchestration.sql', '003_orcareplay_trace.sql'];
 if (JSON.stringify(migrationSqlFiles) !== JSON.stringify(expectedMigrations)) {
   findings.push(`migrations: expected [${expectedMigrations.join(', ')}], found [${migrationSqlFiles.join(', ')}]`);
 }
