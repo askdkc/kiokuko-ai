@@ -14,6 +14,7 @@ import { OpenCodeCompactionState } from './compaction.js';
 import { OpenCodePluginLifecycle } from './lifecycle.js';
 import { runKiokukoCompactionHook } from './hook-effect.js';
 import { canonicalContentHash } from '../serialization/validate.js';
+import { createTraceScanTick } from '../trace/scan.js';
 
 const MAX_PROCESSED_COMPACTIONS = 512;
 const MAX_COMPACTION_SUMMARY_CHARS = 64 * 1024;
@@ -93,6 +94,11 @@ export const KiokukoPlugin: Plugin = async ({ client, directory }, options) => {
     },
   };
   const handleEvent = createOpenCodeIdleHandler(client, directory, idleDependencies);
+  const traceScanTick = createTraceScanTick({
+    projectRoot: directory,
+    ...(runtime === undefined ? {} : { nodeExecutable: runtime.nodeExecutable, cliScript: runtime.cliScript }),
+    ...(idleDependencies.log === undefined ? {} : { log: idleDependencies.log }),
+  });
   const compactionHookDependencies = {
     signal: lifecycle.signal,
     timeoutMs: 1_500,
@@ -204,11 +210,23 @@ export const KiokukoPlugin: Plugin = async ({ client, directory }, options) => {
       // Logging must not create another lifecycle failure.
     }
   };
+  const reportTraceScanFailure = async (): Promise<void> => {
+    try {
+      await client.app.log({
+        body: { service: 'kiokuko', level: 'warn', message: 'OrcaReplay trace scan failed', extra: { reason: 'trace_scan_error' } },
+        query: { directory },
+      });
+    } catch {
+      // Logging must not create another lifecycle failure.
+    }
+  };
   const timer = setInterval(() => {
     void reconcile().catch(reportReconcileFailure);
+    void traceScanTick().catch(reportTraceScanFailure);
   }, 1_000);
   timer.unref?.();
   void reconcile().catch(reportReconcileFailure);
+  void traceScanTick().catch(reportTraceScanFailure);
   return {
     event,
     'tool.execute.after': async ({ tool, sessionID }, output) => {

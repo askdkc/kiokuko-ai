@@ -10,6 +10,7 @@ export const ORCHESTRATION_JOB_KINDS = [
   'compaction_meditation',
   'plan_publish',
   'memory_promotion',
+  'trace_ingestion',
 ] as const;
 
 export type OrchestrationJobKind = (typeof ORCHESTRATION_JOB_KINDS)[number];

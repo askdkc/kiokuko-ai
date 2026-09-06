@@ -6,8 +6,8 @@
 - global memory entries;
 - one imported external-skill snapshot and its entry mappings.
 
-The fixture is generated from the current `001_initial.sql` and
-`002_non_blocking_orchestration.sql` migrations (`PRAGMA user_version = 2`). CI copies it into an isolated
+The fixture is generated from the current `001_initial.sql`,
+`002_non_blocking_orchestration.sql`, and `003_orcareplay_trace.sql` migrations (`PRAGMA user_version = 3`). CI copies it into an isolated
 application-data directory, verifies that setup applies no migration, then checks
 the data through `kiokuko-ai doctor` and a real `kiokuko-ai web` process.
 

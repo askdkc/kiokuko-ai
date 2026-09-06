@@ -44,6 +44,7 @@ import { openEmbeddingDatabase } from './embedding/backend.js';
 import { parseEmbeddingConfig } from './embedding/config.js';
 import { createEmbeddingRuntime, prepareEmbeddingSearchRuntime } from './embedding/runtime.js';
 import type { HybridSearchRuntime } from './memory/hybrid-retrieval.js';
+import { registerTraceCommands } from './commands/trace.js';
 
 const MAX_CLI_JSON_INPUT_BYTES = 2 * 1024 * 1024;
 const MAX_CALL_PATH_BYTES = 4 * 1024;
@@ -607,6 +608,7 @@ export function buildCli(dependencies: CliDependencies = {}): Command {
     ...(dependencies.setupOutput === undefined ? {} : { setupOutput: dependencies.setupOutput }),
     output: humanOrJson,
   });
+  registerTraceCommands(cli, { withDatabase });
 
   cli.command('web').description('Start the local Kiokuko web UI')
     .option('--host <host>', 'Loopback host', '127.0.0.1')
@@ -647,7 +649,7 @@ export function buildCli(dependencies: CliDependencies = {}): Command {
 
 function operationFor(argv: string[]): string {
   const command = argv[2] ?? 'unknown';
-  if (['skills', 'embeddings'].includes(command) && argv[3] !== undefined && !argv[3].startsWith('-')) return `${command}.${argv[3]}`;
+  if (['skills', 'embeddings', 'trace'].includes(command) && argv[3] !== undefined && !argv[3].startsWith('-')) return `${command}.${argv[3]}`;
   return command;
 }
 
