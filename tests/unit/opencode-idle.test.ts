@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { handleOpenCodeIdle, openCodeIdleKey, OpenCodeSessionFlights, reconcileOpenCodeIdle } from '../../src/opencode/idle.js';
+import {
+  handleOpenCodeIdle,
+  KIOKUKO_OPENCODE_MESSAGE_LIMIT,
+  openCodeIdleKey,
+  OpenCodeSessionFlights,
+  reconcileOpenCodeIdle,
+} from '../../src/opencode/idle.js';
 import { OpenCodeIdleState } from '../../src/opencode/idle-state.js';
 
 function idle(sessionID: string, messageID?: string): object {
@@ -93,6 +99,33 @@ test('idle failure is fail-open and only emits bounded sanitized diagnostics', a
   assert.equal(warnings.length, 1);
   assert.equal(warnings[0]?.extra?.reason, 'timeout');
   assert.doesNotMatch(JSON.stringify(warnings), /failure-terminal|repo/u);
+});
+
+test('idle message reads use a recent window and warn on timeout or failure without throwing', async () => {
+  for (const mode of ['timeout', 'failure'] as const) {
+    const reasons: unknown[] = [];
+    let query: { limit?: number } | undefined;
+    const client = {
+      session: {
+        get: async () => ({ data: { id: `read-${mode}`, directory: '/repo' } }),
+        messages: ({ query: received, signal }: { query?: { limit?: number }; signal?: AbortSignal }) => {
+          query = received;
+          if (mode === 'failure') return Promise.reject(new Error('transport unavailable'));
+          return new Promise<never>((_resolve, reject) => {
+            const abort = () => reject(signal?.reason);
+            if (signal?.aborted) abort();
+            else signal?.addEventListener('abort', abort, { once: true });
+          });
+        },
+      },
+    };
+    await handleOpenCodeIdle(client as never, '/repo', idle(`read-${mode}`, 'terminal'), {
+      apiTimeoutMs: 5,
+      log: (_message, extra) => { reasons.push(extra?.reason); },
+    });
+    assert.equal(query?.limit, KIOKUKO_OPENCODE_MESSAGE_LIMIT);
+    assert.equal(reasons.includes(mode === 'timeout' ? 'read_timeout' : 'read_failed'), true);
+  }
 });
 
 test('idle retries a transient hook failure and sends one prompt after recovery', async () => {

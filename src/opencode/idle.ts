@@ -14,6 +14,7 @@ import { MAX_IDLE_ENTRIES, OpenCodeIdleState } from './idle-state.js';
 
 type OpenCodeClient = PluginInput['client'];
 export const KIOKUKO_OPENCODE_API_TIMEOUT_MS = 10_000;
+export const KIOKUKO_OPENCODE_MESSAGE_LIMIT = 200;
 
 interface IdleMessage {
   info?: { id?: unknown };
@@ -112,13 +113,24 @@ function isActive(dependencies: IdleContinuationDependencies): boolean {
   return dependencies.signal?.aborted !== true && dependencies.active?.() !== false;
 }
 
-function requestSignal(dependencies: IdleContinuationDependencies): { signal?: AbortSignal } {
+function requestSignal(dependencies: IdleContinuationDependencies): { signal: AbortSignal } {
   const timeout = AbortSignal.timeout(dependencies.apiTimeoutMs ?? KIOKUKO_OPENCODE_API_TIMEOUT_MS);
   return {
     signal: dependencies.signal === undefined
       ? timeout
       : AbortSignal.any([dependencies.signal, timeout]),
   };
+}
+
+export function openCodeMessageReadFailureReason(
+  error: unknown,
+  signal?: AbortSignal,
+): 'read_timeout' | 'read_failed' {
+  const reason = signal?.aborted === true ? signal.reason : error;
+  return typeof reason === 'object' && reason !== null && 'name' in reason
+    && (reason as { name?: unknown }).name === 'TimeoutError'
+    ? 'read_timeout'
+    : 'read_failed';
 }
 
 async function safeLog(
@@ -151,8 +163,24 @@ async function readSessionMessages(
   sessionId: string,
   dependencies: IdleContinuationDependencies,
 ): Promise<unknown> {
-  const messages = await client.session.messages({ path: { id: sessionId }, ...requestSignal(dependencies) });
-  return responseData(messages);
+  const request = requestSignal(dependencies);
+  try {
+    const messages = await client.session.messages({
+      path: { id: sessionId },
+      query: { limit: KIOKUKO_OPENCODE_MESSAGE_LIMIT },
+      ...request,
+    });
+    return responseData(messages);
+  } catch (error) {
+    if (isActive(dependencies)) {
+      await safeLog(
+        dependencies.log,
+        'OpenCode session messages read failed',
+        openCodeMessageReadFailureReason(error, request.signal),
+      );
+    }
+    throw error;
+  }
 }
 
 async function sendPendingPrompt(
