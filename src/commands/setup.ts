@@ -42,6 +42,7 @@ import {
   type ProjectAgentRefreshResult,
   type RegisteredProjectLocation,
 } from '../setup/project-agent-refresh.js';
+import { enableOrcaReplayIntegration, type OrcaReplaySpawner } from './orca-replay.js';
 import {
   findMissingRepositoryLocations,
   removeMissingRepositoryLocations,
@@ -192,6 +193,8 @@ export interface SetupFlowOptions {
 
 export interface SetupFlowDependencies<T extends { client: 'opencode'; projectAgentFiles: ProjectAgentRefreshResult[] }> {
   readonly setupOpenCode?: (options: SetupOptions) => Promise<T>;
+  readonly orcaReplaySpawnInstall?: OrcaReplaySpawner;
+  readonly orcaReplayCheckInstalled?: OrcaReplaySpawner;
 }
 
 /** Run the OpenCode conflict-confirmation and setup flow. */
@@ -227,12 +230,14 @@ export async function runSetupFlow<T extends { client: 'opencode'; projectAgentF
   const runSetup = dependencyOverrides.setupOpenCode
     ?? (setupOpenCode as unknown as (options: SetupOptions) => Promise<T>);
   let replaceConflictingOpenCodeMcp = false;
+  let result: T;
   for (;;) {
     try {
-      return await runSetup({
+      result = await runSetup({
         ...setupOptions,
         replaceConflictingOpenCodeMcp,
       });
+      break;
     } catch (error) {
       if (!interactive
         || !isSetupOpenCodeMcpIdentityConflict(error)
@@ -242,6 +247,15 @@ export async function runSetupFlow<T extends { client: 'opencode'; projectAgentF
       replaceConflictingOpenCodeMcp = true;
     }
   }
+  if (interactive && options.dryRun !== true) {
+    await enableOrcaReplayIntegration({
+      input,
+      output,
+      ...(dependencyOverrides.orcaReplaySpawnInstall === undefined ? {} : { spawnInstall: dependencyOverrides.orcaReplaySpawnInstall }),
+      ...(dependencyOverrides.orcaReplayCheckInstalled === undefined ? {} : { checkInstalled: dependencyOverrides.orcaReplayCheckInstalled }),
+    });
+  }
+  return result;
 }
 
 function wasManagedBeforeSetup(
