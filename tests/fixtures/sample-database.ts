@@ -15,7 +15,11 @@ import { importSkillSnapshot } from '../../src/skills/store.js';
 import { validateSkillSnapshot } from '../../src/skills/source/snapshot-validator.js';
 import type { SkillCandidate } from '../../src/skills/types.js';
 
-export const SAMPLE_DATABASE_SCHEMA_VERSION = 2;
+export const SAMPLE_DATABASE_SCHEMA_VERSION = 3;
+
+function expectedAppliedMigrationVersions(): number[] {
+  return Array.from({ length: SAMPLE_DATABASE_SCHEMA_VERSION }, (_, index) => index + 1);
+}
 export const SAMPLE_PROJECT_WORKSPACE = 'project:sampledb-ci';
 export const SAMPLE_GLOBAL_WORKSPACE = 'global';
 export const SAMPLE_EXTERNAL_SKILL_ID = 'github:sveltejs/ai-tools:svelte-code-writer';
@@ -293,7 +297,7 @@ function canonicalizeGeneratedIdentifiers(database: ReturnType<typeof openConnec
 
 function assertCurrentState(database: ReturnType<typeof openConnection>): void {
   const versions = database.prepare('SELECT version FROM schema_migrations ORDER BY version').all<{ version: number }>();
-  assert.deepEqual(versions.map(({ version }) => version), [1, SAMPLE_DATABASE_SCHEMA_VERSION]);
+  assert.deepEqual(versions.map(({ version }) => version), expectedAppliedMigrationVersions());
   const counts = database.prepare('SELECT workspace, COUNT(*) AS count FROM entries GROUP BY workspace ORDER BY workspace')
     .all<{ workspace: string; count: number }>()
     .map(({ workspace, count }) => ({ workspace, count }));
@@ -340,7 +344,7 @@ export async function createSampleDatabase(targetPath: string): Promise<void> {
   try {
     const migration = migrateDatabase(database, temporaryMigrations);
     assert.equal(migration.currentVersion, SAMPLE_DATABASE_SCHEMA_VERSION);
-    assert.deepEqual(migration.applied, [1, SAMPLE_DATABASE_SCHEMA_VERSION]);
+    assert.deepEqual(migration.applied, expectedAppliedMigrationVersions());
     recordProjectFixtures(database);
     recordGlobalFixtures(database);
     recordExternalSkillFixture(database);
