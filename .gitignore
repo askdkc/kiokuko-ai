@@ -14,3 +14,4 @@ AGENTS.md
 *.sqlite-shm
 *.sqlite3-wal
 *.sqlite3-shm
+.orca
