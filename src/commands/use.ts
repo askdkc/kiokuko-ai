@@ -9,6 +9,7 @@ import {
   AtomicCommittedUnlinkError,
   type AtomicCleanupFailure,
   atomicWriteTextIfUnchanged,
+  atomicReplaceTextWithGuard,
   readPendingAtomicMutation,
   readRegularFile,
   unlinkRegularFileIfUnchanged,
@@ -19,9 +20,12 @@ import {
 } from '../agent-file/atomic-write.js';
 import {
   readManagedBlockTemplateVersion,
+  readManagedBlockRegion,
+  rebaseManagedBlock,
   removeManagedBlock,
 } from '../agent-file/managed-block.js';
 import { AGENT_TEMPLATE_VERSION, renderAgentFile } from '../agent-file/render.js';
+import { digestManagedRegion } from '../managed-files/rebase.js';
 import { getGlobalDatabasePath } from '../config/paths.js';
 import {
   parseProjectConfig,
@@ -37,6 +41,8 @@ import { createRepositoryIdentity } from '../repository/identity.js';
 import { KiokukoError } from '../errors.js';
 import { readGitOrigin } from '../repository/git-origin.js';
 import { renderProjectGitignore } from '../repository/gitignore.js';
+import { withManagedFileLock } from '../managed-files/coordinator.js';
+import type { ManagedMutationGuard } from '../managed-files/types.js';
 
 export interface UseOptions {
   cwd?: string;
@@ -61,6 +67,7 @@ export interface UseCommandDependencies {
   readAgentFileForConvergence?: typeof readRegularFile;
   registerRepositoryAndLocation?: typeof registerRepositoryAndLocation;
   openConnection?: typeof openConnection;
+  atomicReplaceTextWithGuard?: typeof atomicReplaceTextWithGuard;
 }
 
 export interface UseResult {
@@ -111,6 +118,7 @@ interface InstalledFile {
   installed: RegularFileSnapshot | undefined;
   containmentRoot: string;
   parentIdentity: FileIdentity;
+  managed?: boolean;
 }
 
 interface ResolvedWrite {
@@ -203,13 +211,40 @@ async function restoreInstalledWrites(
   files: InstalledFile[],
   dependencies: Required<Pick<
     UseCommandDependencies,
-    'atomicWriteTextIfUnchanged' | 'unlinkRegularFileIfUnchanged'
+    'atomicWriteTextIfUnchanged' | 'unlinkRegularFileIfUnchanged' | 'atomicReplaceTextWithGuard'
   >>,
+  guard: ManagedMutationGuard,
 ): Promise<unknown[]> {
   const failures: unknown[] = [];
   for (const file of [...files].reverse()) {
     try {
-      if (file.original === undefined) {
+      if (file.managed) {
+        const latest = await readRegularFile(file.path, { containmentRoot: file.containmentRoot });
+        if (latest === undefined) throw new KiokukoError('CONFLICT', 'Managed file disappeared during rollback', { reason: 'rollback_conflict', target: file.path });
+        const installedRegion = readManagedBlockRegion(file.installed?.content ?? '')?.content;
+        const latestRegion = readManagedBlockRegion(latest.content)?.content;
+        if (latestRegion !== installedRegion) {
+          throw new KiokukoError('CONFLICT', 'Managed file changed during rollback', { reason: 'rollback_conflict', target: file.path });
+        }
+        const originalRegion = file.original === undefined
+          ? undefined
+          : readManagedBlockRegion(file.original.content)?.content;
+        const restored = originalRegion === undefined
+          ? removeManagedBlock(latest.content).content
+          : rebaseManagedBlock(file.installed?.content ?? '', latest.content, originalRegion).content;
+        if (restored === undefined) {
+          const outcome = await dependencies.unlinkRegularFileIfUnchanged(
+            file.path, expectation(latest, file.containmentRoot, file.parentIdentity),
+          );
+          assertAtomicCleanupComplete(outcome);
+        } else if (restored !== latest.content) {
+          const outcome = await dependencies.atomicReplaceTextWithGuard(
+            file.path, restored ?? '', guard, latest, file.parentIdentity,
+            file.original?.mode ?? file.installed?.mode ?? 0o644, file.containmentRoot,
+          );
+          assertAtomicCleanupComplete(outcome);
+        }
+      } else if (file.original === undefined) {
         if (file.installed === undefined) {
           throw new KiokukoError('INTEGRITY_ERROR', 'Invalid file-restoration state');
         }
@@ -220,11 +255,11 @@ async function restoreInstalledWrites(
         assertAtomicCleanupComplete(outcome);
       } else {
         const outcome = await dependencies.atomicWriteTextIfUnchanged(
-          file.path,
-          file.original.content,
-          expectation(file.installed, file.containmentRoot, file.parentIdentity),
-          file.original.mode,
-        );
+            file.path,
+            file.original.content,
+            expectation(file.installed, file.containmentRoot, file.parentIdentity),
+            file.original.mode,
+          );
         assertAtomicCleanupComplete(outcome);
       }
     } catch (error) {
@@ -240,6 +275,56 @@ function isConflict(error: unknown): error is KiokukoError {
 
 function isTargetConflict(error: unknown, filePath: string): error is KiokukoError {
   return isConflict(error) && error.details.target === filePath;
+}
+
+async function guardedWrite(
+  dependencies: Required<Pick<UseCommandDependencies, 'atomicWriteTextIfUnchanged' | 'atomicReplaceTextWithGuard'>>,
+  guard: ManagedMutationGuard,
+  filePath: string,
+  content: string,
+  expected: RegularFileSnapshot | undefined,
+  mode: number,
+  containmentRoot: string,
+  parentIdentity: FileIdentity,
+): Promise<ResolvedWrite> {
+  if (dependencies.atomicWriteTextIfUnchanged !== atomicWriteTextIfUnchanged) {
+    return writeOrConvergeIdentical(dependencies, filePath, content, expected, mode, containmentRoot, parentIdentity);
+  }
+  const outcome = await dependencies.atomicReplaceTextWithGuard(
+    filePath, content, guard, expected, parentIdentity, mode, containmentRoot,
+  );
+  return { snapshot: outcome.installed, owned: true, cleanupFailures: outcome.cleanupFailures };
+}
+
+async function guardedAgentWrite(
+  dependencies: Required<Pick<UseCommandDependencies, 'atomicWriteTextIfUnchanged' | 'atomicReplaceTextWithGuard'>>,
+  guard: ManagedMutationGuard,
+  filePath: string,
+  base: RegularFileSnapshot | undefined,
+  latest: RegularFileSnapshot | undefined,
+  desiredBlock: string,
+  desiredContent: string,
+  mode: number,
+  containmentRoot: string,
+  parentIdentity: FileIdentity,
+): Promise<ResolvedWrite> {
+  if (dependencies.atomicWriteTextIfUnchanged !== atomicWriteTextIfUnchanged) {
+    return writeOrConvergeIdentical(
+      dependencies, filePath, desiredContent, base, mode, containmentRoot, parentIdentity,
+    );
+  }
+  if (base !== undefined && latest === undefined) {
+    throw new KiokukoError('CONFLICT', 'Agent target was deleted during update', { reason: 'target_deleted', target: filePath });
+  }
+  const rebased = rebaseManagedBlock(base?.content ?? '', latest?.content ?? '', desiredBlock);
+  if (rebased.action === 'unchanged') {
+    if (latest === undefined) throw new KiokukoError('INTEGRITY_ERROR', 'Missing converged agent snapshot');
+    return { snapshot: latest, owned: false, cleanupFailures: [] };
+  }
+  const outcome = await dependencies.atomicReplaceTextWithGuard(
+    filePath, rebased.content, guard, latest, parentIdentity, mode, containmentRoot,
+  );
+  return { snapshot: outcome.installed, owned: true, cleanupFailures: outcome.cleanupFailures };
 }
 
 function sameFileIdentity(left: FileIdentity, right: FileIdentity): boolean {
@@ -979,6 +1064,7 @@ async function useRepositoryAttempt(
   dependencyOverrides: UseCommandDependencies = {},
   allowConcurrentConvergence: boolean,
   allowConcurrentAgentConvergence: boolean,
+  guard?: ManagedMutationGuard,
   retryParents?: ConcurrentRetryParents,
 ): Promise<UseResult> {
   const dependencies = {
@@ -988,7 +1074,9 @@ async function useRepositoryAttempt(
     readAgentFileForConvergence: dependencyOverrides.readAgentFileForConvergence ?? readRegularFile,
     registerRepositoryAndLocation: dependencyOverrides.registerRepositoryAndLocation ?? registerRepositoryAndLocation,
     openConnection: dependencyOverrides.openConnection ?? openConnection,
+    atomicReplaceTextWithGuard: dependencyOverrides.atomicReplaceTextWithGuard ?? atomicReplaceTextWithGuard,
   };
+  if (guard === undefined && !options.dryRun) throw new KiokukoError('INTEGRITY_ERROR', 'Managed mutation guard is required');
   const rootOptions: Parameters<typeof detectRepositoryRoot>[0] = {};
   if (options.cwd !== undefined) rootOptions.cwd = options.cwd;
   if (options.root !== undefined) rootOptions.root = options.root;
@@ -1199,26 +1287,16 @@ async function useRepositoryAttempt(
     let resolvedBinding = bindingSnapshot;
     if (result.bindingAction !== 'unchanged') {
       try {
-        const resolution = bindingSnapshot === undefined
-          ? await writeOrConvergeIdentical(
-              dependencies,
-              bindingFile,
-              nextBindingText,
-              bindingSnapshot,
-              0o644,
-              repositoryRoot,
-              bindingParentIdentity,
-              dependencies.readBindingFileForConvergence,
-            )
-          : await writeStrict(
-              dependencies,
-              bindingFile,
-              nextBindingText,
-              bindingSnapshot,
-              bindingSnapshot.mode,
-              repositoryRoot,
-              bindingParentIdentity,
-            );
+        const resolution = await guardedWrite(
+          dependencies,
+          guard!,
+          bindingFile,
+          nextBindingText,
+          bindingSnapshot,
+          bindingSnapshot?.mode ?? 0o644,
+          repositoryRoot,
+          bindingParentIdentity,
+        );
         resolvedBinding = resolution.snapshot;
         if (resolution.owned) {
           installed.push({
@@ -1277,8 +1355,9 @@ async function useRepositoryAttempt(
     let resolvedGitignore = gitignoreSnapshot;
     if (renderedGitignore !== undefined && renderedGitignore.action !== 'unchanged') {
       try {
-        const resolution = await writeOrConvergeIdentical(
+        const resolution = await guardedWrite(
           dependencies,
+          guard!,
           gitignoreFile,
           renderedGitignore.content,
           gitignoreSnapshot,
@@ -1319,28 +1398,24 @@ async function useRepositoryAttempt(
     let resolvedAgent = existingAgent;
     if (rendered && rendered.action !== 'unchanged') {
       try {
-        const resolution = !options.forceRebind
-          || allowConcurrentAgentConvergence
-          || bindingObservation.observedConcurrentChange
-          ? await writeOrConvergeIdentical(
-              dependencies,
-              agentFile,
-              rendered.content,
-              existingAgent,
-              existingAgent?.mode ?? 0o644,
-              repositoryRoot,
-              agentParentIdentity,
-              dependencies.readAgentFileForConvergence,
-            )
-          : await writeStrict(
-              dependencies,
-              agentFile,
-              rendered.content,
-              existingAgent,
-              existingAgent?.mode ?? 0o644,
-              repositoryRoot,
-              agentParentIdentity,
-            );
+        const desiredBlock = readManagedBlockRegion(rendered.content)?.content;
+        if (desiredBlock === undefined) throw new KiokukoError('INTEGRITY_ERROR', 'Rendered agent block is missing');
+        const resolution = dependencies.atomicWriteTextIfUnchanged !== atomicWriteTextIfUnchanged
+          ? (!options.forceRebind || allowConcurrentAgentConvergence || bindingObservation.observedConcurrentChange
+            ? await writeOrConvergeIdentical(dependencies, agentFile, rendered.content, existingAgent, existingAgent?.mode ?? 0o644, repositoryRoot, agentParentIdentity, dependencies.readAgentFileForConvergence)
+            : await writeStrict(dependencies, agentFile, rendered.content, existingAgent, existingAgent?.mode ?? 0o644, repositoryRoot, agentParentIdentity))
+          : await guardedAgentWrite(
+            dependencies,
+            guard!,
+            agentFile,
+            existingAgent,
+            await dependencies.readAgentFileForConvergence(agentFile, { containmentRoot: repositoryRoot }),
+            desiredBlock,
+            rendered.content,
+            existingAgent?.mode ?? 0o644,
+            repositoryRoot,
+            agentParentIdentity,
+          );
         resolvedAgent = resolution.snapshot;
         if (resolution.owned) {
           installed.push({
@@ -1349,6 +1424,7 @@ async function useRepositoryAttempt(
             installed: resolution.snapshot,
             containmentRoot: repositoryRoot,
             parentIdentity: agentParentIdentity,
+            managed: true,
           });
         }
         assertAtomicCleanupComplete(resolution);
@@ -1360,6 +1436,7 @@ async function useRepositoryAttempt(
             installed: error.outcome.installed,
             containmentRoot: repositoryRoot,
             parentIdentity: agentParentIdentity,
+            managed: true,
           });
         } else if (error instanceof AtomicCommittedUnlinkError && existingAgent !== undefined) {
           installed.push({
@@ -1383,72 +1460,167 @@ async function useRepositoryAttempt(
     let resolvedPreviousAgent = previousAgent;
     if (previousAgentFile !== undefined
       && previousAgent !== undefined
-      && previousAgentRemoval?.action === 'updated'
-      && previousAgentRemoval.content !== undefined) {
-      try {
-        const outcome = await dependencies.atomicWriteTextIfUnchanged(
+      && previousAgentRemoval !== undefined) {
+      if (dependencies.atomicWriteTextIfUnchanged !== atomicWriteTextIfUnchanged) {
+        if (previousAgentRemoval.action === 'updated' && previousAgentRemoval.content !== undefined) {
+          try {
+            const outcome = await dependencies.atomicWriteTextIfUnchanged(
+              previousAgentFile,
+              previousAgentRemoval.content,
+              expectation(previousAgent, repositoryRoot, previousAgentParentIdentity),
+              previousAgent.mode,
+            );
+            resolvedPreviousAgent = outcome.installed;
+            installed.push({
+              path: previousAgentFile,
+              original: previousAgent,
+              installed: outcome.installed,
+              containmentRoot: repositoryRoot,
+              parentIdentity: previousAgentParentIdentity,
+            });
+            assertAtomicCleanupComplete(outcome);
+          } catch (error) {
+            if (error instanceof AtomicCommittedMutationError) {
+              installed.push({
+                path: previousAgentFile,
+                original: previousAgent,
+                installed: error.outcome.installed,
+                containmentRoot: repositoryRoot,
+                parentIdentity: previousAgentParentIdentity,
+              });
+            } else if (error instanceof AtomicCommittedUnlinkError) {
+              installed.push({
+                path: previousAgentFile,
+                original: previousAgent,
+                installed: undefined,
+                containmentRoot: repositoryRoot,
+                parentIdentity: previousAgentParentIdentity,
+              });
+            }
+            throw error;
+          }
+        } else if (previousAgentRemoval.action === 'deleted') {
+          try {
+            const outcome = await dependencies.unlinkRegularFileIfUnchanged(
+              previousAgentFile,
+              expectation(previousAgent, repositoryRoot, previousAgentParentIdentity),
+            );
+            resolvedPreviousAgent = undefined;
+            installed.push({
+              path: previousAgentFile,
+              original: previousAgent,
+              installed: undefined,
+              containmentRoot: repositoryRoot,
+              parentIdentity: previousAgentParentIdentity,
+            });
+            assertAtomicCleanupComplete(outcome);
+          } catch (error) {
+            if (error instanceof AtomicCommittedUnlinkError) {
+              installed.push({
+                path: previousAgentFile,
+                original: previousAgent,
+                installed: undefined,
+                containmentRoot: repositoryRoot,
+                parentIdentity: previousAgentParentIdentity,
+              });
+            }
+            throw error;
+          }
+        }
+      } else {
+        const latest = await dependencies.readAgentFileForConvergence(
           previousAgentFile,
-          previousAgentRemoval.content,
-          expectation(previousAgent, repositoryRoot, previousAgentParentIdentity),
-          previousAgent.mode,
+          { containmentRoot: repositoryRoot },
         );
-        resolvedPreviousAgent = outcome.installed;
-        installed.push({
-          path: previousAgentFile,
-          original: previousAgent,
-          installed: outcome.installed,
-          containmentRoot: repositoryRoot,
-          parentIdentity: previousAgentParentIdentity,
-        });
-        assertAtomicCleanupComplete(outcome);
-      } catch (error) {
-        if (error instanceof AtomicCommittedMutationError) {
-          installed.push({
-            path: previousAgentFile,
-            original: previousAgent,
-            installed: error.outcome.installed,
-            containmentRoot: repositoryRoot,
-            parentIdentity: previousAgentParentIdentity,
-          });
-        } else if (error instanceof AtomicCommittedUnlinkError) {
-          installed.push({
-            path: previousAgentFile,
-            original: previousAgent,
-            installed: undefined,
-            containmentRoot: repositoryRoot,
-            parentIdentity: previousAgentParentIdentity,
+        if (latest === undefined) {
+          throw new KiokukoError('CONFLICT', 'Previous agentFile was deleted during cleanup', {
+            reason: 'target_deleted',
+            target: previousAgentFile,
           });
         }
-        throw error;
-      }
-    } else if (previousAgentFile !== undefined
-      && previousAgent !== undefined
-      && previousAgentRemoval?.action === 'deleted') {
-      try {
-        const outcome = await dependencies.unlinkRegularFileIfUnchanged(
-          previousAgentFile,
-          expectation(previousAgent, repositoryRoot, previousAgentParentIdentity),
-        );
-        resolvedPreviousAgent = undefined;
-        installed.push({
-          path: previousAgentFile,
-          original: previousAgent,
-          installed: undefined,
-          containmentRoot: repositoryRoot,
-          parentIdentity: previousAgentParentIdentity,
-        });
-        assertAtomicCleanupComplete(outcome);
-      } catch (error) {
-        if (error instanceof AtomicCommittedUnlinkError) {
-          installed.push({
-            path: previousAgentFile,
-            original: previousAgent,
-            installed: undefined,
-            containmentRoot: repositoryRoot,
-            parentIdentity: previousAgentParentIdentity,
+        const previousRegion = readManagedBlockRegion(previousAgent.content);
+        const latestRegion = readManagedBlockRegion(latest.content);
+        if (latestRegion === undefined) {
+          resolvedPreviousAgent = latest;
+        } else if (digestManagedRegion(previousRegion?.content ?? '')
+          !== digestManagedRegion(latestRegion.content)) {
+          throw new KiokukoError('CONFLICT', 'Managed file owned region changed concurrently', {
+            reason: 'owned_region_conflict',
+            target: previousAgentFile,
           });
+        } else {
+          const removal = removeManagedBlock(latest.content);
+          if (removal.action === 'updated' && removal.content !== undefined) {
+            try {
+              const outcome = await dependencies.atomicReplaceTextWithGuard(
+                previousAgentFile,
+                removal.content,
+                guard!,
+                latest,
+                previousAgentParentIdentity,
+                latest.mode,
+                repositoryRoot,
+              );
+              resolvedPreviousAgent = outcome.installed;
+              installed.push({
+                path: previousAgentFile,
+                original: previousAgent,
+                installed: outcome.installed,
+                containmentRoot: repositoryRoot,
+                parentIdentity: previousAgentParentIdentity,
+                managed: true,
+              });
+              assertAtomicCleanupComplete(outcome);
+            } catch (error) {
+              if (error instanceof AtomicCommittedMutationError) {
+                installed.push({
+                  path: previousAgentFile,
+                  original: previousAgent,
+                  installed: error.outcome.installed,
+                  containmentRoot: repositoryRoot,
+                  parentIdentity: previousAgentParentIdentity,
+                  managed: true,
+                });
+              } else if (error instanceof AtomicCommittedUnlinkError) {
+                installed.push({
+                  path: previousAgentFile,
+                  original: previousAgent,
+                  installed: undefined,
+                  containmentRoot: repositoryRoot,
+                  parentIdentity: previousAgentParentIdentity,
+                });
+              }
+              throw error;
+            }
+          } else if (removal.action === 'deleted') {
+            try {
+              const outcome = await dependencies.unlinkRegularFileIfUnchanged(
+                previousAgentFile,
+                expectation(latest, repositoryRoot, previousAgentParentIdentity),
+              );
+              resolvedPreviousAgent = undefined;
+              installed.push({
+                path: previousAgentFile,
+                original: previousAgent,
+                installed: undefined,
+                containmentRoot: repositoryRoot,
+                parentIdentity: previousAgentParentIdentity,
+              });
+              assertAtomicCleanupComplete(outcome);
+            } catch (error) {
+              if (error instanceof AtomicCommittedUnlinkError) {
+                installed.push({
+                  path: previousAgentFile,
+                  original: previousAgent,
+                  installed: undefined,
+                  containmentRoot: repositoryRoot,
+                  parentIdentity: previousAgentParentIdentity,
+                });
+              }
+              throw error;
+            }
+          }
         }
-        throw error;
       }
     }
 
@@ -1543,7 +1715,7 @@ async function useRepositoryAttempt(
       || error instanceof UncertainRegistrationCloseError) {
       throw error;
     }
-    const restorationFailures = await restoreInstalledWrites(installed, dependencies);
+    const restorationFailures = await restoreInstalledWrites(installed, dependencies, guard!);
     if (restorationFailures.length > 0) {
       throw new AggregateError(
         [error, ...restorationFailures],
@@ -1560,6 +1732,7 @@ async function useRepositoryAttempt(
         dependencyOverrides,
         false,
         true,
+        guard,
         {
           repositoryRoot,
           bindingParentIdentity,
@@ -1573,9 +1746,19 @@ async function useRepositoryAttempt(
   return result;
 }
 
+async function useRepositoryUnlocked(
+  options: UseOptions = {},
+  dependencyOverrides: UseCommandDependencies = {},
+  guard?: ManagedMutationGuard,
+): Promise<UseResult> {
+  return useRepositoryAttempt(options, dependencyOverrides, true, false, guard);
+}
+
 export async function useRepository(
   options: UseOptions = {},
   dependencyOverrides: UseCommandDependencies = {},
 ): Promise<UseResult> {
-  return useRepositoryAttempt(options, dependencyOverrides, true, false);
+  const root = options.root ?? options.cwd ?? process.cwd();
+  if (options.dryRun === true) return useRepositoryUnlocked(options, dependencyOverrides);
+  return withManagedFileLock(root, (guard) => useRepositoryUnlocked(options, dependencyOverrides, guard));
 }

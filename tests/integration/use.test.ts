@@ -6,6 +6,7 @@ import path from 'node:path';
 import test from 'node:test';
 import {
   atomicWriteTextIfUnchanged,
+  atomicReplaceTextWithGuard,
   AtomicCommittedMutationError,
   AtomicCommittedUnlinkError,
   readRegularFile,
@@ -1467,7 +1468,7 @@ test('use rejects a future binding version before mutating files or repository m
   }
 });
 
-test('use rejects future managed-block versions at current and retired agent paths without partial mutation', async () => {
+test('C06 use rejects template downgrade and future managed-block versions without partial mutation', async () => {
   for (const target of ['current', 'retired'] as const) {
     const root = await repository(`future-managed-block-${target}`);
     const data = await mkdtemp(path.join(tmpdir(), 'kiokuko-data-'));
@@ -1643,7 +1644,7 @@ test('no-agent-file still upgrades version metadata without creating AGENTS.md',
 });
 
 
-test('use preserves human content and rejects malformed markers', async () => {
+test('C07 use preserves human content and rejects marker mutation', async () => {
   const root = await repository('preserve');
   await import('node:fs/promises').then(({ writeFile }) => writeFile(path.join(root, 'AGENTS.md'), 'human\n'));
   const data = await mkdtemp(path.join(tmpdir(), 'kiokuko-data-'));
@@ -1657,6 +1658,26 @@ test('use preserves human content and rejects malformed markers', async () => {
   await assert.rejects(useRepository({ root, databasePath: path.join(data, 'db.sqlite3') }), /malformed/i);
   assert.equal(await readFile(path.join(root, 'AGENTS.md'), 'utf8'), malformed);
   assert.equal(await readFile(bindingPath, 'utf8'), bindingBefore);
+});
+
+test('C08 use does not recreate an agent target deleted after planning', async () => {
+  const root = await repository('target-deleted');
+  const data = await mkdtemp(path.join(tmpdir(), 'kiokuko-data-'));
+  const databasePath = path.join(data, 'db.sqlite3');
+  await useRepository({ root, databasePath, workspace: 'before' });
+  const agentPath = path.join(root, 'AGENTS.md');
+  let deleted = false;
+  await assert.rejects(useRepository({ root, databasePath, forceRebind: true, repositoryId: 'repo_after', workspace: 'after' }, {
+    atomicReplaceTextWithGuard: async (filePath, content, guard, expected, parent, mode, containment) => {
+      if (!deleted && path.basename(filePath) === 'AGENTS.md') {
+        deleted = true;
+        await unlink(filePath);
+      }
+      return atomicReplaceTextWithGuard(filePath, content, guard, expected, parent, mode, containment);
+    },
+  }), (error: unknown) => error instanceof Error && 'code' in error && error.code === 'CONFLICT');
+  assert.equal(deleted, true);
+  await assert.rejects(access(agentPath));
 });
 
 test('use rejects duplicate binding keys before database or agent-file mutation', async () => {

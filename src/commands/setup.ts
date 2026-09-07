@@ -4,6 +4,7 @@ import { createInterface } from 'node:readline/promises';
 import { stdin, stdout } from 'node:process';
 import {
   atomicWriteTextIfUnchanged,
+  atomicReplaceTextWithGuard,
   assertAtomicCleanupComplete,
   AtomicCommittedMutationError,
   AtomicCommittedUnlinkError,
@@ -47,6 +48,8 @@ import {
   findMissingRepositoryLocations,
   removeMissingRepositoryLocations,
 } from '../repository/binding.js';
+import { withManagedFileLock } from '../managed-files/coordinator.js';
+import type { ManagedMutationGuard } from '../managed-files/types.js';
 export type EnnoSetupMode = 'on' | 'off';
 type SetupAction = 'created' | 'updated' | 'unchanged' | 'deleted';
 
@@ -77,6 +80,8 @@ interface PlannedFile {
   purpose: 'mcp-config' | 'instructions' | 'standard-skill';
   client: 'opencode';
   report: boolean;
+  render: (existing: string | undefined) => { content: string; action: SetupAction };
+  containmentRoot: string;
 }
 
 export interface SetupOptions extends PathEnvironment {
@@ -97,6 +102,8 @@ export interface SetupCommandDependencies {
   openConnection?: typeof openConnection;
   ensureGlobalWorkspace?: typeof ensureGlobalWorkspace;
   refreshRegisteredProjectAgentFiles?: typeof refreshRegisteredProjectAgentFiles;
+  atomicReplaceTextWithGuard?: typeof atomicReplaceTextWithGuard;
+  readRegularFile?: typeof readRegularFile;
 }
 
 export interface SetupResult {
@@ -426,6 +433,7 @@ async function planFile(
   purpose: PlannedFile['purpose'],
   render: (existing: string | undefined) => { content: string; action: SetupAction },
   mustRemainAbsent: readonly string[] = [],
+  containmentRoot = path.dirname(filePath),
 ): Promise<PlannedFile> {
   const { parentDirectory, snapshot: original } = await readPlannedRegularFile(planning, filePath);
   const rendered = render(original?.content);
@@ -443,6 +451,8 @@ async function planFile(
     purpose,
     client: 'opencode',
     report: true,
+    render,
+    containmentRoot,
   };
 }
 
@@ -460,18 +470,22 @@ async function openCodeConfigPath(
 
 interface AppliedFileMutation {
   file: PlannedFile;
+  previous: RegularFileSnapshot | undefined;
   installed: RegularFileSnapshot | undefined;
+  owned: boolean;
 }
 
 async function restoreFiles(
   mutations: AppliedFileMutation[],
-  dependencies: Required<Pick<SetupCommandDependencies, 'atomicWriteTextIfUnchanged' | 'unlinkRegularFileIfUnchanged'>>,
+  dependencies: Required<Pick<SetupCommandDependencies, 'unlinkRegularFileIfUnchanged' | 'atomicReplaceTextWithGuard'>>,
+  guard: ManagedMutationGuard,
 ): Promise<unknown[]> {
   const failures: unknown[] = [];
   for (const mutation of [...mutations].reverse()) {
-    const { file, installed } = mutation;
+    const { file, previous, installed } = mutation;
     try {
-      if (file.original === undefined) {
+      if (!mutation.owned) continue;
+      if (previous === undefined) {
         if (installed === undefined) throw new KiokukoError('INTEGRITY_ERROR', 'Setup rollback record is invalid');
         const outcome = await dependencies.unlinkRegularFileIfUnchanged(
           file.path,
@@ -479,11 +493,14 @@ async function restoreFiles(
         );
         assertAtomicCleanupComplete(outcome);
       } else {
-        const outcome = await dependencies.atomicWriteTextIfUnchanged(
+        const outcome = await dependencies.atomicReplaceTextWithGuard(
           file.path,
-          file.original.content,
-          fileExpectation(file, installed, false),
-          file.original.mode,
+          previous.content,
+          guard,
+          installed,
+          plannedDirectoryIdentity(file.parentDirectory)!,
+          previous.mode,
+          file.containmentRoot,
         );
         assertAtomicCleanupComplete(outcome);
       }
@@ -519,6 +536,7 @@ function fileExpectation(
     ...(includeAlternatePaths && file.mustRemainAbsent !== undefined
       ? { mustRemainAbsent: file.mustRemainAbsent }
       : {}),
+    containmentRoot: file.containmentRoot,
   };
 }
 
@@ -602,9 +620,10 @@ function readDryRunProjectLocations(
   return locations;
 }
 
-export async function setupOpenCode(
+async function setupOpenCodeUnlocked(
   options: SetupOptions = {},
   dependencyOverrides: SetupCommandDependencies = {},
+  guard?: ManagedMutationGuard,
 ): Promise<SetupResult> {
   const dependencies: Required<SetupCommandDependencies> = {
     atomicWriteTextIfUnchanged: dependencyOverrides.atomicWriteTextIfUnchanged ?? atomicWriteTextIfUnchanged,
@@ -614,7 +633,12 @@ export async function setupOpenCode(
     ensureGlobalWorkspace: dependencyOverrides.ensureGlobalWorkspace ?? ensureGlobalWorkspace,
     refreshRegisteredProjectAgentFiles: dependencyOverrides.refreshRegisteredProjectAgentFiles
       ?? refreshRegisteredProjectAgentFiles,
+    atomicReplaceTextWithGuard: dependencyOverrides.atomicReplaceTextWithGuard ?? atomicReplaceTextWithGuard,
+    readRegularFile: dependencyOverrides.readRegularFile ?? readRegularFile,
   };
+  if (guard === undefined && !options.dryRun) {
+    throw new KiokukoError('INTEGRITY_ERROR', 'Managed mutation guard is required');
+  }
   const pathEnvironment: PathEnvironment = {
     ...(options.platform === undefined ? {} : { platform: options.platform }),
     ...(options.env === undefined ? {} : { env: options.env }),
@@ -657,9 +681,10 @@ export async function setupOpenCode(
       },
     ),
     selectedConfig.mustRemainAbsent,
+    getOpenCodeConfigDirectory(pathEnvironment),
   );
   files.push(mcpFile);
-  files.push(await planFile(planning, getOpenCodeInstructionsPath(pathEnvironment), 'instructions', (existing) => renderGlobalInstructions(existing ?? '')));
+  files.push(await planFile(planning, getOpenCodeInstructionsPath(pathEnvironment), 'instructions', (existing) => renderGlobalInstructions(existing ?? ''), [], getOpenCodeConfigDirectory(pathEnvironment)));
 
   if (standardSkills) {
     const bundledFiles = await loadBundledStandardSkillFiles();
@@ -676,6 +701,8 @@ export async function setupOpenCode(
         destinationPath,
         'standard-skill',
         (existing) => renderStandardSkillFile(existing, bundled, destinationPath),
+        [],
+        getOpenCodeConfigDirectory(pathEnvironment),
       ));
     }
   }
@@ -754,48 +781,63 @@ export async function setupOpenCode(
     await assertPlannedFiles(files);
     for (const file of files) {
       if (file.action === 'unchanged') continue;
+      await assertPlannedDirectory(file.parentDirectory);
+      const latest = await dependencies.readRegularFile(file.path, {
+        containmentRoot: file.containmentRoot,
+      });
+      await assertFileExpectation(file.path, fileExpectation(file, latest));
+      const rendered = file.render(latest?.content);
+      if (rendered.action === 'unchanged' || (latest !== undefined && rendered.content === latest.content)) {
+        applied.push({ file, previous: latest, installed: latest, owned: false });
+        continue;
+      }
+      const previous = latest;
       // Record a committed mutation before inspecting its cleanup outcome so
       // rollback never loses ownership of a target that already changed.
       let installed: RegularFileSnapshot | undefined;
-      if (file.action === 'deleted') {
-        if (file.original === undefined) throw new KiokukoError('INTEGRITY_ERROR', 'Setup deletion plan is missing original content');
+      if (rendered.action === 'deleted') {
+        if (latest === undefined) throw new KiokukoError('INTEGRITY_ERROR', 'Setup deletion plan is missing current content');
         let outcome;
         try {
-          outcome = await dependencies.unlinkRegularFileIfUnchanged(file.path, fileExpectation(file, file.original));
+          outcome = await dependencies.unlinkRegularFileIfUnchanged(file.path, fileExpectation(file, latest));
         } catch (error) {
           if (error instanceof AtomicCommittedUnlinkError) {
-            applied.push({ file, installed: undefined });
+            applied.push({ file, previous, installed: undefined, owned: true });
           }
           throw error;
         }
-        applied.push({ file, installed: undefined });
+        applied.push({ file, previous, installed: undefined, owned: true });
         assertAtomicCleanupComplete(outcome);
       } else {
-        if (file.content === undefined) throw new KiokukoError('INTEGRITY_ERROR', 'Setup file plan is missing rendered content');
+        const parentIdentity = plannedDirectoryIdentity(file.parentDirectory);
+        if (parentIdentity === undefined) throw new KiokukoError('INTEGRITY_ERROR', 'Setup file parent was not created or bound before mutation');
         let outcome;
         try {
-          outcome = await dependencies.atomicWriteTextIfUnchanged(
+          outcome = await dependencies.atomicReplaceTextWithGuard(
             file.path,
-            file.content,
-            fileExpectation(file, file.original),
+            rendered.content,
+            guard!,
+            latest,
+            parentIdentity,
             file.mode,
+            file.containmentRoot,
           );
         } catch (error) {
           if (error instanceof AtomicCommittedMutationError) {
-            applied.push({ file, installed: error.outcome.installed });
+            applied.push({ file, previous, installed: error.outcome.installed, owned: true });
           } else if (error instanceof AtomicCommittedUnlinkError) {
-            applied.push({ file, installed: undefined });
+            applied.push({ file, previous, installed: undefined, owned: true });
           }
           throw error;
         }
         installed = outcome.installed;
-        applied.push({ file, installed });
+        applied.push({ file, previous, installed, owned: true });
         assertAtomicCleanupComplete(outcome);
       }
     }
     await assertPlannedFiles(files, applied);
   } catch (error) {
-    const restorationFailures = await restoreFiles(applied, dependencies);
+    const restorationFailures = await restoreFiles(applied, dependencies, guard!);
     const directoryRestorationFailures = await removeCreatedDirectories(createdDirectories);
     const failures = [...restorationFailures, ...directoryRestorationFailures];
     if (failures.length > 0) {
@@ -816,4 +858,13 @@ export async function setupOpenCode(
     },
   );
   return result;
+}
+
+export async function setupOpenCode(
+  options: SetupOptions = {},
+  dependencyOverrides: SetupCommandDependencies = {},
+): Promise<SetupResult> {
+  if (options.dryRun === true) return setupOpenCodeUnlocked(options, dependencyOverrides);
+  const configDirectory = getOpenCodeConfigDirectory(options);
+  return withManagedFileLock(configDirectory, (guard) => setupOpenCodeUnlocked(options, dependencyOverrides, guard), options);
 }

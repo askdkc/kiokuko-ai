@@ -1,9 +1,16 @@
 import { KiokukoError } from '../errors.js';
+import { digestManagedRegion } from '../managed-files/rebase.js';
 
 export const BEGIN_MARKER = '<!-- BEGIN KIOKUKO MANAGED BLOCK -->';
 export const END_MARKER = '<!-- END KIOKUKO MANAGED BLOCK -->';
 
 type ManagedBlockState = 'absent' | 'balanced';
+
+export interface ManagedBlockRegion {
+  content: string;
+  start: number;
+  end: number;
+}
 
 export interface ManagedBlockResult {
   content: string;
@@ -50,6 +57,32 @@ function validateMarkers(content: string): { start: number; end: number } | unde
     throw new KiokukoError('VALIDATION_ERROR', 'AGENTS.md contains malformed Kiokuko managed markers');
   }
   return { start, end: end + END_MARKER.length };
+}
+
+export function readManagedBlockRegion(content: string): ManagedBlockRegion | undefined {
+  const markers = validateMarkers(content);
+  return markers === undefined ? undefined : { content: content.slice(markers.start, markers.end), ...markers };
+}
+
+export function rebaseManagedBlock(
+  base: string,
+  latest: string,
+  desiredBlock: string,
+): ManagedBlockResult {
+  const baseRegion = readManagedBlockRegion(base);
+  const latestRegion = readManagedBlockRegion(latest);
+  const desired = upsertManagedBlock(latest, desiredBlock);
+  const desiredRegion = readManagedBlockRegion(desired.content);
+  const baseDigest = digestManagedRegion(baseRegion?.content ?? '');
+  const latestDigest = digestManagedRegion(latestRegion?.content ?? '');
+  const desiredDigest = digestManagedRegion(desiredRegion?.content ?? '');
+  if (latestDigest === desiredDigest) return { ...desired, content: latest, action: 'unchanged' };
+  if (latestDigest !== baseDigest) {
+    throw new KiokukoError('CONFLICT', 'Managed file owned region changed concurrently', {
+      reason: 'owned_region_conflict',
+    });
+  }
+  return desired;
 }
 
 function newlineFor(content: string): string {
