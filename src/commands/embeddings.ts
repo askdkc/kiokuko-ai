@@ -1,3 +1,4 @@
+import { summarizeProjectAgentRefresh, formatProjectAgentRefresh } from '../setup/project-agent-refresh.js';
 import { spawn } from 'node:child_process';
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -445,14 +446,20 @@ export function registerEmbeddingsCommands(cli: Command, dependencies: Embedding
       const { setup, embeddingData } = setupLock === undefined
         ? await executeSetup()
         : await withEmbeddingSetupLock(setupLock, executeSetup);
+      const health = summarizeProjectAgentRefresh(setup.projectAgentFiles);
       const data = {
         ...embeddingData,
+        ok: health.ok,
         projectSetup: {
           client: setup.client,
+          health,
           projectAgentFiles: setup.projectAgentFiles,
         },
       };
-      output(options.json, 'embeddings.setup', data, data.semanticEnabled ? 'Semantic retrieval enabled.' : 'Embedding setup plan created.');
+      const summary = formatProjectAgentRefresh(setup.projectAgentFiles);
+      const message = `${data.semanticEnabled ? 'Semantic retrieval enabled.' : 'Embedding setup plan created.'}${health.ok ? '' : ' Setup incomplete.'}${summary ? `\n${summary}` : ''}`;
+      output(options.json, 'embeddings.setup', data, message);
+      if (!health.ok) process.exitCode = 9;
     });
 
   embeddings.command('status')

@@ -627,7 +627,7 @@ async function setupOpenCodeUnlocked(
   options: SetupOptions = {},
   dependencyOverrides: SetupCommandDependencies = {},
   guard?: ManagedMutationGuard,
-): Promise<SetupResult> {
+): Promise<{ result: SetupResult; locations: RegisteredProjectLocation[] }> {
   const dependencies: Required<SetupCommandDependencies> = {
     atomicWriteTextIfUnchanged: dependencyOverrides.atomicWriteTextIfUnchanged ?? atomicWriteTextIfUnchanged,
     unlinkRegularFileIfUnchanged: dependencyOverrides.unlinkRegularFileIfUnchanged ?? unlinkRegularFileIfUnchanged,
@@ -730,17 +730,7 @@ async function setupOpenCodeUnlocked(
       dependencies.openConnection,
       options.migrationsDirectory !== undefined,
     );
-    result.projectAgentFiles = await dependencies.refreshRegisteredProjectAgentFiles(
-      registeredProjectLocations,
-      {
-        databasePath,
-        dryRun: true,
-        ...(options.migrationsDirectory === undefined
-          ? {}
-          : { migrationsDirectory: options.migrationsDirectory }),
-      },
-    );
-    return result;
+    return { result, locations: registeredProjectLocations };
   }
 
   const initialized = await initializeDatabase({
@@ -851,23 +841,27 @@ async function setupOpenCodeUnlocked(
     }
     throw error;
   }
-  result.projectAgentFiles = await dependencies.refreshRegisteredProjectAgentFiles(
-    registeredProjectLocations,
-    {
-      databasePath,
-      ...(options.migrationsDirectory === undefined
-        ? {}
-        : { migrationsDirectory: options.migrationsDirectory }),
-    },
-  );
-  return result;
+  return { result, locations: registeredProjectLocations };
 }
 
 export async function setupOpenCode(
   options: SetupOptions = {},
   dependencyOverrides: SetupCommandDependencies = {},
 ): Promise<SetupResult> {
-  if (options.dryRun === true) return setupOpenCodeUnlocked(options, dependencyOverrides);
-  const configDirectory = getOpenCodeConfigDirectory(options);
-  return withManagedFileLock(configDirectory, (guard) => setupOpenCodeUnlocked(options, dependencyOverrides, guard), options);
+  const prepared = options.dryRun === true
+    ? await setupOpenCodeUnlocked(options, dependencyOverrides)
+    : await withManagedFileLock(getOpenCodeConfigDirectory(options),
+      (guard) => setupOpenCodeUnlocked(options, dependencyOverrides, guard), options);
+  // Project `use` takes its own lock in the same SQLite coordinator. The global
+  // configuration transaction must be released before acquiring those locks.
+  prepared.result.projectAgentFiles = await (dependencyOverrides.refreshRegisteredProjectAgentFiles ?? refreshRegisteredProjectAgentFiles)(
+    prepared.locations,
+    {
+      databasePath: prepared.result.databasePath,
+      dryRun: options.dryRun === true,
+      managedFileEnvironment: options,
+      ...(options.migrationsDirectory === undefined ? {} : { migrationsDirectory: options.migrationsDirectory }),
+    },
+  );
+  return prepared.result;
 }

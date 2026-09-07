@@ -174,7 +174,7 @@ test('embedding setup configures OpenCode and refreshes project instructions', a
     assert.equal(setupCall.dryRun, true);
     assert.equal(setupCall.standardSkills, true);
     assert.equal(setupCall.replaceConflictingOpenCodeMcp, false);
-    assert.deepEqual(response.data.projectSetup, { client: 'opencode', projectAgentFiles: [] });
+    assert.deepEqual(response.data.projectSetup, { client: 'opencode', health: { ok: true, total: 0, changed: 0, unchanged: 0, skipped: 0, failed: 0 }, projectAgentFiles: [] });
   } finally {
     database.close();
   }
@@ -377,4 +377,31 @@ test('rebuild requires an active profile and can explicitly wait for the queued 
   } finally {
     database.close();
   }
+});
+
+test('embedding setup reports unresolved project repair in human and JSON output', async () => {
+  const database = await temporaryDatabase('embedding-cli-partial-project');
+  const previousExitCode = process.exitCode;
+  try {
+    for (const json of [false, true]) {
+      process.exitCode = undefined;
+      const output: string[] = [];
+      await command(database, output, {
+        setupOpenCode: async () => ({ client: 'opencode', projectAgentFiles: [{
+          repositoryId: 'repo_project', workspace: 'project:project', repositoryRoot: '/test/project',
+          status: 'failed', agentFile: null, reason: 'use_rejected', errorCode: 'VALIDATION_ERROR',
+        }] }),
+      }).parseAsync(['node', 'kiokuko-ai', 'embeddings', 'setup', '--dry-run', ...(json ? ['--json'] : [])]);
+      assert.equal(process.exitCode, 9);
+      if (json) {
+        const data = JSON.parse(output[0]!).data;
+        assert.equal(data.ok, false);
+        assert.equal(data.projectSetup.health.failed, 1);
+      } else {
+        assert.match(output[0]!, /Setup incomplete/u);
+        assert.match(output[0]!, /\/test\/project/u);
+        assert.match(output[0]!, /VALIDATION_ERROR/u);
+      }
+    }
+  } finally { process.exitCode = previousExitCode; database.close(); }
 });

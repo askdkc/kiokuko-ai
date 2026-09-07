@@ -1,3 +1,4 @@
+import type { PathEnvironment } from '../config/paths.js';
 import { lstat } from 'node:fs/promises';
 import path from 'node:path';
 import { isProxy } from 'node:util/types';
@@ -5,6 +6,7 @@ import type { SqliteDatabase } from '../db/adapter.js';
 import { KiokukoError, type ErrorCode } from '../errors.js';
 import { validateRepositoryBindingIdentity } from '../repository/identity-value.js';
 import { useRepository, type UseOptions } from '../commands/use.js';
+import { inspectProjectAgentFile, describeProjectAgentFinding, type ProjectAgentFinding } from './project-agent-health.js';
 
 export const MAX_SETUP_PROJECT_LOCATIONS = 10_000;
 const MAX_STORED_ROOT_BYTES = 4_096;
@@ -29,7 +31,8 @@ export type ProjectAgentRefreshResult = RegisteredProjectLocation & (
   | {
       status: 'failed';
       agentFile: null;
-      reason: 'inaccessible_root' | 'use_rejected';
+      reason: 'inaccessible_root' | 'use_rejected' | 'verification_failed';
+      finding?: ProjectAgentFinding;
       errorCode: ErrorCode | 'FILESYSTEM_ERROR';
     }
 );
@@ -43,6 +46,7 @@ interface ProjectLocationInput {
 interface StoredProjectLocationRow extends ProjectLocationInput, Record<string, unknown> {}
 
 export interface RefreshRegisteredProjectOptions {
+  managedFileEnvironment?: PathEnvironment;
   databasePath: string;
   migrationsDirectory?: string;
   dryRun?: boolean;
@@ -157,6 +161,7 @@ async function refreshRegisteredProject(
     databasePath: options.databasePath,
     dryRun: options.dryRun === true,
     ensureNewBindingIgnored: true,
+    ...(options.managedFileEnvironment === undefined ? {} : { managedFileEnvironment: options.managedFileEnvironment }),
     ...(options.migrationsDirectory === undefined
       ? {}
       : { migrationsDirectory: options.migrationsDirectory }),
@@ -165,6 +170,10 @@ async function refreshRegisteredProject(
     const result = await dependencies.useRepository(useOptions);
     if (result.agentFile === null || result.agentFileAction === 'skipped') {
       throw new KiokukoError('INTEGRITY_ERROR', 'Registered project refresh unexpectedly skipped its agent file');
+    }
+    if (options.dryRun !== true) {
+      const health = await inspectProjectAgentFile(location);
+      if (!health.ok) return { ...location, status: 'failed', agentFile: null, reason: 'verification_failed', errorCode: 'INTEGRITY_ERROR', finding: health.finding };
     }
     return {
       ...location,
@@ -187,12 +196,14 @@ async function refreshRegisteredProject(
       };
     }
     if (error instanceof KiokukoError) {
+      const health = await inspectProjectAgentFile(location);
       return {
         ...location,
         status: 'failed',
         agentFile: null,
         reason: 'use_rejected',
         errorCode: error.code,
+        ...(!health.ok ? { finding: health.finding } : {}),
       };
     }
     throw error;
@@ -217,4 +228,28 @@ export async function refreshRegisteredProjectAgentFiles(
     results.push(await refreshRegisteredProject(storedProjectLocation(location), options, dependencies));
   }
   return results;
+}
+
+/** Report partial repair consistently from setup and embeddings setup. */
+export function summarizeProjectAgentRefresh(results: readonly ProjectAgentRefreshResult[]) {
+  const changed = results.filter(file => file.status === 'created' || file.status === 'updated').length;
+  const unchanged = results.filter(file => file.status === 'unchanged').length;
+  const skipped = results.filter(file => file.status === 'skipped').length;
+  const failed = results.filter(file => file.status === 'failed').length;
+  return { ok: skipped + failed === 0, total: results.length, changed, unchanged, skipped, failed };
+}
+
+export function formatProjectAgentRefresh(results: readonly ProjectAgentRefreshResult[]): string {
+  if (results.length === 0) return '';
+  const summary = summarizeProjectAgentRefresh(results);
+  const lines = [`Registered project instructions: ${summary.changed} changed, ${summary.unchanged} unchanged, ${summary.skipped} skipped, ${summary.failed} failed.`];
+  for (const result of results) {
+    if (result.status === 'failed') {
+      lines.push(result.finding ? describeProjectAgentFinding(result.finding) + ` (${result.errorCode})`
+        : `${JSON.stringify(result.repositoryRoot)}: ${result.reason} (${result.errorCode}). Check the project path, permissions, and binding before retrying setup.`);
+    } else if (result.status === 'skipped') {
+      lines.push(describeProjectAgentFinding({ repositoryRoot: result.repositoryRoot, agentFile: null, reason: result.reason, repair: result.reason === 'missing_root' ? 'remove_missing_location' : 'manual' }));
+    }
+  }
+  return lines.join('\n');
 }
