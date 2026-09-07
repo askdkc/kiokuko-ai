@@ -92,3 +92,49 @@ for (const initial of ['fresh', 'legacy', 'current'] as const) {
     }
   });
 }
+
+test('embedding setup actually repairs two registered projects before reporting success', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'kiokuko-embedding-project-repair-'));
+  const env = { HOME: path.join(root, 'home'), XDG_CONFIG_HOME: path.join(root, 'config'), KIOKUKO_DATA_DIR: path.join(root, 'data') };
+  const previousData = process.env.KIOKUKO_DATA_DIR;
+  const previousExitCode = process.exitCode;
+  process.env.KIOKUKO_DATA_DIR = env.KIOKUKO_DATA_DIR;
+  try {
+    await mkdir(env.HOME, { recursive: true });
+    const { useRepository } = await import('../../src/commands/use.js');
+    const files: string[] = [];
+    for (const name of ['orca-fork', 'dsh-opencode', 'healthy']) {
+      const project = path.join(root, name);
+      await mkdir(project);
+      const used = await useRepository({ root: project, allowDirectory: true, databasePath: getGlobalDatabasePath({ env }) });
+      files.push(used.agentFile!);
+    }
+    await rm(files[0]!);
+    await writeFile(files[1]!, '# Human instructions\n');
+    let output: any;
+    const cli = new Command();
+    registerEmbeddingsCommands(cli, {
+      pathEnvironment: { env },
+      withDatabase: async operation => {
+        const database = openConnection(getGlobalDatabasePath({ env }));
+        try { return await operation(database); } finally { database.close(); }
+      },
+      optionalRuntimeChecker: async () => undefined,
+      modelInstaller: async () => ({ installation: 'installed', directory: path.join(root, 'model'), relativePath: 'models/embeddings/local-small/test', totalBytes: 0, manifestHash: 'a'.repeat(64) }),
+      provider: { profile: { providerKind: 'local-transformers' } as never, embed: async () => { throw new Error('No entries to embed'); } },
+      output: (_json, _operation, data) => { output = data; },
+    });
+    await cli.parseAsync(['node', 'kiokuko-ai', 'embeddings', 'setup', '--json']);
+    assert.equal(output.semanticEnabled, true);
+    assert.deepEqual(output.projectSetup.projectAgentFiles.map((x: any) => x.status).sort(), ['created', 'created', 'unchanged'], JSON.stringify(output.projectSetup));
+    for (const file of files) assert.match(await readFile(file, 'utf8'), /<!-- BEGIN KIOKUKO MANAGED BLOCK -->/u);
+    assert.ok((await readFile(files[1]!, 'utf8')).startsWith('# Human instructions\n'));
+    const { stdout } = await execFileAsync(process.execPath, ['--import', 'tsx', '--input-type=module', '--eval',
+      'import { runDoctor } from "./src/commands/doctor.ts"; console.log(JSON.stringify((await runDoctor()).checks.agentFiles));'], { env: { ...process.env, ...env } });
+    assert.equal(JSON.parse(stdout).ok, true);
+  } finally {
+    if (previousData === undefined) delete process.env.KIOKUKO_DATA_DIR; else process.env.KIOKUKO_DATA_DIR = previousData;
+    process.exitCode = previousExitCode;
+    await rm(root, { recursive: true, force: true });
+  }
+});

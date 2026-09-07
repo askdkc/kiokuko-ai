@@ -53,6 +53,35 @@ mutation. `--offline` uses only an existing verified installation. `--replace`
 allows switching profiles. `status --json` reports bounded coverage and model
 state; `repair` restores the same pinned artifact without destructive cleanup.
 
+## Project instruction repair
+
+`setup` and `embeddings setup` refresh every registered live project's configured
+agent file. They release the global configuration lock before acquiring each
+project's file lock, and verify the binding and managed block after actual writes.
+A dry-run reports planned actions without claiming that files were repaired.
+Human text outside a valid Kiokuko block is preserved. Missing files/blocks and
+outdated instructions can be repaired; malformed boundaries, unsafe paths, or
+conflicting identities require explicit correction.
+
+Both commands return `data.ok: false` and exit **9** when project repair is
+incomplete. The JSON envelope can still have `ok: true`: it means a result was
+returned, not that every repair succeeded. `setup` includes `projectAgentHealth`;
+`embeddings setup` includes `projectSetup.health`. Per-project results remain in
+`projectAgentFiles` (under `projectSetup` for embeddings), including available
+findings. Human output lists unresolved paths and reasons. Successful semantic
+activation can coexist with incomplete project instruction repair.
+
+`doctor` reports each affected path in `data.checks.agentFiles.findings`, with a
+constant `reason` and a `repair` classification (`setup`, `manual`, or
+`remove_missing_location`). It uses the same binding and marker validation as
+project repair, including marker ordering and template versions. Missing roots
+remain owned by the separate `bindings` check. To inspect repair plans and diagnostics:
+
+```sh
+kiokuko-ai setup --dry-run --json | jq '.data.projectAgentFiles'
+kiokuko-ai doctor --json | jq '.data.checks.agentFiles'
+```
+
 ## OrcaReplay trace commands
 
 | Command | Responsibility |

@@ -7,10 +7,10 @@ import { initializeDatabase } from './init.js';
 import { databaseFileIdentity, openConnection } from '../db/connection.js';
 import { KiokukoError } from '../errors.js';
 import { readRegularFile } from '../agent-file/atomic-write.js';
-import { BEGIN_MARKER, END_MARKER } from '../agent-file/managed-block.js';
-import { readProjectConfig } from '../config/project-config.js';
 import { getOpenCodeConfigDirectory, getDatabaseLockPath, getGlobalDatabasePath, getRuntimeDescriptorPath, getOpenCodeSkillsDirectory } from '../config/paths.js';
-import { listRepositoryLocations, type RepositoryLocation } from '../repository/binding.js';
+import { type RepositoryLocation } from '../repository/binding.js';
+import { listRegisteredProjectLocations } from '../setup/project-agent-refresh.js';
+import { inspectProjectAgentFile, type ProjectAgentFinding } from '../setup/project-agent-health.js';
 import { isPidAlive } from '../server/instance-lock.js';
 import { readRuntimeDescriptor } from '../server/runtime-descriptor.js';
 import { inspectLedger } from '../ledger/maintenance.js';
@@ -56,7 +56,7 @@ export interface DoctorResult {
     danglingLinks: DoctorCheck;
     contradictions: DoctorCheck;
     bindings: DoctorCheck;
-    agentFiles: DoctorCheck;
+    agentFiles: DoctorCheck & { findings?: ProjectAgentFinding[] };
     permissions: DoctorCheck;
     secrets: DoctorCheck;
     ledger: DoctorCheck;
@@ -130,10 +130,6 @@ function count(database: SqliteDatabase, sql: string, ...parameters: Array<strin
 function hasColumn(database: SqliteDatabase, table: string, column: string): boolean {
   return database.prepare(`PRAGMA table_info(${table})`).all<{ name: unknown }>()
     .some((row) => row.name === column);
-}
-
-function balancedMarkers(content: string): boolean {
-  return content.split(BEGIN_MARKER).length - 1 === 1 && content.split(END_MARKER).length - 1 === 1;
 }
 
 /** Resolve the OpenCode config path using setup's opencode.jsonc-before-json precedence. */
@@ -369,23 +365,19 @@ async function collectDoctorResult(
     WHERE l.relation = 'contradicts' AND f.status = 'verified' AND t.status = 'verified'
   `);
 
-  const bindingRows = listRepositoryLocations(database);
-  const missingRoots = bindingRows.filter((row) => !existsSync(row.canonicalRoot)).length;
-  const bindingCheck = { ok: missingRoots === 0, count: missingRoots, detail: `locations=${bindingRows.length}` };
-
-  let missingAgentFiles = 0;
+  const bindingRows = listRegisteredProjectLocations(database);
+  let missingRoots = 0;
+  const agentFindings: ProjectAgentFinding[] = [];
   for (const row of bindingRows) {
-    if (!existsSync(row.canonicalRoot)) continue;
-    const configPath = `${row.canonicalRoot}/.kiokuko.json`;
-    try {
-      const config = await readProjectConfig(configPath);
-      const agentPath = `${row.canonicalRoot}/${config.agentFile}`;
-      if (!existsSync(agentPath) || !balancedMarkers(readFileSync(agentPath, 'utf8'))) missingAgentFiles += 1;
-    } catch {
-      missingAgentFiles += 1;
+    const health = await inspectProjectAgentFile(row);
+    // Absent locations are owned by the existing bindings check and removal prompt.
+    if (!health.ok) {
+      if (health.finding.reason === 'missing_root') missingRoots++;
+      else agentFindings.push(health.finding);
     }
   }
-  const agentFilesCheck = { ok: missingAgentFiles === 0, count: missingAgentFiles };
+  const bindingCheck = { ok: missingRoots === 0, count: missingRoots, detail: `locations=${bindingRows.length}` };
+  const agentFilesCheck = { ok: agentFindings.length === 0, count: agentFindings.length, findings: agentFindings };
 
   let secretCount = 0;
   const secretRows = database.prepare(`

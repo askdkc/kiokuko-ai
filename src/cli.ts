@@ -1,3 +1,5 @@
+import { summarizeProjectAgentRefresh, formatProjectAgentRefresh } from './setup/project-agent-refresh.js';
+import { describeProjectAgentFinding } from './setup/project-agent-health.js';
 import { constants as fsConstants } from 'node:fs';
 import { open } from 'node:fs/promises';
 import { TextDecoder } from 'node:util';
@@ -420,18 +422,15 @@ export function buildCli(dependencies: CliDependencies = {}): Command {
         output: setupOutput,
       });
       const changed = data.files.filter((file) => file.action !== 'unchanged').length;
-      const projectChanged = data.projectAgentFiles.filter((file) => file.status === 'created' || file.status === 'updated').length;
-      const projectUnchanged = data.projectAgentFiles.filter((file) => file.status === 'unchanged').length;
-      const projectSkipped = data.projectAgentFiles.filter((file) => file.status === 'skipped').length;
-      const projectFailed = data.projectAgentFiles.filter((file) => file.status === 'failed').length;
-      const projectSummary = data.projectAgentFiles.length === 0
-        ? ''
-        : ` Registered project instructions: ${projectChanged} changed, ${projectUnchanged} unchanged, ${projectSkipped} skipped, ${projectFailed} failed.`;
-      const clientLabel = data.client;
+      const health = summarizeProjectAgentRefresh(data.projectAgentFiles);
+      const projectSummary = formatProjectAgentRefresh(data.projectAgentFiles);
       const message = options.dryRun
-        ? `Kiokuko setup plan for ${clientLabel}: ${changed} file${changed === 1 ? '' : 's'} would change.${projectSummary}`
-        : `Now you are ready to use Kiokuko! Kiokuko configured for ${clientLabel} (${changed} file${changed === 1 ? '' : 's'} changed).${projectSummary} ${data.nextStep}`;
-      humanOrJson(options.json, 'setup', data, message);
+        ? `Kiokuko setup plan for ${data.client}: ${changed} file${changed === 1 ? '' : 's'} would change.${health.ok ? '' : ' Setup incomplete.'}`
+        : health.ok
+          ? `Now you are ready to use Kiokuko! Kiokuko configured for ${data.client} (${changed} file${changed === 1 ? '' : 's'} changed). ${data.nextStep}`
+          : `Kiokuko setup incomplete for ${data.client}: ${health.failed} failed, ${health.skipped} skipped project instruction repairs.`;
+      humanOrJson(options.json, 'setup', { ...data, ok: health.ok, projectAgentHealth: health }, `${message}${projectSummary ? `\n${projectSummary}` : ''}`);
+      if (!health.ok) process.exitCode = 9;
     });
 
   cli.command('mcp').description('Run the Kiokuko MCP server over stdio').action(async () => {
@@ -592,7 +591,8 @@ export function buildCli(dependencies: CliDependencies = {}): Command {
     const failureNotice = data.ok
       ? ''
       : ` Failed checks: ${Object.entries(data.checks).filter(([, check]) => !check.ok).map(([name]) => name).join(', ')}.\nrun kiokuko-ai doctor --json for detailed output`;
-    humanOrJson(options.json, 'doctor', data, `${data.ok ? 'Kiokuko doctor: OK' : 'Kiokuko doctor: FAILED'}${cleanupNotice}${failureNotice}`);
+    const agentDetails = data.checks.agentFiles.findings?.map(describeProjectAgentFinding).join('\n');
+    humanOrJson(options.json, 'doctor', data, `${data.ok ? 'Kiokuko doctor: OK' : 'Kiokuko doctor: FAILED'}${cleanupNotice}${failureNotice}${agentDetails ? `\n${agentDetails}` : ''}`);
     if (!data.ok) process.exitCode = 8;
   });
 

@@ -1,3 +1,4 @@
+import type { PathEnvironment } from '../config/paths.js';
 import { randomUUID } from 'node:crypto';
 import { lstat } from 'node:fs/promises';
 import path from 'node:path';
@@ -45,6 +46,8 @@ import { withManagedFileLock } from '../managed-files/coordinator.js';
 import type { ManagedMutationGuard } from '../managed-files/types.js';
 
 export interface UseOptions {
+  /** Carry the caller's isolated managed-file coordinator configuration. */
+  managedFileEnvironment?: PathEnvironment;
   cwd?: string;
   root?: string;
   workspace?: string;
@@ -1760,5 +1763,5 @@ export async function useRepository(
 ): Promise<UseResult> {
   const root = options.root ?? options.cwd ?? process.cwd();
   if (options.dryRun === true) return useRepositoryUnlocked(options, dependencyOverrides);
-  return withManagedFileLock(root, (guard) => useRepositoryUnlocked(options, dependencyOverrides, guard));
+  return withManagedFileLock(root, (guard) => useRepositoryUnlocked(options, dependencyOverrides, guard), options.managedFileEnvironment);
 }
