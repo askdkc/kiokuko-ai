@@ -14,11 +14,12 @@ import { requirementForOfficialSkill } from '../../src/skills/official-catalog.j
 import { importSkillSnapshot } from '../../src/skills/store.js';
 import { validateSkillSnapshot } from '../../src/skills/source/snapshot-validator.js';
 import type { SkillCandidate } from '../../src/skills/types.js';
+import { CURRENT_SCHEMA_VERSION, CURRENT_MIGRATION_VERSIONS } from './current-migrations.js';
 
-export const SAMPLE_DATABASE_SCHEMA_VERSION = 3;
+export const SAMPLE_DATABASE_SCHEMA_VERSION = CURRENT_SCHEMA_VERSION;
 
 function expectedAppliedMigrationVersions(): number[] {
-  return Array.from({ length: SAMPLE_DATABASE_SCHEMA_VERSION }, (_, index) => index + 1);
+  return [...CURRENT_MIGRATION_VERSIONS];
 }
 export const SAMPLE_PROJECT_WORKSPACE = 'project:sampledb-ci';
 export const SAMPLE_GLOBAL_WORKSPACE = 'global';

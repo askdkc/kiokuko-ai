@@ -1,3 +1,4 @@
+import { enrichTraceSkills } from '../trace/enrichment.js';
 import { randomUUID } from 'node:crypto';
 import type { SqliteDatabase } from '../db/adapter.js';
 import type { EmbeddingRuntime } from '../embedding/types.js';
@@ -10,9 +11,14 @@ import { KiokukoError } from '../errors.js';
 import type { JsonObject, JsonValue } from '../serialization/validate.js';
 import { processCompactionMeditationJob } from '../meditation/compaction.js';
 import { ingestTraceRun, requireTraceRunId } from '../trace/ingest.js';
+import { TraceInputError } from '../trace/bounded-read.js';
+import { findSecretInValue } from '../memory/secrets.js';
+import { canonicalContentHash } from '../serialization/validate.js';
 import { LedgerStore } from '../ledger/store.js';
 import {
   claimOrchestrationJobs,
+  renewOrchestrationJobLease,
+  assertOrchestrationJobLease,
   completeOrchestrationJob,
   failOrchestrationJob,
   type OrchestrationJob,
@@ -79,6 +85,7 @@ async function processSemanticContext(options: OrchestrationWorkerOptions, job: 
 }
 
 async function processSkillDiscovery(options: OrchestrationWorkerOptions, job: OrchestrationJob): Promise<unknown> {
+  if (job.runId === null && job.payload.source === 'orcareplay') return enrichTraceSkills(options.database, job, options.fetchImpl);
   if (job.runId === null) throw new KiokukoError('INTEGRITY_ERROR', 'Skill discovery job has no run');
   const payload = objectPayload(job.payload, 'Skill discovery');
   const mode = payload.mode;
@@ -150,8 +157,12 @@ async function processSkillDiscovery(options: OrchestrationWorkerOptions, job: O
   return { searched: queries.length > 0, contextRevision: revision.contextRevision, candidateCount: candidates.length };
 }
 
-async function processTraceIngestion(options: OrchestrationWorkerOptions, job: OrchestrationJob): Promise<unknown> {
+export async function processTraceIngestion(options: OrchestrationWorkerOptions, job: OrchestrationJob, signal?: AbortSignal): Promise<JsonObject> {
   const payload = objectPayload(job.payload, 'Trace ingestion');
+  if (findSecretInValue(payload) !== undefined || Buffer.byteLength(JSON.stringify(payload)) > 16 * 1024 || canonicalContentHash({ kind: job.kind, runId: job.runId, payload: job.payload }) !== job.inputDigest) throw new KiokukoError('INTEGRITY_ERROR', 'Trace job rejected');
+  if (payload.readerPolicyVersion !== 2) return { ingested: false, reason: 'trace_policy_superseded' };
+  const progress = options.database.prepare('SELECT generation FROM orcareplay_trace_cursors WHERE directory=? AND trace_run_id=?').get<{ generation: number }>(String(payload.directory), String(payload.traceRunId));
+  if (progress && progress.generation !== payload.generation) return { ingested: false, reason: 'trace_generation_superseded' };
   const traceRunId = requireTraceRunId(payload.traceRunId);
   const runsDirectory = payload.directory;
   const fromSeq = payload.fromSeq;
@@ -165,6 +176,8 @@ async function processTraceIngestion(options: OrchestrationWorkerOptions, job: O
     runsDirectory,
     traceRunId,
     fromSeq,
+    ...(signal === undefined ? {} : { signal }),
+    ...(job.leaseOwner === null ? {} : { lease: { jobId: job.jobId, owner: job.leaseOwner } }),
     ...(options.fetchImpl === undefined ? {} : { fetchImpl: options.fetchImpl }),
   });
 }
@@ -204,6 +217,7 @@ export function createOrchestrationWorker(options: OrchestrationWorkerOptions): 
   const owner = `orchestration-worker-${randomUUID()}`;
   const setTimer = options.setTimeout ?? setTimeout;
   const clearTimer = options.clearTimeout ?? clearTimeout;
+  const abort = new AbortController();
   let running = false;
   let closing = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -220,10 +234,10 @@ export function createOrchestrationWorker(options: OrchestrationWorkerOptions): 
   const drain = async (): Promise<void> => {
     if (!running || closing || active !== undefined) return;
     const operation = (async () => {
-      const jobs = claimOrchestrationJobs(options.database, { owner, limit: 4, leaseMs: 120_000 });
+      const jobs = claimOrchestrationJobs(options.database, { owner, limit: 1, leaseMs: 120_000 });
       for (const job of jobs) {
         try {
-          const result = await processJob(options, job);
+          const result = job.kind === 'trace_ingestion' ? await executeTraceJob(options, job, abort.signal) : await processJob(options, job);
           completeOrchestrationJob(options.database, { jobId: job.jobId, owner, result: result as JsonValue });
         } catch (error) {
           try {
@@ -261,6 +275,7 @@ export function createOrchestrationWorker(options: OrchestrationWorkerOptions): 
     stop(): void {
       if (closing) return;
       closing = true;
+      abort.abort();
       running = false;
       if (timer !== undefined) {
         clearTimer(timer);
@@ -272,4 +287,25 @@ export function createOrchestrationWorker(options: OrchestrationWorkerOptions): 
       await active;
     },
   });
+}
+
+/** Shared leased execution for background workers and store-scoped explicit sync. */
+export async function executeTraceJob(options: OrchestrationWorkerOptions, job: OrchestrationJob, signal?: AbortSignal): Promise<JsonObject> {
+  const controller = new AbortController();
+  const forward = () => controller.abort(); signal?.addEventListener('abort', forward, { once: true });
+  if (signal?.aborted) controller.abort();
+  const heartbeat = setInterval(() => {
+    try { renewOrchestrationJobLease(options.database, { jobId: job.jobId, owner: job.leaseOwner! }); }
+    catch { controller.abort(); }
+  }, 30_000);
+  heartbeat.unref();
+  try { return await processTraceIngestion(options, job, controller.signal); }
+  catch (error) {
+    if ((error instanceof TraceInputError && !error.retryable) || (error instanceof KiokukoError && error.code === 'SECURITY_REJECTION')) {
+      assertOrchestrationJobLease(options.database, { jobId: job.jobId, owner: job.leaseOwner! });
+      options.database.prepare("UPDATE orcareplay_trace_cursors SET finalization='blocked',diagnostic_code=? WHERE directory=? AND trace_run_id=?").run(error.code, String(job.payload.directory), String(job.payload.traceRunId));
+      return { ingested: false, reason: error.code, finalization: 'blocked' };
+    }
+    throw error;
+  } finally { clearInterval(heartbeat); signal?.removeEventListener('abort', forward); }
 }

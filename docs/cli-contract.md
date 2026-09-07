@@ -52,3 +52,17 @@ kiokuko-ai embeddings setup --preset local-small --json
 mutation. `--offline` uses only an existing verified installation. `--replace`
 allows switching profiles. `status --json` reports bounded coverage and model
 state; `repair` restores the same pinned artifact without destructive cleanup.
+
+## OrcaReplay trace commands
+
+| Command | Responsibility |
+| --- | --- |
+| `trace scan --project-root <capture cwd> --max-runs 8 --json` | Bounded discovery and job scheduling; not ingestion completion. |
+| `trace sync --capture-cwd <path> [--run <id>] [--rebuild] [--timeout-ms 120000] --json` | Drain this store's trace jobs and report complete/live/partial state. |
+| `trace status --capture-cwd <path> --json` | Read location, progress, integrity and constant diagnostics. |
+| `trace record [--sync-timeout-ms 120000] -- [OpenCode arguments]` | Run Orca with inherited terminal streams, then synchronize after it closes. |
+
+Interactive setup offers `alias orca-opencode='kiokuko-ai trace record --'` at
+an explicitly confirmed absolute rc path. See [OrcaReplay integration](orcareplay-integration.md)
+for budgets, migration, isolation and recovery. `trace record` does not capture
+or rewrite child stdout into a JSON envelope.

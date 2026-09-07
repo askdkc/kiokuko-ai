@@ -44,7 +44,7 @@ import { openEmbeddingDatabase } from './embedding/backend.js';
 import { parseEmbeddingConfig } from './embedding/config.js';
 import { createEmbeddingRuntime, prepareEmbeddingSearchRuntime } from './embedding/runtime.js';
 import type { HybridSearchRuntime } from './memory/hybrid-retrieval.js';
-import { registerTraceCommands } from './commands/trace.js';
+import { registerTraceCommands, type TraceCommandDependencies } from './commands/trace.js';
 
 const MAX_CLI_JSON_INPUT_BYTES = 2 * 1024 * 1024;
 const MAX_CALL_PATH_BYTES = 4 * 1024;
@@ -339,6 +339,7 @@ function configureRecallCommand(command: Command, dependencies: CliDependencies)
 }
 
 export interface CliDependencies {
+  readonly trace?: TraceCommandDependencies;
   readonly skills?: SkillsCommandDependencies;
   readonly setupEnvironment?: PathEnvironment;
   readonly setupInput?: NodeJS.ReadableStream;
@@ -608,7 +609,7 @@ export function buildCli(dependencies: CliDependencies = {}): Command {
     ...(dependencies.setupOutput === undefined ? {} : { setupOutput: dependencies.setupOutput }),
     output: humanOrJson,
   });
-  registerTraceCommands(cli, { withDatabase });
+  registerTraceCommands(cli, dependencies.trace ?? { withDatabase });
 
   cli.command('web').description('Start the local Kiokuko web UI')
     .option('--host <host>', 'Loopback host', '127.0.0.1')

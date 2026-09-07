@@ -1,3 +1,5 @@
+import { readTraceAdvisory } from '../trace/advisory.js';
+import { registerTraceStore, resolveTraceStoreLocation } from '../trace/store-location.js';
 import type { SqliteDatabase } from '../db/adapter.js';
 import { KiokukoError } from '../errors.js';
 import { LedgerStore } from '../ledger/store.js';
@@ -71,13 +73,6 @@ import { enqueueOrchestrationJob } from '../orchestration/jobs.js';
 import { recordTaskContextRevision } from '../context/revisions.js';
 import { detectSkillGap } from '../skills/gap-detection.js';
 import { buildSkillQueries } from '../skills/query-builder.js';
-import { findSecretInValue } from '../memory/secrets.js';
-import {
-  ORCA_TRACE_CONTEXT_MAX_BYTES,
-  readStoredTraceContext,
-  requireTraceRunId,
-} from '../trace/ingest.js';
-import { orcaRunsDirectory } from '../trace/scan.js';
 
 export interface PrepareOpenCodeTaskInput {
   requestId: string;
@@ -152,7 +147,7 @@ export interface OpenCodeTraceAdvisoryContext {
 }
 
 export type StructuredWarning = CapabilityWarning | {
-  code: 'REPOSITORY_FINGERPRINT_UNAVAILABLE';
+  code: 'REPOSITORY_FINGERPRINT_UNAVAILABLE' | 'TRACE_CONTEXT_REJECTED';
   message: string;
 };
 
@@ -274,43 +269,6 @@ function assertTaskContextRequestBinding(metadata: JsonObject, maxContextChars: 
   if (binding.maxContextChars !== maxContextChars) {
     throw new KiokukoError('CONFLICT', 'Task context request differs from the request bound when the run was opened');
   }
-}
-
-function readTraceAdvisoryContext(
-  database: SqliteDatabase,
-  project: ResolvedProjectWorkspace,
-): OpenCodeTraceAdvisoryContext | undefined {
-  const directory = orcaRunsDirectory(project.repositoryRoot);
-  const row = database.prepare(`
-    SELECT trace_run_id AS traceRunId
-    FROM orcareplay_trace_context
-    WHERE directory = ?
-    ORDER BY updated_at DESC, trace_run_id DESC
-    LIMIT 1
-  `).get<{ traceRunId: unknown }>(directory);
-  if (row === undefined) return undefined;
-  const traceRunId = requireTraceRunId(row.traceRunId);
-  const stored = readStoredTraceContext(database, directory, traceRunId);
-  if (stored === undefined
-    || !/^[0-9a-f]{64}$/u.test(stored.digest)
-    || stored.digest !== canonicalContentHash(stored.context)) {
-    throw new KiokukoError('INTEGRITY_ERROR', 'Stored OrcaReplay trace context is invalid');
-  }
-  if (Buffer.byteLength(JSON.stringify(stored.context), 'utf8') > ORCA_TRACE_CONTEXT_MAX_BYTES) {
-    throw new KiokukoError('INTEGRITY_ERROR', 'Stored OrcaReplay trace context exceeds its bound');
-  }
-  if (findSecretInValue(stored.context) !== undefined) {
-    throw new KiokukoError('SECURITY_REJECTION', 'Stored OrcaReplay trace context contains secret-shaped material');
-  }
-  return {
-    source: 'orcareplay',
-    referenceOnly: true,
-    autoInstall: false,
-    autoExecute: false,
-    traceRunId,
-    digest: stored.digest,
-    context: stored.context,
-  };
 }
 
 function memoryCapabilityUnavailableForTask(context: AkinatorContext, capabilities: unknown): boolean {
@@ -493,6 +451,8 @@ async function requireProject(database: SqliteDatabase, cwd?: string): Promise<R
   const canonicalCwd = canonicalDirectory(cwd ?? process.cwd());
   const project = await resolveProjectWorkspace(database, canonicalCwd);
   if (!project) throw new KiokukoError('NOT_FOUND', 'No Git repository or .kiokuko.json binding was found for task preparation');
+  registerTraceStore(database, await resolveTraceStoreLocation(canonicalCwd, project.repositoryRoot));
+  if (canonicalCwd !== project.repositoryRoot) registerTraceStore(database, await resolveTraceStoreLocation(project.repositoryRoot, project.repositoryRoot));
   return { project, executionContext: taskExecutionContext(canonicalCwd, project) };
 }
 
@@ -916,11 +876,13 @@ async function finalizeOpenCodeTask(input: FinalizeOpenCodeTaskInput): Promise<P
   const selected = await selectFinalTaskContext({ input, prepared, context, missingMemoryCapability: false });
   context = selected.context;
   run = selected.run;
-  const traceContext = readTraceAdvisoryContext(input.database, input.project);
+  const trace = readTraceAdvisory(input.database, input.project.repositoryRoot, input.executionContext.canonicalCwd);
+  const traceContext = trace.context;
+  const warnings: StructuredWarning[] = [...prepared.warnings, ...(trace.rejected ? [{ code: 'TRACE_CONTEXT_REJECTED' as const, message: 'Invalid trace reference was isolated' }] : [])];
   return withPreparedEnno(input.database, buildPreparedTaskBase(input.database, input.project, input.executionContext, context, input.capabilities, {
     runId: input.runId,
     status: run.status,
-    }, selected.scopedContext, skillDiscovery, selected.memoryUse, prepared.warnings, traceContext));
+  }, selected.scopedContext, skillDiscovery, selected.memoryUse, warnings, traceContext));
 }
 
 function withPreparedEnno(

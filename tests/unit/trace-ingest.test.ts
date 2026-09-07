@@ -99,24 +99,24 @@ test('marks unsupported schema runs with an unsupported cursor', async () => {
     const outcome = await ingestTraceRun(db, { runsDirectory: base, traceRunId: RUN_ID, fromSeq: 0 });
     assert.equal(outcome.ingested, false);
     assert.equal(outcome.reason, 'unsupported_schema');
-    assert.equal(outcome.cursorSeq, 0);
+    assert.equal(outcome.cursorSeq, -1);
     const cursor = readTraceCursor(db, base, RUN_ID);
     assert.equal(cursor?.state, 'unsupported');
-    assert.equal(cursor?.lastSeq, 0);
+    assert.equal(cursor?.lastSeq, -1);
   } finally {
     db.close();
     await rm(base, { recursive: true, force: true });
   }
 });
 
-test('returns already_ingested when fromSeq is beyond the run', async () => {
+test('uses persisted byte progress even when a caller supplies an obsolete seq', async () => {
   const base = await mkdtemp(path.join(tmpdir(), 'kiokuko-ingest-'));
   const db = await database();
   try {
     await makeRun(base, {});
     const outcome = await ingestTraceRun(db, { runsDirectory: base, traceRunId: RUN_ID, fromSeq: 10 });
-    assert.equal(outcome.ingested, false);
-    assert.equal(outcome.reason, 'already_ingested');
+    assert.equal(outcome.ingested, true);
+    assert.equal(outcome.reason, null);
     assert.equal(outcome.throughSeq, 7);
     assert.equal(outcome.cursorSeq, 7);
   } finally {
@@ -133,7 +133,7 @@ test('ingests a ready run exactly once and advances the cursor', async () => {
     const fetchImpl = async (): Promise<never> => { throw new Error('offline'); };
     const first = await ingestTraceRun(db, { runsDirectory: base, traceRunId: RUN_ID, fromSeq: 0, fetchImpl });
     assert.equal(first.ingested, true);
-    assert.equal(first.reason, undefined);
+    assert.equal(first.reason, null);
     assert.equal(first.throughSeq, 7);
     assert.equal(first.cursorSeq, 7);
     assert.equal(first.integrity, 'verified');
@@ -252,7 +252,7 @@ test('cursor upsert and read round-trip validate their inputs', async () => {
     assert.equal(cursor?.lastSeq, 3);
     assert.equal(cursor?.state, 'active');
     assert.throws(
-      () => upsertTraceCursor(db, { runsDirectory: RUNS_DIRECTORY, traceRunId: RUN_ID, lastSeq: -1, state: 'active', now: '2026-09-06T08:00:00.000Z' }),
+      () => upsertTraceCursor(db, { runsDirectory: RUNS_DIRECTORY, traceRunId: RUN_ID, lastSeq: -2, state: 'active', now: '2026-09-06T08:00:00.000Z' }),
       (error: unknown) => (error as KiokukoError).code === 'VALIDATION_ERROR',
     );
     assert.equal(readTraceCursor(db, RUNS_DIRECTORY, 'run_ffffff123456'), undefined);

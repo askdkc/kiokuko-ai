@@ -17,6 +17,8 @@ KiokukoはOpenCode向けのローカル外部メモリ導入Pluginです。SQLit
 
 記憶はProject・Ecosystem・Globalに分離されます。現在のコード、設定、実行結果が過去の記憶より優先されます。
 
+`kiokuko-ai trace record --` でOpenCodeを記録し、終了後の最終トレースまで取り込めます。対話セットアップで `orca-opencode` のショートハンドを設定できます。同期と復旧は [OrcaReplay連携](docs/orcareplay-integration.md) を参照してください。
+
 ## 最短セットアップ
 
 Node.js 24.16.0以上が必要です（Node.js 26.1.0以上にも対応）。

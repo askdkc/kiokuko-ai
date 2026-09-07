@@ -145,6 +145,7 @@ export function claimOrchestrationJobs(database: SqliteDatabase, input: {
   limit?: number;
   leaseMs?: number;
   kinds?: readonly OrchestrationJobKind[];
+  traceScope?: { directory: string; traceRunId?: string };
   now?: string;
 }): OrchestrationJob[] {
   const limit = input.limit ?? 4;
@@ -155,12 +156,10 @@ export function claimOrchestrationJobs(database: SqliteDatabase, input: {
   }
   return withImmediateTransaction(database, () => {
     const now = input.now ?? new Date().toISOString();
-    database.prepare(`
-      UPDATE orchestration_jobs
-      SET state = 'abandoned', lease_owner = NULL, lease_expires_at = NULL,
-          error_code = 'lease_expired', updated_at = ?
-      WHERE state = 'leased' AND lease_expires_at <= ?
-    `).run(now, now);
+    const scopeSql = input.traceScope === undefined ? '' : " AND kind='trace_ingestion' AND json_extract(payload_json,'$.directory')=?" + (input.traceScope.traceRunId === undefined ? '' : " AND json_extract(payload_json,'$.traceRunId')=?");
+    const scopeArgs = input.traceScope === undefined ? [] : [input.traceScope.directory, ...(input.traceScope.traceRunId === undefined ? [] : [input.traceScope.traceRunId])];
+    database.prepare(`UPDATE orchestration_jobs SET state='abandoned',lease_owner=NULL,lease_expires_at=NULL,error_code='lease_expired',updated_at=?
+      WHERE state='leased' AND lease_expires_at<=? ${scopeSql}`).run(now, now, ...scopeArgs);
     const kinds = input.kinds ?? ORCHESTRATION_JOB_KINDS;
     if (kinds.length === 0) return [];
     const placeholders = kinds.map(() => '?').join(', ');
@@ -170,10 +169,10 @@ export function claimOrchestrationJobs(database: SqliteDatabase, input: {
       WHERE state IN ('pending', 'failed', 'abandoned')
         AND attempts < 20
         AND available_at <= ?
-        AND kind IN (${placeholders})
+        AND kind IN (${placeholders}) ${scopeSql}
       ORDER BY available_at, created_at, job_id
       LIMIT ?
-    `).all<{ jobId: string }>(now, ...kinds, limit);
+    `).all<{ jobId: string }>(now, ...kinds, ...scopeArgs, limit);
     const expiresAt = new Date(Date.parse(now) + leaseMs).toISOString();
     const claimed: OrchestrationJob[] = [];
     for (const candidate of candidates) {
@@ -254,4 +253,13 @@ export function orchestrationJobDiagnostics(database: SqliteDatabase): {
     failed: row?.failed ?? 0,
     oldestPendingAt: row?.oldestPendingAt ?? null,
   };
+}
+
+export function assertOrchestrationJobLease(database: SqliteDatabase, input: { jobId: string; owner: string }): void {
+  const row = database.prepare("SELECT 1 AS ok FROM orchestration_jobs WHERE job_id=? AND state='leased' AND lease_owner=? AND lease_expires_at>?").get(input.jobId, input.owner, new Date().toISOString());
+  if (!row) throw new KiokukoError('CONFLICT', 'Orchestration job lease is stale');
+}
+export function renewOrchestrationJobLease(database: SqliteDatabase, input: { jobId: string; owner: string }): void {
+  assertOrchestrationJobLease(database, input);
+  database.prepare("UPDATE orchestration_jobs SET lease_expires_at=? WHERE job_id=? AND state='leased' AND lease_owner=?").run(new Date(Date.now() + 120_000).toISOString(), input.jobId, input.owner);
 }
