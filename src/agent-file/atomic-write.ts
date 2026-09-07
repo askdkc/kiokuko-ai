@@ -14,6 +14,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { TextDecoder } from 'node:util';
 import { KiokukoError } from '../errors.js';
+import type { ManagedMutationGuard } from '../managed-files/types.js';
 
 export interface FileIdentity {
   device: bigint;
@@ -1609,4 +1610,79 @@ export async function unlinkRegularFileIfUnchanged(
     throw new AtomicCommittedUnlinkError(outcome, error);
   }
   return outcome;
+}
+
+export async function atomicReplaceTextWithGuard(
+  filePath: string,
+  content: string,
+  guard: ManagedMutationGuard,
+  expected: RegularFileSnapshot | undefined,
+  parentIdentity: FileIdentity,
+  mode = expected?.mode ?? 0o644,
+  containmentRoot?: string,
+): Promise<AtomicWriteResult> {
+  if (guard.token === undefined || guard.resourceKey.length === 0) {
+    throw new KiokukoError('SECURITY_REJECTION', 'Managed mutation guard is invalid');
+  }
+  const parent = await bindMutationDirectory(path.dirname(filePath), parentIdentity);
+  await assertFileExpectation(filePath, {
+    expected,
+    expectedParentDirectory: parentIdentity,
+    ...(containmentRoot === undefined ? {} : { containmentRoot }),
+  });
+  const temporaryPath = path.join(path.dirname(filePath), `.${path.basename(filePath)}.${randomUUID()}.managed.tmp`);
+  let handle: FileHandle | undefined;
+  try {
+    handle = await open(temporaryPath, constants.O_RDWR | constants.O_CREAT | constants.O_EXCL, mode);
+    await handle.writeFile(content, { encoding: 'utf8' });
+    await chmod(temporaryPath, mode);
+    await handle.sync();
+    const prepared = await readOpenHandleArtifact(handle, temporaryPath);
+    if (prepared.snapshot.content !== content || prepared.snapshot.mode !== (mode & 0o777) || prepared.linkCount !== 1n) {
+      throw new KiokukoError('INTEGRITY_ERROR', 'Managed temporary file changed during preparation');
+    }
+    await handle.close();
+    handle = undefined;
+    await requireBoundDirectory(parent);
+    await assertFileExpectation(filePath, {
+      expected,
+      expectedParentDirectory: parentIdentity,
+      ...(containmentRoot === undefined ? {} : { containmentRoot }),
+    });
+    if (expected === undefined) {
+      try {
+        await link(temporaryPath, filePath);
+      } catch (error) {
+        if (isAlreadyExists(error)) throw changedAfterPlanning(filePath);
+        throw error;
+      }
+    } else {
+      await rename(temporaryPath, filePath);
+    }
+    const installed = await readRegularFile(filePath, {
+      ...(containmentRoot === undefined ? {} : { containmentRoot }),
+    });
+    if (installed === undefined || installed.content !== content || installed.mode !== (mode & 0o777)) {
+      throw new AtomicCommittedMutationError({ installed: prepared.snapshot, cleanupFailures: [] }, new KiokukoError('INTEGRITY_ERROR', 'Managed replacement did not match its prepared content'));
+    }
+    const temporary = await readRegularFile(temporaryPath);
+    if (temporary !== undefined) {
+      if (temporary.identity.device !== prepared.snapshot.identity.device
+        || temporary.identity.inode !== prepared.snapshot.identity.inode
+        || temporary.content !== content
+        || temporary.mode !== (mode & 0o777)) {
+        throw new AtomicCommittedMutationError({ installed, cleanupFailures: [] }, new KiokukoError('INTEGRITY_ERROR', 'Managed temporary pathname changed after publication'));
+      }
+      await unlink(temporaryPath);
+    }
+    await requireBoundDirectory(parent);
+    return { installed, cleanupFailures: [] };
+  } catch (error) {
+    if (handle !== undefined) await handle.close().catch(() => undefined);
+    try {
+      const artifact = await readRegularFile(temporaryPath);
+      if (artifact !== undefined) await unlink(temporaryPath);
+    } catch { }
+    throw error;
+  }
 }
