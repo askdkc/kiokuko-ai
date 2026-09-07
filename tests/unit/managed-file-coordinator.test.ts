@@ -104,15 +104,21 @@ test('an aborted signal rejects the queued operation before it enters the critic
   await writeFile(target, '');
   const controller = new AbortController();
   let entered = false;
+  let firstEntered!: () => void;
+  const firstEnteredPromise = new Promise<void>((resolve) => { firstEntered = resolve; });
   let releaseFirst!: () => void;
   const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
-  const first = withManagedFileLock(target, async () => { await firstGate; });
+  const first = withManagedFileLock(target, async () => {
+    firstEntered();
+    await firstGate;
+  });
+  // Path resolution is asynchronous, so invocation order does not establish lock order.
+  await firstEnteredPromise;
   const second = withManagedFileLock(target, async () => { entered = true; }, { signal: controller.signal });
-  await new Promise<void>((resolve) => setTimeout(resolve, 10));
+  const rejected = assert.rejects(second, (error: unknown) => error instanceof Error && 'code' in error && error.code === 'CONFLICT');
   controller.abort();
   releaseFirst();
-  await first;
-  await assert.rejects(second, (error: unknown) => error instanceof Error && 'code' in error && error.code === 'CONFLICT');
+  await Promise.all([first, rejected]);
   assert.equal(entered, false);
   assert.equal(await readFile(target, 'utf8'), '');
 });
