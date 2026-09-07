@@ -118,3 +118,63 @@ The final full suites were followed only by removal of obsolete unused imports,
 formatting of changed lines, and this results record; type checking was repeated.
 Kiokuko MCP enrichment was unavailable in this host; implementation and verification
 used current repository files and the bundled local guidance.
+
+## PR #15 CI follow-up
+
+The first [PR #15 CI run](https://github.com/askdkc/kiokuko-ai/actions/runs/34093494348)
+for commit `2d2e888cc82e3e6de25b3e833604ca5632d3e632` failed all seven jobs.
+The initial local verification above did not cover the CI sample-database check
+or the actual OpenCode host contract. Passing the ordinary test suite did not
+establish that the complete CI workflow passed.
+
+Two distinct failures were verified from all seven job logs and reproduced locally:
+
+- [Sample database verification](https://github.com/askdkc/kiokuko-ai/actions/runs/34093494348/job/101651842746)
+  failed with `3 !== 4`. Its generator copied only migrations 001–003 because it
+  hard-coded schema version 3. Regeneration therefore reproduced a stale fixture
+  and passed the file-diff step. The generator now uses the current migration
+  snapshot, and the synthetic SQLite fixture is regenerated at version 4.
+- [OpenCode host contract](https://github.com/askdkc/kiokuko-ai/actions/runs/34093494348/job/101651843028)
+  failed with `MCP task_prepare timeout`, also seen in the other five host jobs.
+  The handwritten probe closed stdin immediately after writing its request,
+  ending the server transport before asynchronous task preparation could reply.
+  The shared probe now uses the existing MCP SDK for initialization and keeps
+  stdin open until the response. It closes the child in `finally`, rejects early
+  process exit, and retains the existing 45-second operation deadline.
+
+Six regression cases now run under ordinary `npm test`: delayed list/tool
+responses with handshake/EOF ordering, early process exit, timeout cleanup,
+tool-error cleanup, and generated/committed fixture equality with the full current
+migration history. The host-contract assertions and CI workflow were not weakened.
+
+The original failures and fixes were first reproduced on macOS arm64 with Node
+26.5.0 and the repository-pinned OpenCode 1.18.26. The fixed host run reported one
+continuation request and one durable receipt, and the sample-database CLI/Web API
+verification passed. A separate temporary repository copy then used official Node
+24.16.0 and a fresh `npm ci`, preserving the user's installed dependencies.
+
+Linux and macOS x64 runners cannot be represented by this local macOS arm64 run.
+OpenCode 1.18.25 is pinned only for Linux x64 in the compatibility manifest, so it
+was not substituted with an unpinned macOS download. Remote CI must verify those
+matrix entries after the fix is pushed. No workflow was rerun during this repair.
+
+All of the following completed with exit 0 in the clean Node 24.16.0 repository
+copy on macOS arm64:
+
+| Verification | Result |
+| --- | --- |
+| `npm ci` | Fresh lockfile installation succeeded |
+| Type-check, OpenCode boundary, build | Passed |
+| `npm test` | 1,612 passed, 0 failed, 1 existing opt-in skip |
+| Semantic retrieval evaluation and required sqlite-vec smoke | Passed |
+| Sample regeneration and `git diff --exit-code -- tests/sampledb` | Identical fixture; no drift |
+| `npm run test:sampledb` | Actual CLI and Web API verification passed |
+| Pack and minimal global install | Passed |
+| Offline pinned embedding manifest | Passed; no model installation requested |
+| OpenCode host contract, pinned 1.18.26 | Passed; one continuation and one durable receipt |
+
+The only skipped ordinary test remains the existing opt-in real OrcaReplay test.
+This repair changes test infrastructure, the synthetic fixture, and verification
+documentation; production source, workflow definitions, and dependency files are
+unchanged. The fix remains local and uncommitted, so the remote CI run linked above
+still records the original failure.

@@ -6,6 +6,7 @@ import path from 'node:path';
 import process from 'node:process';
 import { pathToFileURL } from 'node:url';
 import { startFakeOpenAiServer } from '../tests/e2e/fake-openai-server.mjs';
+import { probeMcpTools, callMcpTool } from './lib/mcp-probe.mjs';
 
 const repositoryRoot = path.resolve(import.meta.dirname, '..');
 const maxOutputBytes = 96 * 1024;
@@ -191,83 +192,11 @@ async function jsonRequest(baseURL, pathname) {
 }
 
 async function mcpTools(cliScript, environment, cwd) {
-  const input = [
-    JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {
-      protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'opencode', version: 'host-e2e' },
-    } }),
-    JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }),
-    JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} }),
-  ].join('\n') + '\n';
-  const child = spawn(process.execPath, [cliScript, 'mcp'], { cwd, env: environment, shell: false, stdio: ['pipe', 'pipe', 'pipe'] });
-  let buffer = '';
-  let result;
-  const response = new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('MCP tools/list timeout')), 45_000);
-    child.stdout.on('data', (chunk) => {
-      buffer += chunk.toString('utf8');
-      const lines = buffer.split('\n');
-      buffer = lines.pop() ?? '';
-      for (const line of lines) {
-        try {
-          const value = JSON.parse(line);
-          if (value.id === 2) {
-            result = value;
-            clearTimeout(timer);
-            resolve(value);
-            child.kill('SIGTERM');
-          }
-        } catch {
-          // The bounded probe ignores non-JSON diagnostic lines.
-        }
-      }
-    });
-    child.once('error', (error) => { clearTimeout(timer); reject(new Error(`MCP spawn failed:${error?.code ?? 'spawn_failed'}`)); });
-  });
-  child.stdin.end(input);
-  await response;
-  if (result?.error !== undefined) throw new Error('MCP tools/list returned an error');
-  return result?.result?.tools ?? [];
+  return probeMcpTools({ cliScript, environment, cwd });
 }
 
 async function mcpToolCall(cliScript, environment, cwd, name, argumentsValue) {
-  const input = [
-    JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {
-      protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'opencode', version: 'host-e2e' },
-    } }),
-    JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }),
-    JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name, arguments: argumentsValue } }),
-  ].join('\n') + '\n';
-  const child = spawn(process.execPath, [cliScript, 'mcp'], { cwd, env: environment, shell: false, stdio: ['pipe', 'pipe', 'pipe'] });
-  let buffer = '';
-  let result;
-  const response = new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`MCP ${name} timeout`)), 45_000);
-    child.stdout.on('data', (chunk) => {
-      buffer += chunk.toString('utf8');
-      const lines = buffer.split('\n');
-      buffer = lines.pop() ?? '';
-      for (const line of lines) {
-        try {
-          const value = JSON.parse(line);
-          if (value.id === 2) {
-            result = value;
-            clearTimeout(timer);
-            resolve(value);
-            child.kill('SIGTERM');
-          }
-        } catch {
-          // The bounded call ignores non-JSON diagnostic lines.
-        }
-      }
-    });
-    child.once('error', (error) => { clearTimeout(timer); reject(new Error(`MCP spawn failed:${error?.code ?? 'spawn_failed'}`)); });
-  });
-  child.stdin.end(input);
-  await response;
-  if (result?.error !== undefined || result?.result?.isError === true) {
-    throw new Error(`MCP ${name} returned an error`);
-  }
-  return result?.result?.structuredContent ?? result?.result;
+  return callMcpTool({ cliScript, environment, cwd }, name, argumentsValue);
 }
 
 async function main() {
