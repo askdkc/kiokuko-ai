@@ -130,9 +130,9 @@ test('fresh migration applies the current schema and every task-run table and in
       taskRunIndexes.filter((index) => !exists(database, 'index', index)),
       [],
     );
-    assert.deepEqual(CURRENT_MIGRATION_VERSIONS, [1, 2, 3]);
-    assert.equal(database.prepare('SELECT COUNT(*) AS count FROM schema_migrations').get<{ count: number }>()?.count, 3);
-    assert.equal(database.prepare('PRAGMA user_version').get<{ user_version: number }>()?.user_version, 3);
+    assert.deepEqual(CURRENT_MIGRATION_VERSIONS, [1, 2, 3, 4]);
+    assert.equal(database.prepare('SELECT COUNT(*) AS count FROM schema_migrations').get<{ count: number }>()?.count, 4);
+    assert.equal(database.prepare('PRAGMA user_version').get<{ user_version: number }>()?.user_version, 4);
     for (const removed of ['gateway_idempotency', 'agent_task_skill_discovery_attempts', 'enno_client_continuations', 'enno_client_continuation_receipts']) {
       assert.equal(exists(database, 'table', removed), false);
     }
@@ -245,6 +245,7 @@ test('migration assets are present and checksums remain file-based', async () =>
     '001_initial.sql',
     '002_non_blocking_orchestration.sql',
     '003_orcareplay_trace.sql',
+    '004_orcareplay_pipeline.sql',
   ]);
   const sql = await readFile(path.join(migrationsDirectory, '001_initial.sql'), 'utf8');
   assert.match(sql, /CREATE TABLE ledger_runs/);

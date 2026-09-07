@@ -27,6 +27,8 @@ kiokuko-ai setup
 `setup`은 데이터베이스를 초기화하고 표준 Skill, OpenCode MCP, npm 플러그인을 설정합니다. 이미 실행 중인 OpenCode는
 설정 후 재시작하십시오. 정확한 규칙은 [영문 Getting started](docs/getting-started.md)를 참조하십시오.
 
+`kiokuko-ai trace record --`로 OpenCode를 기록하고 종료 후 최종 추적까지 가져올 수 있습니다. 대화형 설정에서 `orca-opencode` 단축 명령을 추가할 수 있습니다. 동기화와 복구는 [OrcaReplay 연동](docs/orcareplay-integration.md)을 참고하세요.
+
 ## 주요 기능
 
 - RAG 기억（기본 lexical, 선택적 로컬 semantic 검색）

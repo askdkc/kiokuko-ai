@@ -6,7 +6,6 @@ import path from 'node:path';
 import test from 'node:test';
 import { KiokukoError } from '../../src/errors.js';
 import {
-  ORCA_TRACE_MAX_EVENTS_BYTES,
   ORCA_TRACE_MAX_WARNINGS,
   readOrcaTraceManifest,
   readOrcaTraceRun,
@@ -210,7 +209,7 @@ test('warns on seq gaps but still ingests', async () => {
     const read = await readOrcaTraceRun(base, RUN_ID);
     assert.equal(read.events.length, 2);
     assert.equal(read.maxSeq, 4);
-    assert.deepEqual(read.warnings, [{ code: 'seq_gap', seq: 4, detail: 'seq jumped from 1' }]);
+    assert.deepEqual(read.warnings, [{ code: 'seq_gap' }]);
   } finally {
     await rm(base, { recursive: true, force: true });
   }
@@ -267,7 +266,7 @@ test('rejects invalid causes, attrs, and redacted', async () => {
   }
 });
 
-test('resolves inline blobs as JSON and larger blobs as descriptors', async () => {
+test('returns descriptors without opening small or large blobs', async () => {
   const base = await mkdtemp(path.join(tmpdir(), 'kiokuko-orca-'));
   try {
     const runDir = path.join(base, RUN_ID);
@@ -283,7 +282,7 @@ test('resolves inline blobs as JSON and larger blobs as descriptors', async () =
     await writeFile(path.join(runDir, 'blobs', largeHex.slice(0, 2), largeHex), largeText);
 
     const lines = [
-      JSON.stringify({ seq: 1, ts: '2026-09-06T08:00:00.000Z', mono_us: 1, turn: 0, type: 'note', actor: 'host', payload: { $blob: `sha256:${inlineHex}` } }),
+      JSON.stringify({ seq: 1, ts: '2026-09-06T08:00:00.000Z', mono_us: 1, turn: 0, type: 'note', actor: 'host', payload: { $blob: `sha256:${inlineHex}`, bytes:Buffer.byteLength(inlineText) } }),
       JSON.stringify({ seq: 2, ts: '2026-09-06T08:00:00.000Z', mono_us: 2, turn: 0, type: 'note', actor: 'host', payload: { $blob: `sha256:${largeHex}`, bytes: largeText.length, media_type: 'application/json' } }),
     ];
     const eventsText = `${lines.join('\n')}\n`;
@@ -297,7 +296,7 @@ test('resolves inline blobs as JSON and larger blobs as descriptors', async () =
 
     const read = await readOrcaTraceRun(base, RUN_ID);
     assert.equal(read.warnings.length, 0);
-    assert.deepEqual(read.events[0]?.payload, { hello: 'world' });
+    assert.deepEqual(read.events[0]?.payload, { blobDigest:inlineHex,bytes:Buffer.byteLength(inlineText) });
     const descriptor = read.events[1]?.payload as { blobDigest: string; bytes: number; mediaType: string };
     assert.equal(descriptor.blobDigest, largeHex);
     assert.equal(descriptor.bytes, largeText.length);
@@ -334,7 +333,7 @@ test('reports blob_unresolved for missing, mismatched, malformed, and invalid bl
     }));
 
     const read = await readOrcaTraceRun(base, RUN_ID);
-    assert.equal(read.events.length, 1);
+    assert.equal(read.events.length, 5);
     assert.equal(read.maxSeq, 5);
     const blobWarnings = read.warnings.filter((warning) => warning.code === 'blob_unresolved');
     assert.equal(blobWarnings.length, 4);
@@ -355,13 +354,13 @@ test('reports truncated_final_line for an incomplete final line', async () => {
     const read = await readOrcaTraceRun(base, RUN_ID);
     assert.equal(read.events.length, 1);
     assert.equal(read.maxSeq, 1);
-    assert.deepEqual(read.warnings, [{ code: 'truncated_final_line', detail: 'the final line was truncated during a write and was skipped' }]);
+    assert.deepEqual(read.warnings, [{ code: 'truncated_final_line' }]);
   } finally {
     await rm(base, { recursive: true, force: true });
   }
 });
 
-test('keeps a valid final line without a trailing newline', async () => {
+test('defers a valid final line without final manifest evidence', async () => {
   const base = await mkdtemp(path.join(tmpdir(), 'kiokuko-orca-'));
   try {
     const eventsText = `${eventLine(1)}\n${eventLine(2)}`;
@@ -371,22 +370,22 @@ test('keeps a valid final line without a trailing newline', async () => {
     });
     await writeFile(path.join(base, RUN_ID, 'events.jsonl'), eventsText);
     const read = await readOrcaTraceRun(base, RUN_ID);
-    assert.equal(read.events.length, 2);
-    assert.equal(read.maxSeq, 2);
-    assert.equal(read.warnings.length, 0);
+    assert.equal(read.events.length, 1);
+    assert.equal(read.maxSeq, 1);
+    assert.equal(read.warnings.length, 1);
   } finally {
     await rm(base, { recursive: true, force: true });
   }
 });
 
-test('reports events_too_large with unavailable integrity for an oversized file', async () => {
+test('rejects an oversized unterminated line instead of rereading a bounded file prefix', async () => {
   const base = await mkdtemp(path.join(tmpdir(), 'kiokuko-orca-'));
   try {
     const runDir = path.join(base, RUN_ID);
     await mkdir(path.join(runDir, 'blobs'), { recursive: true });
     const handle = await open(path.join(runDir, 'events.jsonl'), 'w');
     await handle.write(`${eventLine(1)}\n`);
-    await handle.truncate(ORCA_TRACE_MAX_EVENTS_BYTES + 1);
+    await handle.truncate(80 * 1024 * 1024);
     await handle.close();
     await writeFile(path.join(runDir, 'manifest.json'), JSON.stringify({
       schema_version: '0.1.0',
@@ -394,10 +393,7 @@ test('reports events_too_large with unavailable integrity for an oversized file'
       counts: { events: 1 },
       integrity: { events_sha256: '0'.repeat(64) },
     }));
-    const read = await readOrcaTraceRun(base, RUN_ID);
-    assert.equal(read.integrity, 'unavailable');
-    assert.ok(read.warnings.some((warning) => warning.code === 'events_too_large'));
-    assert.equal(read.events[0]?.seq, 1);
+    await assert.rejects(()=>readOrcaTraceRun(base,RUN_ID), (error:unknown)=>(error as {code:string}).code==='event_line_too_large');
   } finally {
     await rm(base, { recursive: true, force: true });
   }

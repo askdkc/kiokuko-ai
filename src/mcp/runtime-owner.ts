@@ -1,3 +1,5 @@
+import { TraceDiscoveryCoordinator } from '../trace/discovery.js';
+import type { TraceStoreLocation } from '../trace/store-location.js';
 import { initializeDatabase, type InitOptions } from '../commands/init.js';
 import path from 'node:path';
 import { getGlobalDatabasePath, getPlatformDataDirectory, type PathEnvironment } from '../config/paths.js';
@@ -30,6 +32,7 @@ export type McpDatabaseOperation<T> = (
 
 export interface McpDatabaseOwner {
   withDatabase<T>(operation: McpDatabaseOperation<T>): Promise<T>;
+  registerTraceLocation?(location: TraceStoreLocation): void;
   close(): Promise<void>;
 }
 
@@ -38,6 +41,7 @@ interface OwnerState {
   readonly runtime: EmbeddingRuntime;
   readonly worker: EmbeddingWorker | undefined;
   readonly orchestrationWorker: OrchestrationWorker;
+  readonly discovery: TraceDiscoveryCoordinator;
   readonly queue: WriteQueue<unknown>;
 }
 
@@ -70,6 +74,9 @@ export class McpRuntimeOwner implements McpDatabaseOwner {
     const database = opened.database;
     const queue = new WriteQueue<unknown>(64);
     let runtime: EmbeddingRuntime | undefined;
+    let discovery: TraceDiscoveryCoordinator | undefined;
+    let orchestration: OrchestrationWorker | undefined;
+    let embeddingWorker: EmbeddingWorker | undefined;
     try {
       runtime = createEmbeddingRuntime(database, config, {
         ...(this.#options.embeddingProvider === undefined ? {} : { provider: this.#options.embeddingProvider }),
@@ -77,6 +84,7 @@ export class McpRuntimeOwner implements McpDatabaseOwner {
         enqueueWrite: <T>(operation: () => T | PromiseLike<T>) => queue.enqueue(operation) as Promise<T>,
       });
       const worker = runtime.profileId === null ? undefined : createEmbeddingWorker({ runtime });
+      embeddingWorker = worker;
       const dataDirectory = this.#options.databasePath === undefined
         ? getPlatformDataDirectory(this.#options)
         : path.dirname(databasePath);
@@ -89,14 +97,21 @@ export class McpRuntimeOwner implements McpDatabaseOwner {
           ? {}
           : { intervalMs: this.#options.orchestrationWorkerIntervalMs }),
       });
-      const state = { database, runtime, worker, orchestrationWorker, queue } satisfies OwnerState;
+      orchestration = orchestrationWorker;
+      discovery = new TraceDiscoveryCoordinator(database);
+      const state = { database, runtime, worker, orchestrationWorker, discovery, queue } satisfies OwnerState;
       this.#state = state;
       worker?.start();
+      discovery.start();
       orchestrationWorker.start();
       return state;
     } catch (error) {
       const cleanupErrors: unknown[] = [];
-      if (runtime !== undefined) {
+      try { await discovery?.close(); } catch (error) { cleanupErrors.push(error); }
+      try { await orchestration?.close(); } catch (error) { cleanupErrors.push(error); }
+      this.#state = undefined;
+      try { await embeddingWorker?.close(); } catch (error) { cleanupErrors.push(error); }
+      if (runtime !== undefined && embeddingWorker === undefined) {
         try {
           await runtime.close();
         } catch (closeError) {
@@ -136,6 +151,8 @@ export class McpRuntimeOwner implements McpDatabaseOwner {
     return operation(state.database, state.runtime);
   }
 
+  registerTraceLocation(location: TraceStoreLocation): void { if (!this.#closing) this.#state?.discovery.register(location); }
+
   async close(): Promise<void> {
     if (this.#closePromise !== undefined) return this.#closePromise;
     this.#closing = true;
@@ -146,6 +163,7 @@ export class McpRuntimeOwner implements McpDatabaseOwner {
         return;
       }
       const errors: unknown[] = [];
+      try { await state.discovery.close(); } catch (error) { errors.push(error); }
       try {
         await state.orchestrationWorker.close();
       } catch (error) {

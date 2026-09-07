@@ -6,23 +6,13 @@ import test from 'node:test';
 const DOCUMENT = readFileSync(fileURLToPath(new URL('../../docs/orcareplay-integration.md', import.meta.url)), 'utf8');
 
 const REQUIRED_SECTIONS = [
-  '## Trust boundary',
-  '## Secret screening',
-  '## Trace reader and ingestion',
-  '## Trace scan CLI surface',
-  '## Advisory-only delivery semantics',
+  '## Setup', '## Ownership and locations', '## Scan, sync and status',
+  '## Progress, limits and integrity', '## Persistence and advisory delivery', '## Verification',
 ];
-
 const REQUIRED_PHRASES = [
-  'read-only input',
-  'findSecretInValue',
-  'SECURITY_REJECTION',
-  'kiokuko-ai trace scan',
-  'referenceOnly',
-  'autoInstall',
-  'autoExecute',
-  'already_ingested',
-  'INTEGRITY_ERROR',
+  'kiokuko-ai trace record --', 'kiokuko-ai trace scan', 'kiokuko-ai trace sync', 'kiokuko-ai trace status',
+  'referenceOnly', 'autoInstall', 'autoExecute', 'TRACE_CONTEXT_REJECTED',
+  'ended_unverified', 'byte offset', 'Migration 004', 'does not',
 ];
 
 const FORBIDDEN_PHRASES = [

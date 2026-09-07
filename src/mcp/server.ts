@@ -1,3 +1,4 @@
+import { resolveTraceStoreLocation } from '../trace/store-location.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import * as z from 'zod/v4';
 import { getGlobalDatabasePath } from '../config/paths.js';
@@ -452,7 +453,7 @@ export function createKiokukoMcpServer(dependencies: McpServerDependencies = {})
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   }, async ({ requestId: logicalRequestId, task, cwd, profileHints: hints, capabilities, client, maxContextChars }, extra) => withMcpToolDeadline('task_prepare', deadlinePolicy, extra.signal, async () => withPublicToolError(() => withDatabase(dependencies, async (database, embeddingRuntime) => {
     const resolvedClient = resolveTaskPrepareClient(client, server.server.getClientVersion());
-    return toolResult(await prepareOpenCodeTask(database, {
+    const prepared = await prepareOpenCodeTask(database, {
       requestId: logicalRequestId,
       task,
       cwd: cwd ?? dependencies.cwd?.() ?? process.cwd(),
@@ -469,7 +470,9 @@ export function createKiokukoMcpServer(dependencies: McpServerDependencies = {})
       ...(dependencies.fetchImpl === undefined ? {} : { fetchImpl: dependencies.fetchImpl }),
       maxContextChars,
       ...(embeddingRuntime === undefined ? {} : { embeddingRuntime }),
-    }));
+    });
+    dependencies.databaseOwner?.registerTraceLocation?.(await resolveTraceStoreLocation(prepared.executionContext.canonicalCwd, prepared.executionContext.repositoryRoot));
+    return toolResult(prepared);
   }))));
 
   server.registerTool('task_answer', {

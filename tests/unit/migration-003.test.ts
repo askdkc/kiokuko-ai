@@ -36,13 +36,13 @@ function insertJob(database: ReturnType<typeof openConnection>, overrides: Recor
   );
 }
 
-test('migration 003 applies on a fresh database with trace tables and user_version 3', async () => {
+test('trace migrations apply on a fresh database with current trace tables', async () => {
   const database = openConnection(':memory:');
   try {
     const first = migrateDatabase(database);
-    assert.deepEqual(first.applied, [1, 2, 3]);
-    assert.equal(first.currentVersion, 3);
-    assert.equal(database.prepare('PRAGMA user_version').get<{ user_version: number }>()?.user_version, 3);
+    assert.deepEqual(first.applied, [1, 2, 3, 4]);
+    assert.equal(first.currentVersion, 4);
+    assert.equal(database.prepare('PRAGMA user_version').get<{ user_version: number }>()?.user_version, 4);
     assert.equal(database.prepare("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'orcareplay_trace_cursors'").get()?.['1'], 1);
     assert.equal(database.prepare("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'orcareplay_trace_context'").get()?.['1'], 1);
     assert.equal(database.prepare("SELECT 1 FROM sqlite_schema WHERE type = 'index' AND name = 'idx_orchestration_jobs_ready'").get()?.['1'], 1);
@@ -88,12 +88,12 @@ test('migration 003 enforces cursor and context constraints', async () => {
     `);
     cursorInsert.run('/tmp/orca', 'run_abcdef123456', 0, 'active', NOW, NOW);
     assert.throws(
-      () => cursorInsert.run('/tmp/orca', 'run_abcdef123457', -1, 'active', NOW, NOW),
-      /CHECK|constraint/i,
+      () => cursorInsert.run('/tmp/orca', 'run_abcdef123457', -2, 'active', NOW, NOW),
+      /CHECK|constraint|trace_context_too_large/i,
     );
     assert.throws(
       () => cursorInsert.run('/tmp/orca', 'run_abcdef123458', 0, 'bogus', NOW, NOW),
-      /CHECK|constraint/i,
+      /CHECK|constraint|trace_context_too_large/i,
     );
 
     const contextInsert = database.prepare(`
@@ -103,19 +103,19 @@ test('migration 003 enforces cursor and context constraints', async () => {
     contextInsert.run('/tmp/orca', 'run_abcdef123456', 'c'.repeat(64), '{"ok":true}', 'orcareplay', NOW, NOW);
     assert.throws(
       () => contextInsert.run('/tmp/orca', 'run_abcdef123459', 'not-a-digest', '{}', 'orcareplay', NOW, NOW),
-      /CHECK|constraint/i,
+      /CHECK|constraint|trace_context_too_large/i,
     );
     assert.throws(
       () => contextInsert.run('/tmp/orca', 'run_abcdef123459', 'd'.repeat(64), '{not json', 'orcareplay', NOW, NOW),
-      /CHECK|constraint/i,
+      /CHECK|constraint|trace_context_too_large/i,
     );
     assert.throws(
       () => contextInsert.run('/tmp/orca', 'run_abcdef123459', 'e'.repeat(64), `{"pad":"${'x'.repeat(4100)}"}`, 'orcareplay', NOW, NOW),
-      /CHECK|constraint/i,
+      /CHECK|constraint|trace_context_too_large/i,
     );
     assert.throws(
       () => contextInsert.run('/tmp/orca', 'run_abcdef123459', 'f'.repeat(64), '{}', 'other', NOW, NOW),
-      /CHECK|constraint/i,
+      /CHECK|constraint|trace_context_too_large/i,
     );
   } finally {
     database.close();
@@ -146,5 +146,5 @@ test('migration 003 keeps job kind deduplication and cascade behavior', async ()
 
 test('migration 003 checksums remain file-based and the migration list is contiguous', async () => {
   const files = (await readdir(migrationsDirectory)).filter((name) => name.endsWith('.sql')).sort();
-  assert.deepEqual(files, ['001_initial.sql', '002_non_blocking_orchestration.sql', '003_orcareplay_trace.sql']);
+  assert.deepEqual(files, ['001_initial.sql', '002_non_blocking_orchestration.sql', '003_orcareplay_trace.sql', '004_orcareplay_pipeline.sql']);
 });

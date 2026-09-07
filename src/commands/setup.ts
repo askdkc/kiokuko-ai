@@ -256,6 +256,9 @@ export async function runSetupFlow<T extends { client: 'opencode'; projectAgentF
   }
   if (interactive && options.dryRun !== true) {
     await enableOrcaReplayIntegration({
+      interactive:true,
+      environment:setupProcessEnvironment,
+      ...(pathEnvironment.platform ? {platform:pathEnvironment.platform}:{}),
       input,
       output,
       ...(dependencyOverrides.orcaReplaySpawnInstall === undefined ? {} : { spawnInstall: dependencyOverrides.orcaReplaySpawnInstall }),

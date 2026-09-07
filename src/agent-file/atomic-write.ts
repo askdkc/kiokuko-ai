@@ -38,6 +38,7 @@ interface BoundDirectory {
 }
 
 export interface FileExpectation {
+  maxBytes?: number;
   expected: RegularFileSnapshot | undefined;
   /** Paths whose absence is part of the same decision (for example an alternate config path). */
   mustRemainAbsent?: readonly string[];
@@ -116,6 +117,8 @@ export interface AtomicWriteDependencies {
 }
 
 export interface ReadRegularFileDependencies {
+  /** Optional byte limit applied before allocation and during revalidation. */
+  maxBytes?: number;
   /** Test seam for proving that reads remain bound to the opened descriptor. */
   afterOpen?: (filePath: string, handle: FileHandle) => void | Promise<void>;
   /** Test seam for preserving an operation failure when descriptor close also fails. */
@@ -200,11 +203,13 @@ function artifactFromOpenHandle(
 async function readOpenHandleArtifact(
   handle: FileHandle,
   filePath: string,
+  maximum?: number,
 ): Promise<BoundRegularArtifact> {
   const before = await handle.stat();
   if (!before.isFile() || !Number.isSafeInteger(before.size) || before.size < 0) {
     throw new KiokukoError('INTEGRITY_ERROR', 'Atomic artifact cannot be read safely');
   }
+  if (maximum !== undefined && before.size > maximum) throw new KiokukoError('VALIDATION_ERROR', 'Managed file exceeds byte limit');
   const buffer = Buffer.alloc(before.size);
   let offset = 0;
   while (offset < buffer.length) {
@@ -333,7 +338,8 @@ export async function readRegularFile(
     if (!info.isFile()) throw new KiokukoError('VALIDATION_ERROR', `Expected a regular file: ${filePath}`);
     const identity = identityFromStat(info);
     if (!sameIdentity(identity, plannedIdentity)) throw changedAfterPlanning();
-    const content = decodeUtf8(await handle.readFile(), filePath);
+    const content = dependencies.maxBytes === undefined ? decodeUtf8(await handle.readFile(), filePath)
+      : (await readOpenHandleArtifact(handle, filePath, dependencies.maxBytes)).snapshot.content;
     operationResult = { value: { content, mode: info.mode & 0o777, identity } };
   } catch (error) {
     operationFailed = true;
@@ -539,12 +545,14 @@ export async function assertFileExpectation(
     ? undefined
     : await bindMutationDirectory(path.dirname(filePath), expectation.expectedParentDirectory);
   const current = await readRegularFile(filePath, {
+    ...(expectation.maxBytes === undefined ? {} : { maxBytes: expectation.maxBytes }),
     ...(expectation.containmentRoot === undefined ? {} : { containmentRoot: expectation.containmentRoot }),
   });
   if (!sameSnapshot(current, expectation.expected)) throw changedAfterPlanning(filePath);
   if (parent !== undefined) await requireBoundDirectory(parent);
   for (const absentPath of expectation.mustRemainAbsent ?? []) {
     const alternate = await readRegularFile(absentPath, {
+      ...(expectation.maxBytes === undefined ? {} : { maxBytes: expectation.maxBytes }),
       ...(expectation.containmentRoot === undefined ? {} : { containmentRoot: expectation.containmentRoot }),
     });
     if (alternate !== undefined) throw changedAfterPlanning(absentPath);
@@ -1620,6 +1628,7 @@ export async function atomicReplaceTextWithGuard(
   parentIdentity: FileIdentity,
   mode = expected?.mode ?? 0o644,
   containmentRoot?: string,
+  maxBytes?: number,
 ): Promise<AtomicWriteResult> {
   if (guard.token === undefined || guard.resourceKey.length === 0) {
     throw new KiokukoError('SECURITY_REJECTION', 'Managed mutation guard is invalid');
@@ -1628,6 +1637,7 @@ export async function atomicReplaceTextWithGuard(
   await assertFileExpectation(filePath, {
     expected,
     expectedParentDirectory: parentIdentity,
+    ...(maxBytes === undefined ? {} : { maxBytes }),
     ...(containmentRoot === undefined ? {} : { containmentRoot }),
   });
   const temporaryPath = path.join(path.dirname(filePath), `.${path.basename(filePath)}.${randomUUID()}.managed.tmp`);
@@ -1637,7 +1647,7 @@ export async function atomicReplaceTextWithGuard(
     await handle.writeFile(content, { encoding: 'utf8' });
     await chmod(temporaryPath, mode);
     await handle.sync();
-    const prepared = await readOpenHandleArtifact(handle, temporaryPath);
+    const prepared = await readOpenHandleArtifact(handle, temporaryPath, maxBytes);
     if (prepared.snapshot.content !== content || prepared.snapshot.mode !== (mode & 0o777) || prepared.linkCount !== 1n) {
       throw new KiokukoError('INTEGRITY_ERROR', 'Managed temporary file changed during preparation');
     }
@@ -1647,6 +1657,7 @@ export async function atomicReplaceTextWithGuard(
     await assertFileExpectation(filePath, {
       expected,
       expectedParentDirectory: parentIdentity,
+      ...(maxBytes === undefined ? {} : { maxBytes }),
       ...(containmentRoot === undefined ? {} : { containmentRoot }),
     });
     if (expected === undefined) {
@@ -1660,12 +1671,13 @@ export async function atomicReplaceTextWithGuard(
       await rename(temporaryPath, filePath);
     }
     const installed = await readRegularFile(filePath, {
+      ...(maxBytes === undefined ? {} : { maxBytes }),
       ...(containmentRoot === undefined ? {} : { containmentRoot }),
     });
     if (installed === undefined || installed.content !== content || installed.mode !== (mode & 0o777)) {
       throw new AtomicCommittedMutationError({ installed: prepared.snapshot, cleanupFailures: [] }, new KiokukoError('INTEGRITY_ERROR', 'Managed replacement did not match its prepared content'));
     }
-    const temporary = await readRegularFile(temporaryPath);
+    const temporary = await readRegularFile(temporaryPath, maxBytes === undefined ? {} : { maxBytes });
     if (temporary !== undefined) {
       if (temporary.identity.device !== prepared.snapshot.identity.device
         || temporary.identity.inode !== prepared.snapshot.identity.inode
@@ -1680,7 +1692,7 @@ export async function atomicReplaceTextWithGuard(
   } catch (error) {
     if (handle !== undefined) await handle.close().catch(() => undefined);
     try {
-      const artifact = await readRegularFile(temporaryPath);
+      const artifact = await readRegularFile(temporaryPath, maxBytes === undefined ? {} : { maxBytes });
       if (artifact !== undefined) await unlink(temporaryPath);
     } catch { }
     throw error;

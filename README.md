@@ -19,6 +19,8 @@ request → MCP connection → retrieve relevant memory → do the work
 Memory is separated into Project, Ecosystem, and Global scopes. Current source,
 configuration, and execution results take precedence over remembered context.
 
+Record OpenCode and import its final trace with `kiokuko-ai trace record --`. Interactive setup can add the `orca-opencode` shorthand. See [OrcaReplay integration](docs/orcareplay-integration.md) for synchronization and recovery.
+
 ## Quick start
 
 Node.js 24.16.0 or newer is required (Node.js 26.1.0 or newer is also supported).
