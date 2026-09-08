@@ -83,7 +83,12 @@ const fixture = await startFakeOpenAiServer({ emitTaskPrepare: false, respond: a
     : { filePath: path.join(project, 'forbidden-write.txt'), content: 'must not be written' }, sequence);
   if (body.model === 'parent' && action && !toolDone && JSON.stringify(messages[userIndex]?.content).includes('Execute ')) return tool('task', action, sequence);
   if (body.model === 'gokiHead' && childAction && !toolDone) return tool('task', childAction, sequence);
-  if (body.model === 'parent' && roleCompletion) await roleCompletion.observe(messages);
+  if (body.model === 'parent' && roleCompletion) {
+    try { await roleCompletion.observe(messages); }
+    // result() rethrows through the runner's cleanup path instead of crashing
+    // the HTTP server with an unhandled rejection and leaking the host process.
+    catch { return { text: 'Fixture work report failed.' }; }
+  }
   return { text: `${body.model} completed fixture role` };
 } });
 config.model = 'fixture/parent';
@@ -166,6 +171,23 @@ try {
     provenance: { scope: 'explicit_user', exclusions: 'explicit_user', acceptanceCriteria: 'explicit_user', workPlan: 'explicit_user', skillSet: 'explicit_user', finalVerifiers: 'explicit_user', maxAttempts: 'explicit_user' }, capabilities });
   assert.equal(plan.ennoOduno.status, 'goki_executing');
   const lease = plan.executionLease;
+  // Replay a real continuation between planning and reporting. The original
+  // worker credential must survive idle events and a fresh hook process.
+  const priorMessages = await request(`/session/${session.id}/message`);
+  const terminal = priorMessages.findLast(message => message.info?.role === 'assistant' && message.info?.time?.completed);
+  assert.ok(terminal?.info?.id, 'The continuation needs a completed parent message');
+  const hook = await requireSuccess(process.execPath, [cliScript, 'enno', 'hook', '--input-json', '-'], {
+    cwd: project, env: environment, input: JSON.stringify({ protocolVersion: 1,
+      packageVersion: JSON.parse(await readFile(path.join(repo, 'package.json'), 'utf8')).version,
+      sessionId: session.id, terminalMessageId: terminal.info.id, cwd: project }),
+  });
+  const continuation = JSON.parse(hook.stdout.toString('utf8'));
+  assert.equal(continuation.runId, identity.runId);
+  assert.equal(continuation.directive?.role, 'goki');
+  assert.ok(continuation.executionLease?.leaseToken);
+  assert.ok(continuation.executionLease.leaseToken === lease.leaseToken, 'Continuation must preserve the active planning lease');
+  await request(`/session/${session.id}/message`, { model: { providerID: 'fixture', modelID: 'parent' },
+    parts: [{ type: 'text', text: continuation.reason, synthetic: true }] });
   await invoke('gokiHead', () => mcp('enno_work_report', { ...identity, expectedRevision: 2, idempotencyKey: 'report', workUnitId: lease.workUnitId, leaseToken: lease.leaseToken,
     routeEpoch: lease.routeEpoch, attempt: lease.attempt, inputManifestDigest: lease.inputManifestDigest,
     result: { outcome: 'completed', summary: 'Fixture verified through worker', mutated: false, changedPaths: [] } }));

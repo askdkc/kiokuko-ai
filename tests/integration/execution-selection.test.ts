@@ -45,10 +45,22 @@ test('execution choice is request-bound, durable, idempotent and never starts or
     db.close(); db = openConnection(databasePath);
     assert.throws(() => recordExecutionDispatch(db, { ...dispatch, callId: 'retry' }), /already dispatched/u);
     recordExecutionDispatch(db, { ...dispatch, stage: 'complete' });
+    assert.deepEqual(recordExecutionDispatch(db, { ...dispatch, stage: 'complete' }), { accepted: true });
+    assert.throws(() => recordExecutionDispatch(db, { ...dispatch, stage: 'failed' }), /terminal/u);
+    assert.equal(executionView(db, second.run.runId)?.modelFailure, false);
     assert.throws(() => recordExecutionDispatch(db, { ...dispatch, callId: 'duplicate' }), /already dispatched/u);
     const third = await prepareOpenCodeTask(db, { ...input, requestId: 'parallel', client: { kind: 'opencode', sessionId: 'parallel-session' } });
     const parallel = selectOpenCodeTaskExecution(db, { ...ordinary, runId: third.run.runId, idempotencyKey: 'parallel', choice: 'enno', preset: 'openrouter-glm' });
     assert.equal(parallel.execution!.selected!.ideal.model, 'openrouter/z-ai/glm-5.3');
+    const failing = { ...dispatch, runId: third.run.runId, rootSessionId: 'parallel-session',
+      agent: parallel.execution!.selected!.ideal.agent, callId: 'failed-call' };
+    recordExecutionDispatch(db, failing);
+    recordExecutionDispatch(db, { ...failing, stage: 'failed' });
+    db.close(); db = openConnection(databasePath);
+    assert.deepEqual(recordExecutionDispatch(db, { ...failing, stage: 'failed' }), { accepted: true });
+    assert.throws(() => recordExecutionDispatch(db, { ...failing, stage: 'complete' }), /terminal/u);
+    assert.equal(executionView(db, third.run.runId)?.modelFailure, true);
+
     assert.equal(executionView(db, second.run.runId)!.selected!.ideal.model, 'openai/gpt-6-astra');
     assert.throws(() => readExecutionRouting(db, { runId: second.run.runId, cwd: root, rootSessionId: 'other-session' }), /does not match/u);
     assert.throws(() => selectOpenCodeTaskExecution(db, { ...ordinary, runId: second.run.runId, idempotencyKey: 'stale' }), /revision/u);

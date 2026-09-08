@@ -24,7 +24,7 @@ Apply these invariants to every created or changed function:
 5. Do not mutate caller-owned input unless mutation is the explicit API contract.
 6. Make domain decisions deterministic. Keep persistence, network, filesystem, process, clock, randomness, UI, and logging effects explicit.
 7. Return or throw failures intentionally. Do not silently swallow, partially succeed, or leak lower-layer accidents as the public contract.
-8. Add the smallest runnable test that proves success, the important failure, and the regression being changed.
+8. Verify the changed behavior with the smallest meaningful runnable check. Add or modify a test when it protects a material behavior, failure boundary, or regression. Do not add implementation-mirroring tests for trivial, reversible, low-impact changes.
 9. Preserve unrelated code and existing public behavior unless the task explicitly changes it.
 
 Small is not the objective. Cohesion is. Keep operations together when splitting them would hide sequencing, duplicate policy, or weaken a transaction.

@@ -658,6 +658,20 @@ export function setWorkUnitStatusInTransaction(database: SqliteDatabase, input: 
 
 const EXECUTION_LEASE_MS = 15 * 60_000;
 
+function recoverLegacyLeaseToken(database: SqliteDatabase, runId: string, tokenHash: string): string | undefined {
+  // Upgrade active v5 leases without revoking the holder's credential. Only
+  // exact hash matches from this run's existing successful receipts qualify.
+  const candidates = database.prepare(`
+    SELECT j.value AS token FROM enno_operation_receipts r, json_tree(r.response_json) j
+    WHERE r.run_id = ? AND r.state = 'completed' AND j.key = 'leaseToken' AND j.type = 'text'
+    UNION
+    SELECT j.value AS token FROM enno_work_claim_receipts r, json_tree(r.response_json) j
+    WHERE r.run_id = ? AND j.key = 'leaseToken' AND j.type = 'text'
+  `).all<{ token: string }>(runId, runId);
+  return candidates.find(({ token }) => token.length <= 256
+    && createHash('sha256').update(token, 'utf8').digest('hex') === tokenHash)?.token;
+}
+
 export function claimExecutionLeaseInTransaction(
   database: SqliteDatabase,
   snapshot: EnnoRunSnapshot,
@@ -670,6 +684,8 @@ export function claimExecutionLeaseInTransaction(
     SELECT contract_revision AS contractRevision, mutation_revision AS mutationRevision,
            work_unit_id AS workUnitId, route_epoch AS routeEpoch,
            owner_client_kind AS ownerClientKind, owner_session_id AS ownerSessionId,
+           attempt, input_manifest_digest AS inputManifestDigest,
+           lease_token AS leaseToken, lease_token_hash AS tokenHash,
            lease_expires_at AS expiresAt
     FROM enno_execution_leases
     WHERE run_id = ? AND contract_revision = ? AND work_unit_id = ?
@@ -680,6 +696,10 @@ export function claimExecutionLeaseInTransaction(
     routeEpoch: number;
     ownerClientKind: EnnoClientKind;
     ownerSessionId: string;
+    attempt: number;
+    inputManifestDigest: string | null;
+    leaseToken: string | null;
+    tokenHash: string;
     expiresAt: string;
   }>(snapshot.runId, snapshot.revision, workUnitId);
   if (existing !== undefined && existing.expiresAt > now
@@ -690,6 +710,26 @@ export function claimExecutionLeaseInTransaction(
       || existing.ownerClientKind !== owner.clientKind
       || existing.ownerSessionId !== owner.sessionId)) {
     throw new KiokukoError('CONFLICT', 'Enno WorkUnit is leased to another current actor');
+  }
+  if (existing !== undefined && existing.expiresAt > now) {
+    const storedUnit = snapshot.workUnits.find((unit) => unit.workUnit.id === workUnitId);
+    if (existing.inputManifestDigest === null || existing.inputManifestDigest !== storedUnit?.workUnit.inputManifestDigest) {
+      return integrity('Active Enno execution lease input binding is invalid');
+    }
+    const leaseToken = existing.leaseToken ?? recoverLegacyLeaseToken(database, snapshot.runId, existing.tokenHash);
+    if (leaseToken === undefined) {
+      throw new KiokukoError('CONFLICT', 'Active legacy execution lease is not recoverable; retain the issued credential or wait for expiry');
+    }
+    if (createHash('sha256').update(leaseToken, 'utf8').digest('hex') !== existing.tokenHash) {
+      return integrity('Stored Enno execution lease credential is invalid');
+    }
+    if (existing.leaseToken === null) database.prepare(`
+      UPDATE enno_execution_leases SET lease_token = ?
+      WHERE run_id = ? AND contract_revision = ? AND work_unit_id = ? AND lease_token_hash = ?
+    `).run(leaseToken, snapshot.runId, snapshot.revision, workUnitId, existing.tokenHash);
+    return { leaseToken, routeEpoch: existing.routeEpoch, contractRevision: existing.contractRevision,
+      mutationRevision: existing.mutationRevision, workUnitId, attempt: existing.attempt,
+      inputManifestDigest: existing.inputManifestDigest, expiresAt: existing.expiresAt };
   }
   const leaseToken = randomUUID();
   const tokenHash = createHash('sha256').update(leaseToken, 'utf8').digest('hex');
@@ -708,9 +748,9 @@ export function claimExecutionLeaseInTransaction(
     INSERT INTO enno_execution_leases (
       run_id, contract_revision, mutation_revision, work_unit_id, attempt, route_epoch,
       input_manifest_digest,
-      owner_client_kind, owner_session_id, lease_token_hash, lease_expires_at,
+      owner_client_kind, owner_session_id, lease_token_hash, lease_token, lease_expires_at,
       heartbeat_at, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(run_id, contract_revision, work_unit_id) DO UPDATE SET
       mutation_revision = excluded.mutation_revision,
       attempt = excluded.attempt,
@@ -719,6 +759,7 @@ export function claimExecutionLeaseInTransaction(
       owner_client_kind = excluded.owner_client_kind,
       owner_session_id = excluded.owner_session_id,
       lease_token_hash = excluded.lease_token_hash,
+      lease_token = excluded.lease_token,
       lease_expires_at = excluded.lease_expires_at,
       heartbeat_at = excluded.heartbeat_at,
       updated_at = excluded.updated_at
@@ -733,6 +774,7 @@ export function claimExecutionLeaseInTransaction(
     owner.clientKind,
     owner.sessionId,
     tokenHash,
+    leaseToken,
     expiresAt,
     now,
     now,
@@ -817,6 +859,14 @@ export function releaseWorkUnitExecutionLeaseInTransaction(
     DELETE FROM enno_execution_leases
     WHERE run_id = ? AND contract_revision = ? AND work_unit_id = ?
   `).run(runId, contractRevision, workUnitId);
+}
+
+/** A compatible sibling's accepted result does not revoke work already leased. */
+export function advanceSiblingLeaseMutationInTransaction(database: SqliteDatabase, snapshot: EnnoRunSnapshot): void {
+  database.prepare(`
+    UPDATE enno_execution_leases SET mutation_revision = mutation_revision + 1
+    WHERE run_id = ? AND contract_revision = ? AND route_epoch = ? AND mutation_revision = ?
+  `).run(snapshot.runId, snapshot.revision, snapshot.routeEpoch ?? 0, snapshot.mutationRevision);
 }
 
 /**

@@ -62,6 +62,7 @@ import {
   unavailableRequiredSkills,
 } from './skills.js';
 import {
+  advanceSiblingLeaseMutationInTransaction,
   appendEnnoEventInTransaction,
   assertExecutionLeaseInTransaction,
   claimExecutionLeaseInTransaction,
@@ -1392,6 +1393,9 @@ export async function reportEnnoWork(
     });
     if (passed) {
       releaseWorkUnitExecutionLeaseInTransaction(database, input.runId, current.revision, input.workUnitId);
+      // Scheduling already checked resource compatibility. Carry only this
+      // accepted mutation forward; unrelated revision changes remain fenced.
+      if (input.result.mutated) advanceSiblingLeaseMutationInTransaction(database, current);
     } else {
       releaseExecutionLeaseInTransaction(database, input.runId);
     }
