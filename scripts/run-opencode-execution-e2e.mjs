@@ -7,6 +7,7 @@ import { parse } from 'jsonc-parser';
 import { requireSuccess, startOpenCode, resolveOpenCodeBinary } from './run-opencode-host-e2e.mjs';
 import { callMcpTool } from './lib/mcp-probe.mjs';
 import { startFakeOpenAiServer } from '../tests/e2e/fake-openai-server.mjs';
+import { createRoleCompletion } from '../tests/e2e/role-completion.mjs';
 import { agentDefinition, buildExecutionCatalog, orchestrationOptionsSchema, EXECUTION_ROLES } from '../dist/execution/catalog.js';
 
 const repo = path.resolve(import.meta.dirname, '..');
@@ -51,7 +52,7 @@ assert.deepEqual(config.plugin[index][1].orchestration, options.orchestration);
 config.plugin[index][0] = pathToFileURL(path.join(repo, 'dist/opencode/plugin.js')).href;
 let action;
 let childAction;
-let completeAction;
+let roleCompletion;
 let attackModel;
 let failureStatus;
 let intakeMode = false;
@@ -82,7 +83,7 @@ const fixture = await startFakeOpenAiServer({ emitTaskPrepare: false, respond: a
     : { filePath: path.join(project, 'forbidden-write.txt'), content: 'must not be written' }, sequence);
   if (body.model === 'parent' && action && !toolDone && JSON.stringify(messages[userIndex]?.content).includes('Execute ')) return tool('task', action, sequence);
   if (body.model === 'gokiHead' && childAction && !toolDone) return tool('task', childAction, sequence);
-  if (body.model === 'parent' && toolDone && completeAction) { const complete = completeAction; completeAction = undefined; await complete(); }
+  if (body.model === 'parent' && roleCompletion) await roleCompletion.observe(messages);
   return { text: `${body.model} completed fixture role` };
 } });
 config.model = 'fixture/parent';
@@ -130,9 +131,10 @@ try {
   assert.deepEqual(replay.execution.selected, selected.execution.selected);
   const dispatch = selected.execution.dispatch;
   const identity = { runId: prepared.run.runId, workspace: prepared.project.workspace, orchestrationId: prepared.intake.sessionId };
-  const invoke = async role => {
+  const invoke = async (role, complete) => {
     console.error(`Verifying ${role}`);
     action = { description: `Check ${role} fixture`, subagent_type: dispatch[role].subagent_type, prompt: dispatch[role].promptPrefix + `Return the ${role} fixture report.` };
+    roleCompletion = complete ? createRoleCompletion(action, complete) : undefined;
     childAction = role === 'gokiHead' ? { description: 'Run approved worker fixture', subagent_type: dispatch.gokiWorker.subagent_type, prompt: dispatch.gokiWorker.promptPrefix + 'Verify the approved README fixture. Return evidence without changing files.' } : undefined;
     const before = fixture.stats.sentModels.length;
     const result = await request(`/session/${session.id}/message`, { model: { providerID: 'fixture', modelID: 'parent' }, parts: [{ type: 'text', text: `Execute ${role} now.` }] });
@@ -144,6 +146,11 @@ try {
     assert.equal(latest?.state?.status, 'completed', JSON.stringify(latest));
     assert.ok(fixture.stats.sentModels.slice(before).includes(role), `wire model ${role}`);
     if (role === 'gokiHead') assert.ok(fixture.stats.sentModels.slice(before).includes('worker'), 'README custom worker wire model');
+    if (roleCompletion) {
+      const report = await roleCompletion.result();
+      assert.equal(report.ennoOduno.status, 'enno_verifying', 'Work report must finish before final verification');
+      roleCompletion = undefined;
+    }
   };
   await invoke('ideal');
   await mcp('enno_ideal_submit', { ...identity, expectedRevision: 1, idempotencyKey: 'ideal', ideal: {
@@ -159,10 +166,9 @@ try {
     provenance: { scope: 'explicit_user', exclusions: 'explicit_user', acceptanceCriteria: 'explicit_user', workPlan: 'explicit_user', skillSet: 'explicit_user', finalVerifiers: 'explicit_user', maxAttempts: 'explicit_user' }, capabilities });
   assert.equal(plan.ennoOduno.status, 'goki_executing');
   const lease = plan.executionLease;
-  completeAction = () => mcp('enno_work_report', { ...identity, expectedRevision: 2, idempotencyKey: 'report', workUnitId: lease.workUnitId, leaseToken: lease.leaseToken,
+  await invoke('gokiHead', () => mcp('enno_work_report', { ...identity, expectedRevision: 2, idempotencyKey: 'report', workUnitId: lease.workUnitId, leaseToken: lease.leaseToken,
     routeEpoch: lease.routeEpoch, attempt: lease.attempt, inputManifestDigest: lease.inputManifestDigest,
-    result: { outcome: 'completed', summary: 'Fixture verified through worker', mutated: false, changedPaths: [] } });
-  await invoke('gokiHead');
+    result: { outcome: 'completed', summary: 'Fixture verified through worker', mutated: false, changedPaths: [] } }));
   await mcp('enno_verify_prepare', { ...identity, expectedRevision: 2, idempotencyKey: 'verify' });
   await invoke('check');
   await mcp('task_execution_select', { runId: prepared.run.runId, expectedRevision: 1, idempotencyKey: 'cancel', choice: 'cancelled', cwd: project });
