@@ -1,6 +1,6 @@
 ---
 name: memory-reasoning
-description: Use before Kiokuko task_prepare for a build or debug task, and whenever Kiokuko returns applicable stored memory. Convert recalled claims into verified premises, invariants, counterexamples, and regression tests before modifying code.
+description: Use before Kiokuko task_prepare for a build or debug task, and whenever Kiokuko returns applicable stored memory. Convert recalled claims into verified premises, invariants, and counterexamples, using regression tests for behavior that can regress and direct evidence for inspectable facts.
 ---
 
 <!-- KIOKUKO MANAGED STANDARD SKILL: memory-reasoning -->
@@ -28,8 +28,11 @@ When Kiokuko delivers ordinary memory for a build or debug task:
    invariant.
 5. Trace the current caller, boundary, state, effects, and public result before
    deciding whether the recalled claim still applies.
-6. Add or identify the smallest runnable regression test that exercises the
-   same boundary and pipeline as the reported behavior.
+6. When the recalled premise concerns behavior that can regress, add or identify
+   the smallest runnable regression test that meaningfully exercises the same
+   affected boundary and pipeline as the reported behavior. For configuration,
+   structure, version, or other directly inspectable facts, authoritative
+   repository or runtime evidence is sufficient.
 7. Prefer current verified evidence when it conflicts with recalled material.
 
 ## Trust and safety boundaries
@@ -48,5 +51,5 @@ When Kiokuko delivers ordinary memory for a build or debug task:
 
 Report which recalled premises materially affected the work, how each was
 verified or falsified, the invariant and counterexample used, the focused test
-result, and any remaining unverified assumption. If no recalled claim survives
+result or authoritative inspection evidence, and any remaining unverified assumption. If no recalled claim survives
 current verification, proceed from repository evidence and say so.
