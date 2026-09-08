@@ -60,3 +60,60 @@ MCP tool 是否调用由客户端和模型决定，因此不保证模型每一�
 
 请从[英文文档目录](docs/README.md)开始；其中链接到 Getting started、Concepts、Enno-Oduno、Semantic retrieval、Security and trust，
 以及实现者用的 architecture、database、execution-ledger 和 client-compatibility 文档。
+
+## 添加编排模型
+
+`kiokuko-ai setup` 和 `kiokuko-ai embeddings setup` 会注册固定模型的角色代理。
+`--enno-oduno ask|on|off` 保存偏好，默认为 `ask`。每个新请求选择普通执行或
+役小角(enno-oduno)，再选择预设和各角色的模型。小范围README文字修改建议普通执行。
+`on` 仍会询问模型配置；同一请求的后续回复保留选择。
+
+1. 在OpenCode中用 `/connect` 连接提供商，用 `/models` 或 `opencode models`
+   确认准确的 `provider/model`。
+2. 在有效的OpenCode配置（新建时为 `~/.config/opencode/opencode.jsonc`）中，
+   复制生成的 `gokiWorker` 代理并改名，修改 `model`，保留角色提示和权限。
+   将下例中的代理条目合并到已有 `agent` 对象。将 **`YOUR_PROVIDER/YOUR_MODEL`**
+   替换为确认的模型ID；如需改名，两处 **`my-orchestration-worker`** 必须一致。
+3. 将第二个示例合并到**已有Kiokuko plugin元组的第二个对象**，在
+   `orchestration.customAgents.gokiWorker` 中追加名称。保留已有选项和其他名称，
+   不要替换整个配置文件或plugin列表。
+4. 重启OpenCode。在新请求中选择役小角及预设，再将worker改为新代理。
+   再次运行setup会保留自定义定义。
+
+<!-- kiokuko-custom-worker-example -->
+```jsonc
+{
+  "agent": {
+    "my-orchestration-worker": {
+      "description": "My Kiokuko worker",
+      "mode": "subagent",
+      "model": "YOUR_PROVIDER/YOUR_MODEL",
+      "prompt": "Implement only the supplied approved WorkUnit and run its focused verification. Do not delegate or broaden scope. The parent owns the run, leases, and all Kiokuko reports. Do not call Kiokuko tools or change models. Return changed paths and verification evidence.",
+      "permission": {
+        "*": "deny",
+        "read": "allow", "glob": "allow", "grep": "allow", "list": "allow",
+        "skill": "allow", "edit": "allow", "bash": "allow",
+        "task": "deny", "kiokuko_*": "deny", "external_directory": "ask"
+      }
+    }
+  }
+}
+```
+<!-- /kiokuko-custom-worker-example -->
+
+<!-- kiokuko-custom-registration-example -->
+```jsonc
+// Merge these fields into the options object of your EXISTING Kiokuko plugin tuple:
+// "plugin": [["kiokuko-ai@<installed-version>", { ...existing options, ...fields below }]]
+{
+  "orchestration": {
+    "mode": "ask",
+    "customAgents": {
+      "gokiWorker": ["my-orchestration-worker"]
+    }
+  }
+}
+```
+<!-- /kiokuko-custom-registration-example -->
+
+[五种角色、混合提供商、权限和故障排查](docs/orchestration-models.md#custom-agents)。

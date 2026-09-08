@@ -11,7 +11,7 @@ const ACTIVE_ENNO_STATUSES = new Set([
   'oduno_meditation',
 ]);
 
-const ENNO_STATE_TOOL = /(?:^|_)(?:task_prepare|task_answer|enno_[a-z_]+)$/u;
+const ENNO_STATE_TOOL = /(?:^|_)(?:task_prepare|task_answer|task_execution_select|enno_[a-z_]+)$/u;
 
 interface EnnoCompactionRecord {
   runId: string;
@@ -46,7 +46,23 @@ function nonNegativeInteger(value: unknown): number | null | undefined {
       : undefined;
 }
 
-function parseToolOutput(output: string): Record<string, unknown> | undefined {
+function parseToolOutput(value: unknown): Record<string, unknown> | undefined {
+  // Native tools return `output`; OpenCode passes raw MCP CallToolResult to
+  // this same hook before converting its text content into a native result.
+  const envelope = record(value);
+  let output = typeof value === 'string' ? value : envelope?.output;
+  if (typeof output !== 'string' && Array.isArray(envelope?.content)) {
+    let text = '';
+    for (const item of envelope.content) {
+      const part = record(item);
+      if (part?.type !== 'text' || typeof part.text !== 'string') continue;
+      if (Buffer.byteLength(part.text, 'utf8') > MAX_TOOL_OUTPUT_BYTES) return undefined;
+      text += part.text;
+      if (Buffer.byteLength(text, 'utf8') > MAX_TOOL_OUTPUT_BYTES) return undefined;
+    }
+    output = text;
+  }
+  if (typeof output !== 'string') return undefined;
   if (Buffer.byteLength(output, 'utf8') > MAX_TOOL_OUTPUT_BYTES) return undefined;
   try {
     return record(JSON.parse(output));
@@ -117,12 +133,21 @@ function compactionContext(value: EnnoCompactionRecord): string {
 
 /** Keep only the minimal successful Enno state needed to survive OpenCode compaction. */
 export class OpenCodeCompactionState {
+  private readonly choices = new Map<string, Record<string, unknown>>();
   private readonly entries = new Map<string, EnnoCompactionRecord>();
 
-  observe(sessionId: string, toolId: string, output: string): void {
+  observe(sessionId: string, toolId: string, output: unknown): void {
     if (!ENNO_STATE_TOOL.test(toolId)) return;
     const parsed = parseToolOutput(output);
     if (parsed === undefined) return;
+    const execution = record(parsed.execution);
+    if (execution && typeof execution.runId === 'string' && typeof execution.revision === 'number'
+      && ['pending', 'ordinary', 'enno', 'cancelled'].includes(String(execution.choice))) {
+      this.choices.delete(sessionId);
+      this.choices.set(sessionId, { runId: execution.runId, revision: execution.revision, choice: execution.choice, mode: execution.mode });
+      if (this.choices.size > MAX_TRACKED_SESSIONS) this.choices.delete(this.choices.keys().next().value!);
+      if (execution.choice !== 'enno') this.entries.delete(sessionId);
+    }
     let previous = this.entries.get(sessionId);
     const parsedState = record(parsed.ennoOduno);
     const observedRunId = boundedText(record(parsed.run)?.runId, 256)
@@ -145,6 +170,8 @@ export class OpenCodeCompactionState {
   }
 
   appendContext(sessionId: string, context: string[]): void {
+    const choice = this.choices.get(sessionId);
+    if (choice) context.push('Preserve this Kiokuko execution choice for the same request; never repeat task_prepare or ask an already answered choice. Restore its registered candidates and role routing with task_context_read at this compaction boundary. ' + JSON.stringify(choice));
     const current = this.entries.get(sessionId);
     if (current !== undefined) context.push(compactionContext(current));
   }

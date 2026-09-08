@@ -12,7 +12,7 @@ kiokuko-ai setup
 Setup configures OpenCode automatically; `--clients` is not supported.
 `--dry-run --json` validates and reports planned changes without writing.
 `--no-standard-skills`, `--skill-discovery off|official|community`, and
-`--enno-oduno on|off` control optional setup behavior.
+`--enno-oduno ask|on|off` control optional setup behavior.
 
 Setup owns the `kiokuko` MCP entry in OpenCode's `opencode.json` or `opencode.jsonc`
 and adds the npm plugin to the `plugin` array:

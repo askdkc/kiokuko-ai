@@ -1,4 +1,5 @@
 import type { SkillDiscoverySummary } from '../skills/types.js';
+import type { ExecutionRouting } from '../execution/store.js';
 
 export const ENNO_STATUSES = [
   'intake',
@@ -477,6 +478,7 @@ export interface UserFacingConfirmation {
 }
 
 export interface RoleDirective {
+  executionRouting?: ExecutionRouting;
   protocolVersion: 1;
   runId: string;
   contractRevision: number | null;
@@ -569,6 +571,7 @@ export interface VerifierRunResult {
 }
 
 export interface EnnoRunSnapshot {
+  executionRouting?: ExecutionRouting;
   runId: string;
   workspace: string;
   orchestrationId: string;

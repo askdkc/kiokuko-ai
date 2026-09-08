@@ -11,7 +11,7 @@ kiokuko-ai setup
 
 setupはOpenCodeを自動設定します。`--clients`はサポートしていません。
 `--dry-run --json`は書き込みなしで計画を出力します。`--no-standard-skills`、
-`--skill-discovery off|official|community`、`--enno-oduno on|off`も指定できます。
+`--skill-discovery off|official|community`、`--enno-oduno ask|on|off`も指定できます。
 
 setupはOpenCodeの`opencode.json`または`opencode.jsonc`に`kiokuko` MCP entryを設定し、
 `plugin`配列にnpm pluginを追加します。

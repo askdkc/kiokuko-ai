@@ -3,6 +3,8 @@ import { registerTraceStore, resolveTraceStoreLocation } from '../trace/store-lo
 import type { SqliteDatabase } from '../db/adapter.js';
 import { KiokukoError } from '../errors.js';
 import { LedgerStore } from '../ledger/store.js';
+import { executionCatalogSchema, type ExecutionCatalog } from '../execution/catalog.js';
+import { initializeExecution, saveExecutionPreparation, executionView, selectExecution, requireExecutionRun, type ExecutionSelectInput } from '../execution/store.js';
 import type { RunRecord } from '../ledger/types.js';
 import { readEntry } from '../memory/entries.js';
 import { isRetrievableEntry, retrievableWorkspaceEntryCount } from '../memory/hybrid-retrieval.js';
@@ -75,6 +77,7 @@ import { detectSkillGap } from '../skills/gap-detection.js';
 import { buildSkillQueries } from '../skills/query-builder.js';
 
 export interface PrepareOpenCodeTaskInput {
+  executionCatalog?: ExecutionCatalog;
   requestId: string;
   task: string;
   cwd?: string;
@@ -103,6 +106,7 @@ export interface AnswerOpenCodeTaskInput {
 }
 
 export interface PreparedOpenCodeTask {
+  execution?: ReturnType<typeof executionView>;
   project: ResolvedProjectWorkspace;
   executionContext: OpenCodeTaskExecutionContext;
   intake: {
@@ -889,8 +893,12 @@ function withPreparedEnno(
   database: SqliteDatabase,
   prepared: Omit<PreparedOpenCodeTask, 'ennoOduno'>,
 ): PreparedOpenCodeTask {
+  saveExecutionPreparation(database, prepared.run.runId, {
+    project: prepared.project, intake: prepared.intake, run: prepared.run, skillDiscovery: prepared.skillDiscovery,
+  });
   const result: PreparedOpenCodeTask = {
     ...prepared,
+    execution: executionView(database, prepared.run.runId),
     ennoOduno: preparedEnnoState(database, prepared),
   };
   const revision = recordTaskContextRevision(database, {
@@ -930,6 +938,7 @@ function preparedEnnoState(
 }
 
 export async function prepareOpenCodeTask(database: SqliteDatabase, input: PrepareOpenCodeTaskInput): Promise<PreparedOpenCodeTask> {
+  const executionCatalog = executionCatalogSchema.parse(input.executionCatalog ?? { mode: 'ask', candidates: [] });
   const requestId = taskRequestId(input.requestId);
   const maxContextChars = taskContextCharacterBudget(input.maxContextChars);
   const { project, executionContext } = await requireProject(database, input.cwd);
@@ -965,6 +974,7 @@ export async function prepareOpenCodeTask(database: SqliteDatabase, input: Prepa
     ...(input.client?.version === undefined ? {} : { clientVersion: input.client.version }),
     ...(input.client?.sessionId === undefined ? {} : { sourceSessionId: input.client.sessionId }),
   });
+  initializeExecution(database, opened.runId, executionCatalog);
   authoritativeTaskRun(database, opened.runId);
   const context = await getAkinatorContextService(database, {
     workspace: project.workspace,
@@ -989,6 +999,18 @@ export async function prepareOpenCodeTask(database: SqliteDatabase, input: Prepa
     if (input.signal?.aborted) return failOpenCodeTaskRunAfterAbort(database, opened.runId, error);
     throw error;
   }
+}
+
+export function selectOpenCodeTaskExecution(database: SqliteDatabase, input: ExecutionSelectInput) {
+  const cwd = input.cwd ?? process.cwd();
+  selectExecution(database, input, cwd);
+  const { row, run } = requireExecutionRun(database, input.runId, cwd);
+  const prepared = JSON.parse(row.prepared_json) as PreparedEnnoInput;
+  return {
+    run: { ...prepared.run, status: run.status }, project: prepared.project,
+    execution: executionView(database, input.runId),
+    ennoOduno: ennoStateForPreparedTask(database, prepared, run.client),
+  };
 }
 
 export async function answerOpenCodeTask(database: SqliteDatabase, input: AnswerOpenCodeTaskInput): Promise<PreparedOpenCodeTask> {

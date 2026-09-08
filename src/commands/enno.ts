@@ -19,6 +19,7 @@ import { parseOpenCodeHookRequest } from '../opencode/hook-protocol.js';
 import { parseCompactionHookRequest } from '../opencode/compaction-protocol.js';
 import { captureCompactionBoundary, queueCompactionMeditation } from '../meditation/compaction.js';
 import { canonicalContentHash } from '../serialization/validate.js';
+import { executionReadSchema, readExecutionRouting, executionDispatchSchema, recordExecutionDispatch } from '../execution/store.js';
 
 async function readInputFromStdin(): Promise<Buffer> {
   const chunks: Buffer[] = [];
@@ -45,6 +46,24 @@ export interface EnnoCommandDependencies {
 
 export function registerEnnoCommand(root: Command, dependencies: EnnoCommandDependencies = {}): void {
   const enno = root.command('enno').description('Run Enno-Oduno role directive generation');
+  enno.command('execution-dispatch')
+    .description('Record an exact role invocation for the OpenCode plugin')
+    .requiredOption('--input-json <path>', 'stdin (-) only')
+    .action(async (options: { inputJson: string }) => {
+      if (options.inputJson !== '-' || !dependencies.withDatabase) throw new KiokukoError('VALIDATION_ERROR', 'Execution dispatch requires stdin and a database');
+      const input = executionDispatchSchema.parse(parseRoleJson(await readInputFromStdin()));
+      const result = await dependencies.withDatabase(database => recordExecutionDispatch(database, input));
+      process.stdout.write(JSON.stringify(result));
+    });
+  enno.command('execution-state')
+    .description('Read exact run-bound model routing for the OpenCode plugin')
+    .requiredOption('--input-json <path>', 'stdin (-) only')
+    .action(async (options: { inputJson: string }) => {
+      if (options.inputJson !== '-' || !dependencies.withDatabase) throw new KiokukoError('VALIDATION_ERROR', 'Execution state requires stdin and a database');
+      const input = executionReadSchema.parse(parseRoleJson(await readInputFromStdin()));
+      const result = await dependencies.withDatabase(database => readExecutionRouting(database, input));
+      process.stdout.write(JSON.stringify(result));
+    });
   enno.command('run')
     .description('Generate one strict JSON role directive without database, network, or command access')
     .requiredOption('--role <role>', 'enno-oduno, zenki, or goki')

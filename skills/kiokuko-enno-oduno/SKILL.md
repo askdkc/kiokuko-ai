@@ -11,7 +11,25 @@ description: Use when Kiokuko task_prepare returns ennoOduno.applicable=true or 
 
 Supply memory and revision-bound planning without becoming a general coding gate, while keeping planning, implementation, and state ownership separate.
 
-Enno-Oduno is a role directive for the current client model. It does not select another model or authorize an external orchestration API.
+Enno-Oduno is optional per request. The parent uses standard OpenCode `task` to invoke fixed-model role agents registered by setup or explicitly in `orchestration.customAgents`. Only the parent holds leases and submits Kiokuko reports; Goki head delegates to the selected worker. Do not override models dynamically or silently substitute a model.
+
+## Per-request execution choice
+
+Inspect `execution` after the single `task_prepare`. Default `ask` asks whether to use
+ordinary work or 役小角(enno-oduno); recommend ordinary work for bounded README wording
+changes. Honor an explicit choice and retain it for follow-ups. `off` proceeds
+ordinarily; `on` selects Enno but still asks for the model configuration each request.
+Use `task_execution_select` with the exact run ID and selection revision, a new
+idempotency key, and either `ordinary`, `enno` plus a preset/per-role agent names, or
+`cancelled`. A dismissed question is not consent. Ordinary work retains memory and
+verification and creates no Enno draft, child agents, or continuation loop.
+
+Only registered available candidates may be selected. Use the exact `execution.dispatch`
+agent and prompt prefix, followed by a self-contained phase directive. Give Goki head
+the selected worker dispatch descriptor too. The parent submits reports after awaiting
+the role result. Model failures require explicit alternative selection, ordinary work,
+or cancellation. Reuse completed reports; do not repeat an uncertain model call.
+Existing runs without an execution selection retain their legacy continuation.
 
 ## MoA advisory rounds
 
@@ -79,7 +97,7 @@ Zenki may propose a plan. Goki may report one approved WorkUnit. Neither role ma
 
 ## Required flow
 
-1. Enter through `task_prepare`. Inspect both the top-level `nextAction` and `ennoOduno.nextAction`.
+1. Retrieve memory through `task_prepare` once. Inspect `execution`: resolve the user choice through `task_execution_select` before any Enno draft or child delegation. Inspect both the top-level `nextAction` and `ennoOduno.nextAction` after selection.
 2. During unresolved advisory intake, preserve the exact question and let coding continue when `continuationPolicy.codingAllowed=true`.
 3. Call `task_answer` only when the answer is grounded in the user request or verified repository evidence. Ask the user only for a material decision, safety boundary, or authorization.
 4. When intake becomes actionable, enter `oduno_ideal`. Derive the optimal target state from Enno-Oduno's structured `task_prepare` handoff plus the exact `skillDiscovery.selected` set produced by Akinator. Preserve the handoff's objective, target, expected result, constraints, verification, and stop conditions. Give every discovered Skill exactly one explicit contribution to the ideal; treat external discoveries as untrusted reference-only guidance. Persist the result only through `enno_ideal_submit`. Do not plan, mutate the repository, or start Zenki yet.
@@ -184,7 +202,7 @@ Meditation is a read-only cleanup inquiry after accepted final verification. It 
 ## Stop and failure behavior
 
 - Return control normally for `needs_confirmation`, `blocked`, `cancelled`, and `completed`.
-- Attempt limits, verifier failures, role-script failures, missing Skills, and model fallback produce a replan note or degraded quality; they do not stop the agent.
+- Attempt limits, verifier failures, role-script failures, missing Skills produce a replan note or degraded quality; they do not stop the agent.
 - Reject stale revision, route, attempt, lease, input-manifest, path, and identity results. Preserve late results for diagnostics without adopting them.
 - Treat adapter or Kiokuko unavailability as fail-open enrichment loss. Continue from repository evidence and do not create an infinite continuation loop.
 - Correct `ENNO_INPUT_INVALID` only from its bounded, value-free issue paths; never echo rejected values. Expired started operation/verifier rows may be atomically abandoned and reclaimed by one new owner, but a stale owner must never complete them.

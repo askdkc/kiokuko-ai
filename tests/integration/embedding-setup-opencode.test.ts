@@ -12,6 +12,7 @@ import type { DoctorResult } from '../../src/commands/doctor.js';
 import { setupOpenCode } from '../../src/commands/setup.js';
 import { getGlobalDatabasePath } from '../../src/config/paths.js';
 import { openConnection } from '../../src/db/connection.js';
+import { MANAGED_EXECUTION_AGENTS, agentDefinition } from '../../src/execution/catalog.js';
 import { renderOpenCodeConfig } from '../../src/setup/opencode-config.js';
 
 const execFileAsync = promisify(execFile);
@@ -79,14 +80,23 @@ for (const initial of ['fresh', 'legacy', 'current'] as const) {
         assert.equal(doctor.checks[check].ok, true, `${check}: ${doctor.checks[check].detail}`);
       }
 
-      const firstConfig = await readFile(configPath, 'utf8');
+      let firstConfig = await readFile(configPath, 'utf8');
       const config = parse(firstConfig);
       assert.match(firstConfig, /Preserve user configuration/u);
       assert.equal(config.theme, 'custom');
       assert.equal(config.plugin[0], 'unrelated-plugin');
       assert.equal(config.mcp.kiokuko.environment.KIOKUKO_SKILL_DISCOVERY, initial === 'fresh' ? 'official' : 'community');
+      assert.deepEqual(config.agent, MANAGED_EXECUTION_AGENTS);
+      const entry = config.plugin.find((item: unknown) => Array.isArray(item) && item[0].startsWith('kiokuko-ai@'));
+      assert.equal(entry[1].orchestration.mode, 'ask');
+      config.agent['custom-worker'] = agentDefinition('gokiWorker', 'fixture/custom');
+      entry[1].orchestration.customAgents.gokiWorker = ['custom-worker'];
+      firstConfig = JSON.stringify(config, null, 2);
+      await writeFile(configPath, firstConfig);
       await setup();
       assert.equal(await readFile(configPath, 'utf8'), firstConfig);
+      await setupOpenCode({ env });
+      assert.equal(await readFile(configPath, 'utf8'), firstConfig, 'both setup paths preserve the same role configuration');
     } finally {
       await rm(root, { recursive: true, force: true });
     }

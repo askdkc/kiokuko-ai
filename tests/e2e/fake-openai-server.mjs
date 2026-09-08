@@ -69,15 +69,15 @@ function responseBody(body, emitTaskPrepare) {
   return { text: 'fixture provider completed the OpenCode host contract.' };
 }
 
-function completion(body, sequence, emitTaskPrepare) {
-  const response = responseBody(body, emitTaskPrepare);
+function completion(body, sequence, emitTaskPrepare, override) {
+  const response = override ?? responseBody(body, emitTaskPrepare);
   const id = `fixture-completion-${sequence}`;
   if (response.toolCalls !== undefined) {
     return {
       id,
       object: 'chat.completion',
       created: 1,
-      model: 'fixture-model',
+      model: body.model ?? 'fixture-model',
       choices: [{ index: 0, message: { role: 'assistant', tool_calls: response.toolCalls }, finish_reason: 'tool_calls' }],
     };
   }
@@ -85,7 +85,7 @@ function completion(body, sequence, emitTaskPrepare) {
     id,
     object: 'chat.completion',
     created: 1,
-    model: 'fixture-model',
+    model: body.model ?? 'fixture-model',
     choices: [{ index: 0, message: { role: 'assistant', content: response.text }, finish_reason: 'stop' }],
     usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
   };
@@ -109,7 +109,7 @@ function streamCompletion(value) {
       object: 'chat.completion.chunk',
       created: value.created,
       model: value.model,
-      choices: [{ index: 0, delta: { tool_calls: toolCalls }, finish_reason: null }],
+      choices: [{ index: 0, delta: { tool_calls: toolCalls.map((call, index) => ({ ...call, index })) }, finish_reason: null }],
     });
   } else if (content.length > 0) {
     chunks.push({
@@ -139,6 +139,7 @@ export async function startFakeOpenAiServer(options = {}) {
     taskPrepareResponses: 0,
     continuationRequests: 0,
     requestDigests: [],
+    sentModels: [],
   };
   let sequence = 0;
   const server = createServer(async (request, response) => {
@@ -179,7 +180,14 @@ export async function startFakeOpenAiServer(options = {}) {
       stats.continuationRequests += 1;
       if (typeof onContinuation === 'function') await onContinuation(continuation);
     }
-    const value = completion(body, sequence, emitTaskPrepare);
+    stats.sentModels.push(body.model);
+    const override = typeof options.respond === 'function' ? await options.respond(body, sequence) : undefined;
+    if (override?.status) {
+      response.writeHead(override.status, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({ error: { message: 'fixture provider rejected model', type: 'invalid_request_error', code: 'model_not_found' } }));
+      return;
+    }
+    const value = completion(body, sequence, emitTaskPrepare, override);
     if (value.choices?.[0]?.message?.tool_calls?.some((call) => /(?:^|_)task_prepare$/u.test(call?.function?.name ?? ''))) {
       stats.taskPrepareResponses += 1;
     }

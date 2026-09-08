@@ -2,7 +2,11 @@
 
 ![役小角(enno-oduno)](../skills/kiokuko-enno-oduno/enno-oduno.png)
 
-For build, debug, review, and devops work, Enno-Oduno keeps a run-bound loop:
+Enno-Oduno is optional per request. Choose ordinary work for bounded edits, or select
+a model configuration to enable the following loop for build, debug, review, and devops.
+See [model presets and custom agents](orchestration-models.md#custom-agents).
+
+For a request that selected Enno-Oduno:
 
 ```text
 intake → ideal → plan → confirmation → WorkUnit execution → final verification → meditation

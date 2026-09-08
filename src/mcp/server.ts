@@ -1,3 +1,6 @@
+import { executionCatalogSchema, EXECUTION_SELECTION_INSTRUCTIONS } from '../execution/catalog.js';
+import { executionSelectSchema, executionView, ExecutionUnavailableError } from '../execution/store.js';
+import { selectOpenCodeTaskExecution } from '../akinator/opencode-task.js';
 import { resolveTraceStoreLocation } from '../trace/store-location.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import * as z from 'zod/v4';
@@ -370,6 +373,7 @@ const profileHints = z.object({
   constraints: z.string().trim().max(4000).nullable().optional(),
 }).strict();
 const taskPrepareInputSchema = z.object({
+  executionCatalog: executionCatalogSchema.optional().describe('Current OpenCode plugin supplied role/model availability; do not invent candidates'),
   soulRead: z.boolean().optional().describe('Advisory self-attestation that the client model read the local kiokuko-soul Skill. Missing or false never blocks task preparation.'),
   requestId: requestId.describe('Opaque identity for this logical user request. Use a new value for every new request and reuse it only for an exact retry; the raw value is not stored'),
   task: z.string().trim().min(1).max(64 * 1024).describe('The user task, without hidden reasoning or full transcripts'),
@@ -451,10 +455,11 @@ export function createKiokukoMcpServer(dependencies: McpServerDependencies = {})
     description: `${SOUL_ROUTING_ENTRY_CONTRACT} Run the Akinator intake once for one logical user request. requestId is required: create a new bounded opaque value for each logical request, even when task text repeats, and reuse it only for an exact transport retry. Reusing an ID with changed bound input is a conflict. Set soulRead=true only when the local kiokuko-soul Skill was actually read; omit or set false when unavailable. Supply capabilities as Array<{kind:'skill'|'mcp_tool';name:string;description?:string}>. The operation immediately returns lexical or cached context, detects technology gaps, recommends local or cached Skills, and queues vector reranking and external reference discovery without waiting. ${ENNO_ORCHESTRATION_ENTRY_CONTRACT} Inspect nextAction, continuationPolicy, enrichment, warnings, memoryPolicy, and ennoOduno. Missing Skills or model tiers degrade quality without withholding useful advisory memory or stopping coding. Verify every recalled claim against current repository evidence; use memory-reasoning when available and perform equivalent checks directly when it is not. ${EXECUTION_PATH_CONTRACT} If Kiokuko is unavailable, continue from repository evidence and report the missing enrichment. Set KIOKUKO_SKILL_DISCOVERY=off to disable external discovery; it never installs or executes a skill. Reuse a successful result instead of calling task_prepare again.`,
     inputSchema: taskPrepareInputSchema,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
-  }, async ({ requestId: logicalRequestId, task, cwd, profileHints: hints, capabilities, client, maxContextChars }, extra) => withMcpToolDeadline('task_prepare', deadlinePolicy, extra.signal, async () => withPublicToolError(() => withDatabase(dependencies, async (database, embeddingRuntime) => {
+  }, async ({ requestId: logicalRequestId, task, cwd, profileHints: hints, capabilities, client, maxContextChars, executionCatalog }, extra) => withMcpToolDeadline('task_prepare', deadlinePolicy, extra.signal, async () => withPublicToolError(() => withDatabase(dependencies, async (database, embeddingRuntime) => {
     const resolvedClient = resolveTaskPrepareClient(client, server.server.getClientVersion());
     const prepared = await prepareOpenCodeTask(database, {
       requestId: logicalRequestId,
+      ...(executionCatalog === undefined ? {} : { executionCatalog }),
       task,
       cwd: cwd ?? dependencies.cwd?.() ?? process.cwd(),
       ...(hints === undefined ? {} : {
@@ -473,6 +478,23 @@ export function createKiokukoMcpServer(dependencies: McpServerDependencies = {})
     });
     dependencies.databaseOwner?.registerTraceLocation?.(await resolveTraceStoreLocation(prepared.executionContext.canonicalCwd, prepared.executionContext.repositoryRoot));
     return toolResult(prepared);
+  }))));
+
+  server.registerTool('task_execution_select', {
+    title: 'Select ordinary work or Enno-Oduno and its role agents',
+    description: EXECUTION_SELECTION_INSTRUCTIONS,
+    inputSchema: executionSelectSchema,
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  }, async (input, extra) => withMcpToolDeadline('task_execution_select', deadlinePolicy, extra.signal, () => withPublicToolError(() => withDatabase(dependencies, async database => {
+    try {
+      return toolResult({ selectionAccepted: true, ...selectOpenCodeTaskExecution(database, {
+        ...input, cwd: input.cwd ?? dependencies.cwd?.() ?? process.cwd(),
+      }) });
+    } catch (error) {
+      if (!(error instanceof ExecutionUnavailableError)) throw error;
+      return toolResult({ selectionAccepted: false, nextAction: 'select_execution', reason: error.reason, role: error.role,
+        execution: executionView(database, input.runId, error.catalog), instructions: EXECUTION_SELECTION_INSTRUCTIONS });
+    }
   }))));
 
   server.registerTool('task_answer', {
@@ -494,7 +516,7 @@ export function createKiokukoMcpServer(dependencies: McpServerDependencies = {})
 
   server.registerTool('task_context_read', {
     title: 'Read non-blocking Kiokuko context enrichment',
-    description: 'Read immutable context revisions produced after task_prepare. This is read-only, cursor-based, and never waits for embedding, Skill discovery, or meditation work.',
+    description: 'Read immutable context revisions produced after task_prepare. Also restore the saved execution choice and role routing after compaction or restart. This is read-only, cursor-based, and never waits for embedding, Skill discovery, or meditation work.',
     inputSchema: taskContextReadInputSchema,
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   }, async ({ runId: contextRunId, afterContextRevision, limit }, extra) => withMcpToolDeadline(
@@ -503,6 +525,7 @@ export function createKiokukoMcpServer(dependencies: McpServerDependencies = {})
     extra.signal,
     () => withPublicToolError(() => withDatabase(dependencies, async (database) => toolResult({
       runId: contextRunId,
+      execution: executionView(database, contextRunId),
       revisions: readTaskContextRevisions(database, {
         runId: contextRunId,
         afterContextRevision,
@@ -513,7 +536,7 @@ export function createKiokukoMcpServer(dependencies: McpServerDependencies = {})
 
   server.registerTool('enno_plan_submit', {
     title: 'Submit an Enno-Oduno WorkPlan',
-    description: `Zenki submits one revision-bound, self-contained WorkPlan. ${ENNO_TOOL_IDENTITY_CONTRACT} The plan is published atomically under Kiokuko's data directory and never overwrites a repository PLAN.md. Missing Skills, capability-catalog drift, inferred fields, model fallback, and ordinary verifier limitations are warnings with qualityState=degraded, not stop conditions. Only an unapproved irreversible operation requires user confirmation. Each WorkUnit declares resource claims, isolation, an input-manifest digest, output contract, focused verifier, and sufficient context for an economical worker.`,
+    description: `Zenki submits one revision-bound, self-contained WorkPlan. ${ENNO_TOOL_IDENTITY_CONTRACT} The plan is published atomically under Kiokuko's data directory and never overwrites a repository PLAN.md. Missing Skills, capability-catalog drift, inferred fields, and ordinary verifier limitations are warnings with qualityState=degraded, not stop conditions. Only an unapproved irreversible operation requires user confirmation. Each WorkUnit declares resource claims, isolation, an input-manifest digest, output contract, focused verifier, and sufficient context for an economical worker.`,
     inputSchema: planSubmissionSchema.shape,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   }, async (input, extra) => withMcpToolDeadline('enno_plan_submit', deadlinePolicy, extra.signal, () => withPublicPlanStartRecovery(() => withDatabase(dependencies, async (database) => toolResult(await submitEnnoPlan(database, input, {

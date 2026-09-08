@@ -4,7 +4,7 @@ import { access, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { prepareOpenCodeTask } from '../../src/akinator/opencode-task.js';
+import { prepareSelectedTask as prepareOpenCodeTask } from '../fixtures/execution-selection.js';
 import { initializeDatabase } from '../../src/commands/init.js';
 import { runDoctor } from '../../src/commands/doctor.js';
 import { readTaskContextRevisions, recordTaskContextRevision } from '../../src/context/revisions.js';

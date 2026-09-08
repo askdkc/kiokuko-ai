@@ -1,4 +1,8 @@
 import path from 'node:path';
+import { parse } from 'jsonc-parser';
+import { object, orchestrationOptionsSchema } from '../execution/catalog.js';
+
+
 import { mkdir, rmdir } from 'node:fs/promises';
 import { createInterface } from 'node:readline/promises';
 import { stdin, stdout } from 'node:process';
@@ -19,6 +23,7 @@ import {
 import {
   getGlobalDatabasePath,
   getOpenCodeConfigDirectory,
+  getOpenCodeConfigFileOverride,
   getOpenCodeInstructionsPath,
   getOpenCodeSkillsDirectory,
   type PathEnvironment,
@@ -50,7 +55,13 @@ import {
 } from '../repository/binding.js';
 import { withManagedFileLock } from '../managed-files/coordinator.js';
 import type { ManagedMutationGuard } from '../managed-files/types.js';
-export type EnnoSetupMode = 'on' | 'off';
+function readSetupExecutionMode(content: string | undefined): EnnoSetupMode {
+  const plugins = object(parse(content ?? '{}')).plugin as unknown[];
+  const entry = plugins.find(value => Array.isArray(value) && String(value[0]).startsWith('kiokuko-ai@')) as unknown[] | undefined;
+  return orchestrationOptionsSchema.parse(object(entry?.[1]).orchestration ?? {}).mode;
+}
+
+export type EnnoSetupMode = 'ask' | 'on' | 'off';
 type SetupAction = 'created' | 'updated' | 'unchanged' | 'deleted';
 
 interface PlannedDirectory {
@@ -114,7 +125,7 @@ export interface SetupResult {
   files: Array<Pick<PlannedFile, 'path' | 'action' | 'purpose' | 'client'>>;
   projectAgentFiles: ProjectAgentRefreshResult[];
   standardSkills: boolean;
-  ennoOduno: EnnoSetupMode | 'new-installs-only';
+  ennoOduno: EnnoSetupMode;
   dryRun: boolean;
   nextStep: string;
 }
@@ -132,8 +143,8 @@ export function parseSetupSkillDiscoveryMode(value: string): SkillDiscoveryMode 
 }
 
 export function parseEnnoSetupMode(value: string): EnnoSetupMode {
-  if (value !== 'on' && value !== 'off') {
-    throw new KiokukoError('VALIDATION_ERROR', 'enno-oduno must be on or off');
+  if (value !== 'ask' && value !== 'on' && value !== 'off') {
+    throw new KiokukoError('VALIDATION_ERROR', 'enno-oduno must be ask, on or off');
   }
   return value;
 }
@@ -462,13 +473,17 @@ async function planFile(
 async function openCodeConfigPath(
   planning: SetupPlanningContext,
   options: PathEnvironment,
-): Promise<{ path: string; mustRemainAbsent: readonly string[] }> {
+): Promise<{ path: string; mustRemainAbsent: readonly string[]; containmentRoot: string }> {
+  const override = getOpenCodeConfigFileOverride(options);
+  if (override !== undefined) return { path: override, mustRemainAbsent: [], containmentRoot: (options.platform === 'win32' ? path.win32 : path.posix).dirname(override) };
   const directory = getOpenCodeConfigDirectory(options);
   const jsonc = setupPathJoin(options, directory, 'opencode.jsonc');
   if ((await readPlannedRegularFile(planning, jsonc)).snapshot !== undefined) {
-    return { path: jsonc, mustRemainAbsent: [] };
+    return { path: jsonc, mustRemainAbsent: [], containmentRoot: directory };
   }
-  return { path: setupPathJoin(options, directory, 'opencode.json'), mustRemainAbsent: [jsonc] };
+  const json = setupPathJoin(options, directory, 'opencode.json');
+  if ((await readPlannedRegularFile(planning, json)).snapshot !== undefined) return { path: json, mustRemainAbsent: [jsonc], containmentRoot: directory };
+  return { path: jsonc, mustRemainAbsent: [json], containmentRoot: directory };
 }
 
 interface AppliedFileMutation {
@@ -649,8 +664,8 @@ async function setupOpenCodeUnlocked(
   if (options.skillDiscoveryMode !== undefined && !isSkillDiscoveryMode(options.skillDiscoveryMode)) {
     throw new KiokukoError('VALIDATION_ERROR', 'skill discovery must be off, official, or community');
   }
-  if (options.ennoOduno !== undefined && options.ennoOduno !== 'on' && options.ennoOduno !== 'off') {
-    throw new KiokukoError('VALIDATION_ERROR', 'ennoOduno must be on or off');
+  if (options.ennoOduno !== undefined && options.ennoOduno !== 'ask' && options.ennoOduno !== 'on' && options.ennoOduno !== 'off') {
+    throw new KiokukoError('VALIDATION_ERROR', 'ennoOduno must be ask, on or off');
   }
   const replaceConflictingOpenCodeMcp = options.replaceConflictingOpenCodeMcp === true;
   const command = options.command ?? 'kiokuko-ai';
@@ -680,11 +695,13 @@ async function setupOpenCodeUnlocked(
       skillDiscoveryMode,
       {
         replaceConflictingIdentity: replaceConflictingOpenCodeMcp,
+        executionTemplates: true,
+        ...(options.ennoOduno === undefined ? {} : { ennoOduno: options.ennoOduno }),
         ...(runtime === undefined ? {} : { runtime }),
       },
     ),
     selectedConfig.mustRemainAbsent,
-    getOpenCodeConfigDirectory(pathEnvironment),
+    selectedConfig.containmentRoot,
   );
   files.push(mcpFile);
   files.push(await planFile(planning, getOpenCodeInstructionsPath(pathEnvironment), 'instructions', (existing) => renderGlobalInstructions(existing ?? ''), [], getOpenCodeConfigDirectory(pathEnvironment)));
@@ -720,7 +737,7 @@ async function setupOpenCodeUnlocked(
       .map(({ path: filePath, action, purpose, client }) => ({ path: filePath, action, purpose, client })),
     projectAgentFiles: [],
     standardSkills,
-    ennoOduno: options.ennoOduno ?? 'new-installs-only',
+    ennoOduno: options.ennoOduno ?? readSetupExecutionMode(mcpFile.content),
     dryRun: options.dryRun ?? false,
     nextStep: setupNextStep(standardSkills),
   };

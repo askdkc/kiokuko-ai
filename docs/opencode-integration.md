@@ -11,10 +11,11 @@ kiokuko-ai setup
 Setup uses the first available OpenCode config file:
 
 - `opencode.jsonc` when it already exists;
-- otherwise `opencode.json`.
+- otherwise an existing `opencode.json`;
+- otherwise create `opencode.jsonc`.
 
 It preserves unrelated keys and comments, adds `kiokuko-ai` to the `plugin`
-array, and manages the `mcp.kiokuko` entry:
+array with runtime options and fixed-model role templates (see [custom orchestration models](orchestration-models.md#custom-agents)), and manages the `mcp.kiokuko` entry:
 
 ```jsonc
 {

@@ -7,6 +7,7 @@ import {
   getDatabaseLockPath,
   getGlobalDatabasePath,
   getOpenCodeConfigDirectory,
+  getOpenCodeConfigFileOverride,
   getOpenCodeInstructionsPath,
   getOpenCodeSkillsDirectory,
   getRuntimeDescriptorPath,
@@ -252,4 +253,15 @@ test('keeps OpenCode XDG fallback paths unchanged on Linux and macOS', () => {
     getOpenCodeConfigDirectory({ platform: 'darwin', env: { HOME: '/Users/test' } }),
     '/Users/test/.config/opencode',
   );
+});
+
+
+test('OpenCode explicit configuration directory and file overrides are bounded absolute paths', () => {
+  const options = { platform: 'linux' as const, env: { OPENCODE_CONFIG_DIR: '/tmp/custom-opencode', OPENCODE_CONFIG: '/tmp/config/custom.jsonc' } };
+  assert.equal(getOpenCodeConfigDirectory(options), '/tmp/custom-opencode');
+  assert.equal(getOpenCodeConfigFileOverride(options), '/tmp/config/custom.jsonc');
+  for (const value of ['', '/', 'relative', '/tmp/invalid\npath']) {
+    assert.throws(() => getOpenCodeConfigDirectory({ platform: 'linux', env: { OPENCODE_CONFIG_DIR: value } }), /absolute path/u);
+  }
+  assert.throws(() => getOpenCodeConfigFileOverride({ env: { OPENCODE_CONFIG: '/tmp/config.txt' } }), /JSON/u);
 });

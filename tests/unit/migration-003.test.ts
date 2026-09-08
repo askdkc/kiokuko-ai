@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { CURRENT_MIGRATION_VERSIONS, CURRENT_SCHEMA_VERSION } from '../fixtures/current-migrations.js';
 import { cp, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -40,9 +41,9 @@ test('trace migrations apply on a fresh database with current trace tables', asy
   const database = openConnection(':memory:');
   try {
     const first = migrateDatabase(database);
-    assert.deepEqual(first.applied, [1, 2, 3, 4]);
-    assert.equal(first.currentVersion, 4);
-    assert.equal(database.prepare('PRAGMA user_version').get<{ user_version: number }>()?.user_version, 4);
+    assert.deepEqual(first.applied, CURRENT_MIGRATION_VERSIONS);
+    assert.equal(first.currentVersion, CURRENT_SCHEMA_VERSION);
+    assert.equal(database.prepare('PRAGMA user_version').get<{ user_version: number }>()?.user_version, CURRENT_SCHEMA_VERSION);
     assert.equal(database.prepare("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'orcareplay_trace_cursors'").get()?.['1'], 1);
     assert.equal(database.prepare("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'orcareplay_trace_context'").get()?.['1'], 1);
     assert.equal(database.prepare("SELECT 1 FROM sqlite_schema WHERE type = 'index' AND name = 'idx_orchestration_jobs_ready'").get()?.['1'], 1);
@@ -146,5 +147,26 @@ test('migration 003 keeps job kind deduplication and cascade behavior', async ()
 
 test('migration 003 checksums remain file-based and the migration list is contiguous', async () => {
   const files = (await readdir(migrationsDirectory)).filter((name) => name.endsWith('.sql')).sort();
-  assert.deepEqual(files, ['001_initial.sql', '002_non_blocking_orchestration.sql', '003_orcareplay_trace.sql', '004_orcareplay_pipeline.sql']);
+  assert.deepEqual(files, ['001_initial.sql', '002_non_blocking_orchestration.sql', '003_orcareplay_trace.sql', '004_orcareplay_pipeline.sql', '005_execution_selection.sql']);
+});
+
+test('execution migration marks existing runs legacy and never opts them into the new selection protocol', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'kiokuko-migration-execution-'));
+  const directory = path.join(root, 'migrations');
+  const database = openConnection(':memory:');
+  try {
+    for (const file of ['001_initial.sql', '002_non_blocking_orchestration.sql', '003_orcareplay_trace.sql', '004_orcareplay_pipeline.sql']) {
+      await cp(path.join(migrationsDirectory, file), path.join(directory, file));
+    }
+    migrateDatabase(database, directory);
+    database.prepare(`INSERT INTO ledger_runs(run_id,workspace,client_kind,protocol_version,capture_profile,coverage_json,status,metadata_json,started_at,created_at,updated_at)
+      VALUES ('old-run','project:fixture','opencode','1','minimal','{}','active','{}',?,?,?)`).run(NOW,NOW,NOW);
+    await cp(path.join(migrationsDirectory, '005_execution_selection.sql'), path.join(directory, '005_execution_selection.sql'));
+    assert.deepEqual(migrateDatabase(database, directory).applied, [5]);
+    assert.equal(database.prepare("SELECT choice FROM task_execution_selections WHERE run_id = 'old-run'").get()?.choice, 'legacy');
+    const { initializeExecution, executionView } = await import('../../src/execution/store.js');
+    initializeExecution(database, 'old-run', { mode: 'off', candidates: [] });
+    assert.equal(executionView(database, 'old-run'), null);
+    assert.equal(database.prepare("SELECT status FROM ledger_runs WHERE run_id = 'old-run'").get()?.status, 'active');
+  } finally { database.close(); await rm(root, { recursive: true, force: true }); }
 });

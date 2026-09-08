@@ -52,7 +52,8 @@
     "sampledb:generate": "node --import tsx tests/fixtures/sample-database.ts tests/sampledb/kiokuko-ai.sqlite",
     "test:sampledb": "npm run build && node --import tsx tests/ci/verify-sample-database.ts",
     "pack:check": "npm pack --dry-run",
-    "prepublishOnly": "npm run typecheck && npm test && npm run test:evaluation && npm run pack:check"
+    "prepublishOnly": "npm run typecheck && npm test && npm run test:evaluation && npm run pack:check",
+    "test:e2e:opencode:execution": "npm run build && node scripts/run-opencode-execution-e2e.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",

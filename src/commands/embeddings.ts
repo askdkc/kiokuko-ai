@@ -389,7 +389,7 @@ export function registerEmbeddingsCommands(cli: Command, dependencies: Embedding
     .option('--dry-run', 'Plan setup without downloading or mutating anything')
     .option('--no-standard-skills', 'Skip installing bundled Kiokuko standard skills')
     .option('--skill-discovery <mode>', 'External Skill discovery: off,official,community')
-    .option('--enno-oduno <mode>', 'Enno-Oduno agent loop: on,off')
+    .option('--enno-oduno <mode>', 'Enno-Oduno per-request selection: ask,on,off')
     .option('--offline', 'Use only an already verified local installation')
     .option('--replace', 'Replace a different active embedding profile')
     .option('--json', 'Emit one JSON response')

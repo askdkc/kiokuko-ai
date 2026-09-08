@@ -75,3 +75,64 @@ MCP toolの呼び出しはclientとモデルが決めるため、モデルが毎
 
 実装者向け資料は[architecture](docs/architecture.md)、[database](docs/database.md)、[execution ledger](docs/execution-ledger.md)、
 [OpenCode integration](docs/opencode-integration.md)を参照してください。
+
+## オーケストレーションのモデルを追加する
+
+`kiokuko-ai setup` と `kiokuko-ai embeddings setup` は、モデルを固定した役割別
+サブエージェントを登録します。`--enno-oduno ask|on|off` で利用方針を保存できます
+（既定は `ask`）。新しい依頼ごとに通常実行／役小角(enno-oduno)を選び、役小角では
+おすすめ構成と役割ごとの変更を選びます。READMEの限定的な文面修正には通常実行を
+推奨します。`on` でもモデル構成は毎回選び、同じ依頼への追加回答では再質問しません。
+
+1. OpenCodeの `/connect` で接続先を登録し、`/models` または `opencode models` で
+   正式な `provider/model` を確認します。
+2. 有効なOpenCode設定（新規作成時は `~/.config/opencode/opencode.jsonc`）の
+   生成済み `gokiWorker` エージェントを別名でコピーし、`model` を変更します。
+   役割の指示と権限は保持してください。下の例はworkerの定義全体です。既存の
+   `agent` オブジェクトへこの項目を追加し、**`YOUR_PROVIDER/YOUR_MODEL`** を
+   確認したモデルIDに置き換えます。名前を変える場合は両方の例の
+   **`my-orchestration-worker`** を同じ名前に置き換えます。
+3. **既存のKiokuko plugin配列要素の2番目のオブジェクト**にある
+   `orchestration.customAgents.gokiWorker` へ登録名を追加します。既存オプションや
+   他の登録名を残し、設定ファイル全体やplugin一覧を置き換えないでください。
+4. OpenCodeを再起動し、新しい依頼で役小角とおすすめ構成を選び、workerを
+   `my-orchestration-worker` に変更します。setup再実行でもカスタム定義は保持されます。
+
+<!-- kiokuko-custom-worker-example -->
+```jsonc
+{
+  "agent": {
+    "my-orchestration-worker": {
+      "description": "My Kiokuko worker",
+      "mode": "subagent",
+      "model": "YOUR_PROVIDER/YOUR_MODEL",
+      "prompt": "Implement only the supplied approved WorkUnit and run its focused verification. Do not delegate or broaden scope. The parent owns the run, leases, and all Kiokuko reports. Do not call Kiokuko tools or change models. Return changed paths and verification evidence.",
+      "permission": {
+        "*": "deny",
+        "read": "allow", "glob": "allow", "grep": "allow", "list": "allow",
+        "skill": "allow", "edit": "allow", "bash": "allow",
+        "task": "deny", "kiokuko_*": "deny", "external_directory": "ask"
+      }
+    }
+  }
+}
+```
+<!-- /kiokuko-custom-worker-example -->
+
+<!-- kiokuko-custom-registration-example -->
+```jsonc
+// Merge these fields into the options object of your EXISTING Kiokuko plugin tuple:
+// "plugin": [["kiokuko-ai@<installed-version>", { ...existing options, ...fields below }]]
+{
+  "orchestration": {
+    "mode": "ask",
+    "customAgents": {
+      "gokiWorker": ["my-orchestration-worker"]
+    }
+  }
+}
+```
+<!-- /kiokuko-custom-registration-example -->
+
+[全5役割・接続先の混在・権限・候補が出ない場合の確認](docs/orchestration-models.ja.md#custom-agents)
+も参照してください。

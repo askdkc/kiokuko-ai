@@ -94,3 +94,35 @@ test('compaction state removes terminal runs and never carries identity into ano
   state.appendContext('session-one', switchedContext);
   assert.deepEqual(switchedContext, []);
 });
+
+test('selection compaction retains ordinary choice and clears the former Enno loop', () => {
+  const state = new OpenCodeCompactionState();
+  state.observe('session-one', 'kiokuko_task_execution_select', activeOutput({
+    execution: { runId: 'run-one', revision: 1, choice: 'enno', mode: 'ask' },
+  }));
+  const active: string[] = [];
+  state.appendContext('session-one', active);
+  assert.equal(active.length, 2);
+  state.observe('session-one', 'kiokuko_task_execution_select', JSON.stringify({
+    run: { runId: 'run-one' }, execution: { runId: 'run-one', revision: 2, choice: 'ordinary', mode: 'ask' }, ennoOduno: { applicable: false },
+  }));
+  const ordinary: string[] = [];
+  state.appendContext('session-one', ordinary);
+  assert.equal(ordinary.length, 1);
+  assert.match(ordinary[0]!, /"choice":"ordinary"/u);
+  assert.match(ordinary[0]!, /never repeat task_prepare/u);
+  assert.equal(state.boundary('session-one'), null);
+});
+
+test('compaction observes raw native MCP results and ignores absent or oversized envelopes', () => {
+  const state = new OpenCodeCompactionState();
+  for (const value of [undefined, null, {}, { content: [{ type: 'text', text: 'x'.repeat(1024 * 1024) }] }]) {
+    assert.doesNotThrow(() => state.observe('session-one', 'kiokuko_task_prepare', value));
+  }
+  const envelope = { content: [{ type: 'text', text: activeOutput() }] };
+  state.observe('session-one', 'kiokuko_task_prepare', envelope);
+  const context: string[] = [];
+  state.appendContext('session-one', context);
+  assert.match(context[0]!, /"runId":"run-one"/u);
+  assert.deepEqual(envelope, { content: [{ type: 'text', text: activeOutput() }] });
+});
