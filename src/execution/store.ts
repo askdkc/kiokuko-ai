@@ -183,7 +183,12 @@ export function recordExecutionDispatch(db: SqliteDatabase, raw: z.infer<typeof 
       db.prepare("INSERT INTO task_execution_dispatches VALUES (?, ?, ?, ?, ?, 'started')").run(...key, call);
     } else {
       if (!prior || prior.call_digest !== call) throw new KiokukoError('CONFLICT', 'Execution dispatch receipt does not match');
-      db.prepare('UPDATE task_execution_dispatches SET status = ? WHERE run_id = ? AND revision = ? AND role = ? AND prompt_digest = ?').run(input.stage === 'failed' ? 'failed' : 'completed', ...key);
+      const status = input.stage === 'failed' ? 'failed' : 'completed';
+      if (prior.status !== 'started') {
+        if (prior.status !== status) throw new KiokukoError('CONFLICT', 'Execution dispatch is already terminal');
+        return { accepted: true };
+      }
+      db.prepare("UPDATE task_execution_dispatches SET status = ? WHERE run_id = ? AND revision = ? AND role = ? AND prompt_digest = ? AND status = 'started'").run(status, ...key);
     }
     return { accepted: true };
   });

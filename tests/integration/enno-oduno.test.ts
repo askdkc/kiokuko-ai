@@ -8,6 +8,7 @@ import { prepareSelectedTask as prepareOpenCodeTask } from '../fixtures/executio
 import { initializeDatabase } from '../../src/commands/init.js';
 import { useRepository } from '../../src/commands/use.js';
 import { openConnection } from '../../src/db/connection.js';
+import { migrateDatabase } from '../../src/db/migrate.js';
 import { withImmediateTransaction } from '../../src/db/transaction.js';
 import { recordTaskContextRevision } from '../../src/context/revisions.js';
 import { KiokukoError } from '../../src/errors.js';
@@ -397,6 +398,23 @@ test('the same OpenCode terminal is an exact replay and does not consume another
     assert.equal(firstClaim.continue, true);
     assert.equal(replay.continue, true);
     assert.equal(databaseCount(first.database, planned.identity.runId), 1);
+    assert.ok(firstClaim.executionLease?.leaseToken === planned.executionLease?.leaseToken,
+      'Continuation must preserve the active planning lease');
+    assert.ok(replay.executionLease?.leaseToken === firstClaim.executionLease?.leaseToken,
+      'Duplicate terminal must preserve the issued lease');
+    const reopened = openConnection(first.databasePath);
+    try {
+      const restored = decideAdapterContinuation(reopened, 'opencode', {
+        sessionId: planned.hostSessionId, terminalMessageId, cwd: first.root,
+      });
+      assert.ok(restored.executionLease?.leaseToken === firstClaim.executionLease?.leaseToken);
+      const reported = await reportEnnoWork(reopened, {
+        ...planned.identity, ...executionCredentials(firstClaim), expectedRevision: 2,
+        idempotencyKey: 'report-after-replay', workUnitId: 'repair',
+        result: { outcome: 'completed', summary: 'Original owner reports after restart and replay', mutated: false, changedPaths: [] },
+      });
+      assert.equal(reported.ennoOduno.status, 'enno_verifying');
+    } finally { reopened.close(); }
 
     const parallelRun = await plannedExecution(second.database, second.root, 'terminal-concurrent', verifier(second.root, 'pass'), {
       maxAttempts: 3,
@@ -419,6 +437,48 @@ test('the same OpenCode terminal is an exact replay and does not consume another
     first.database.close();
     second.database.close();
   }
+});
+
+test('v5 migration preserves an active lease and recovers only its exact receipt credential', async () => {
+  const { root, database } = await fixture();
+  try {
+    const planned = await plannedExecution(database, root, 'legacy-lease', verifier(root, 'pass'));
+    // Recreate the v5 representation: only the credential hash was persisted.
+    database.exec(`ALTER TABLE enno_execution_leases DROP COLUMN lease_token;
+      DELETE FROM schema_migrations WHERE version = 6; PRAGMA user_version = 5;`);
+    const before = database.prepare('SELECT * FROM enno_execution_leases WHERE run_id = ?').get(planned.identity.runId)!;
+    assert.deepEqual(migrateDatabase(database).applied, [6]);
+    const after = database.prepare('SELECT * FROM enno_execution_leases WHERE run_id = ?').get(planned.identity.runId)!;
+    assert.deepEqual({ ...after }, { ...before, lease_token: null });
+    const continued = decideAdapterContinuation(database, 'opencode', { sessionId: planned.hostSessionId, cwd: root });
+    assert.ok(continued.executionLease?.leaseToken === planned.executionLease?.leaseToken);
+    assert.deepEqual(migrateDatabase(database).applied, []);
+    const reported = await reportEnnoWork(database, {
+      ...planned.identity, ...executionCredentials(planned), expectedRevision: 2,
+      idempotencyKey: 'legacy-report', workUnitId: 'repair',
+      result: { outcome: 'completed', summary: 'Original v5 worker still owns the work', mutated: false, changedPaths: [] },
+    });
+    assert.equal(reported.ennoOduno.status, 'enno_verifying');
+  } finally { database.close(); }
+});
+
+test('an unrecoverable legacy lease never silently replaces its active holder', async () => {
+  const { root, database } = await fixture();
+  try {
+    const planned = await plannedExecution(database, root, 'missing-lease-receipt', verifier(root, 'pass'));
+    database.prepare('UPDATE enno_execution_leases SET lease_token = NULL WHERE run_id = ?').run(planned.identity.runId);
+    database.prepare('DELETE FROM enno_operation_receipts WHERE run_id = ?').run(planned.identity.runId);
+    database.prepare('DELETE FROM enno_work_claim_receipts WHERE run_id = ?').run(planned.identity.runId);
+    assert.throws(() => decideAdapterContinuation(database, 'opencode', {
+      sessionId: planned.hostSessionId, cwd: root,
+    }), /not recoverable/u);
+    const reported = await reportEnnoWork(database, {
+      ...planned.identity, ...executionCredentials(planned), expectedRevision: 2,
+      idempotencyKey: 'retained-legacy-report', workUnitId: 'repair',
+      result: { outcome: 'completed', summary: 'The existing worker can still report', mutated: false, changedPaths: [] },
+    });
+    assert.equal(reported.ennoOduno.status, 'enno_verifying');
+  } finally { database.close(); }
 });
 
 test('a receipt reused after the Enno state changes fails closed', async () => {

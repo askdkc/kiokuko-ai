@@ -153,7 +153,8 @@ test('Zenki plan is published only under the Kiokuko data directory', async () =
   }
 });
 
-test('independent read-only WorkUnits receive distinct parallel leases', async () => {
+for (const [isolation, overlapping] of [['read_only', false], ['isolated_worktree', false], ['isolated_worktree', true]] as const) {
+test(`independent ${isolation} WorkUnits keep their leases through ${overlapping ? 'overlapping' : 'sequential'} sibling completion`, async () => {
   const { root, database } = await fixture();
   try {
     const prepared = await prepare(database, root, 'parallel-work');
@@ -162,7 +163,7 @@ test('independent read-only WorkUnits receive distinct parallel leases', async (
     const unit = (id: string, scope: string) => ({
       id, objective: `Inspect ${scope}`, scope: [scope], dependencies: [], routes: ['docs'] as const,
       skillNames: [], expertRefs: [], acceptanceCriteria: [`${scope} inspected`], focusedVerifiers: [],
-      resourceClaims: [{ key: scope, access: 'read' as const }], isolationPreference: 'read_only' as const,
+      resourceClaims: [{ key: scope, access: isolation === 'read_only' ? 'read' as const : 'write' as const }], isolationPreference: isolation,
       outputContract: 'Return one evidence summary.',
     });
     const planned = await submitEnnoPlan(database, {
@@ -182,10 +183,41 @@ test('independent read-only WorkUnits receive distinct parallel leases', async (
     assert.equal(new Set(planned.executionLeases?.map((lease) => lease.workUnitId)).size, 2);
     assert.equal(new Set(planned.executionLeases?.map((lease) => lease.leaseToken)).size, 2);
     assert.ok(planned.executionLeases?.every((lease) => lease.attempt === 1 && /^[0-9a-f]{64}$/u.test(lease.inputManifestDigest)));
+    const leases = planned.executionLeases!;
+    const report = (lease: typeof leases[number]) => reportEnnoWork(database, {
+        ...identity, expectedRevision: 2, idempotencyKey: `report-${lease.workUnitId}`,
+        workUnitId: lease.workUnitId, leaseToken: lease.leaseToken, routeEpoch: lease.routeEpoch,
+        attempt: lease.attempt, inputManifestDigest: lease.inputManifestDigest,
+        result: { outcome: 'completed', summary: 'Independent work completed',
+          mutated: isolation === 'isolated_worktree', changedPaths: isolation === 'isolated_worktree' ? [lease.workUnitId === 'readme' ? 'README.md' : 'docs/fixture.md'] : [] },
+      });
+    const statuses: string[] = [];
+    if (overlapping) {
+      // Reporting is serialized across the run. A concurrent report must be
+      // retryable with its original lease after the other report commits.
+      const settled = await Promise.allSettled(leases.map(report));
+      assert.equal(settled.filter(result => result.status === 'rejected').length, 1);
+      for (const [index, result] of settled.entries()) {
+        if (result.status === 'fulfilled') statuses.push(result.value.ennoOduno.status);
+        else {
+          assert.match(String(result.reason), /operation is already in progress/u);
+          statuses.push((await report(leases[index]!)).ennoOduno.status);
+        }
+      }
+    } else {
+      for (const lease of leases) statuses.push((await report(lease)).ennoOduno.status);
+    }
+    assert.deepEqual(statuses.sort(), ['enno_verifying', 'goki_executing']);
+    const revision = database.prepare('SELECT mutation_revision AS value FROM enno_contracts WHERE run_id = ?')
+      .get<{ value: number }>(identity.runId)?.value;
+    assert.equal(revision, isolation === 'read_only' ? 0 : 2);
+
   } finally {
     database.close();
   }
 });
+
+}
 
 test('conflicting writes serialize and an expired WorkUnit lease fences the stale result', async () => {
   const { root, database } = await fixture();

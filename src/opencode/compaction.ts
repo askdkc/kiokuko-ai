@@ -12,6 +12,8 @@ const ACTIVE_ENNO_STATUSES = new Set([
 ]);
 
 const ENNO_STATE_TOOL = /(?:^|_)(?:task_prepare|task_answer|task_execution_select|enno_[a-z_]+)$/u;
+const PHASE_ORDER = ['intake', 'oduno_ideal', 'zenki_planning', 'needs_confirmation',
+  'goki_executing', 'enno_verifying', 'oduno_meditation'];
 
 interface EnnoCompactionRecord {
   runId: string;
@@ -94,7 +96,8 @@ function nextRecord(
   const observedContextRevision = nonNegativeInteger(value.contextRevision);
   const contextRevision = observedContextRevision === undefined
     ? sameRun ? previous?.contextRevision ?? null : null
-    : observedContextRevision;
+    : sameRun && typeof previous?.contextRevision === 'number' && typeof observedContextRevision === 'number'
+      ? Math.max(previous.contextRevision, observedContextRevision) : observedContextRevision;
   const routeEpoch = nonNegativeInteger(state.routeEpoch);
   if (runId === undefined || workspace === undefined || orchestrationId === undefined
     || status === undefined || nextAction === undefined
@@ -116,7 +119,9 @@ function nextRecord(
     executionLease: status === 'goki_executing'
       ? Object.hasOwn(value, 'executionLease')
         ? record(value.executionLease) ?? null
-        : sameRun ? previous?.executionLease ?? null : null
+        : sameRun && contractRevision === previous?.contractRevision && routeEpoch === previous?.routeEpoch
+          && record(directive.workUnit)?.id === record(previous?.directive.workUnit)?.id
+          ? previous?.executionLease ?? null : null
       : null,
   };
 }
@@ -135,12 +140,45 @@ function compactionContext(value: EnnoCompactionRecord): string {
 export class OpenCodeCompactionState {
   private readonly choices = new Map<string, Record<string, unknown>>();
   private readonly entries = new Map<string, EnnoCompactionRecord>();
+  private readonly retiredRuns = new Map<string, Set<string>>();
+
+  private retire(sessionId: string, runId: string): void {
+    const retired = this.retiredRuns.get(sessionId) ?? new Set<string>();
+    retired.add(runId);
+    if (retired.size > 32) retired.delete(retired.values().next().value!);
+    this.retiredRuns.delete(sessionId);
+    this.retiredRuns.set(sessionId, retired);
+    if (this.retiredRuns.size > MAX_TRACKED_SESSIONS) this.retiredRuns.delete(this.retiredRuns.keys().next().value!);
+  }
 
   observe(sessionId: string, toolId: string, output: unknown): void {
     if (!ENNO_STATE_TOOL.test(toolId)) return;
     const parsed = parseToolOutput(output);
     if (parsed === undefined) return;
     const execution = record(parsed.execution);
+    const prior = this.entries.get(sessionId);
+    const parsedState = record(parsed.ennoOduno);
+    const observedRunId = boundedText(record(parsed.run)?.runId, 256)
+      ?? boundedText(record(parsedState?.directive)?.runId, 256)
+      ?? boundedText(execution?.runId, 256) ?? prior?.runId;
+    if (observedRunId && this.retiredRuns.get(sessionId)?.has(observedRunId)) return;
+    const choice = this.choices.get(sessionId);
+    if (execution?.runId === choice?.runId && typeof execution?.revision === 'number' && typeof choice?.revision === 'number'
+      && (execution.revision < choice.revision
+        || (execution.revision === choice.revision && execution.choice !== choice.choice))) return;
+    if (prior !== undefined && prior.runId === observedRunId && parsedState) {
+      const revision = nonNegativeInteger(parsedState.contractRevision);
+      const epoch = nonNegativeInteger(parsedState.routeEpoch);
+      if ((typeof revision === 'number' && typeof prior.contractRevision === 'number' && revision < prior.contractRevision)
+        || (typeof epoch === 'number' && typeof prior.routeEpoch === 'number' && epoch < prior.routeEpoch)) return;
+      if (revision === prior.contractRevision && typeof parsedState.status === 'string'
+        && ACTIVE_ENNO_STATUSES.has(parsedState.status)
+        && PHASE_ORDER.indexOf(parsedState.status) < PHASE_ORDER.indexOf(prior.status)) return;
+    }
+    if (observedRunId !== undefined) {
+      if (prior !== undefined && prior.runId !== observedRunId) this.retire(sessionId, prior.runId);
+      if (typeof choice?.runId === 'string' && choice.runId !== observedRunId) this.retire(sessionId, choice.runId);
+    }
     if (execution && typeof execution.runId === 'string' && typeof execution.revision === 'number'
       && ['pending', 'ordinary', 'enno', 'cancelled'].includes(String(execution.choice))) {
       this.choices.delete(sessionId);
@@ -149,17 +187,18 @@ export class OpenCodeCompactionState {
       if (execution.choice !== 'enno') this.entries.delete(sessionId);
     }
     let previous = this.entries.get(sessionId);
-    const parsedState = record(parsed.ennoOduno);
-    const observedRunId = boundedText(record(parsed.run)?.runId, 256)
-      ?? boundedText(record(parsedState?.directive)?.runId, 256);
     if (previous !== undefined && observedRunId !== undefined && observedRunId !== previous.runId) {
       this.entries.delete(sessionId);
       previous = undefined;
     }
+    if (choice !== undefined && choice.runId === observedRunId && choice.choice !== 'enno' && execution === undefined) return;
     const next = nextRecord(parsed, previous);
     if (next === undefined) {
       const status = boundedText(parsedState?.status, 100);
-      if (status !== undefined && !ACTIVE_ENNO_STATUSES.has(status)) this.entries.delete(sessionId);
+      if (status !== undefined && !ACTIVE_ENNO_STATUSES.has(status)) {
+        if (observedRunId !== undefined) this.retire(sessionId, observedRunId);
+        this.entries.delete(sessionId);
+      }
       return;
     }
     if (!this.entries.has(sessionId) && this.entries.size >= MAX_TRACKED_SESSIONS) {

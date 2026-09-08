@@ -126,3 +126,71 @@ test('compaction observes raw native MCP results and ignores absent or oversized
   assert.match(context[0]!, /"runId":"run-one"/u);
   assert.deepEqual(envelope, { content: [{ type: 'text', text: activeOutput() }] });
 });
+
+test('late compaction observations cannot roll back revision or revive completed and ordinary runs', () => {
+  const state = new OpenCodeCompactionState();
+  state.observe('session', 'task_prepare', activeOutput());
+  const newer = JSON.parse(activeOutput());
+  newer.ennoOduno.contractRevision = 5;
+  newer.ennoOduno.routeEpoch = 4;
+  delete newer.executionLease;
+  state.observe('session', 'enno_plan_submit', JSON.stringify(newer));
+  state.observe('session', 'enno_plan_submit', activeOutput());
+  let context: string[] = [];
+  state.appendContext('session', context);
+  assert.match(context[0]!, /"contractRevision":5/u);
+  assert.doesNotMatch(context[0]!, /lease-one/u, 'A prior revision lease must not be inherited');
+  state.observe('session', 'enno_meditation_submit', JSON.stringify({
+    run: { runId: 'run-one' }, ennoOduno: { status: 'completed' },
+  }));
+  state.observe('session', 'enno_plan_submit', JSON.stringify(newer));
+  context = [];
+  state.appendContext('session', context);
+  assert.deepEqual(context, []);
+
+  const selected = new OpenCodeCompactionState();
+  selected.observe('session', 'task_execution_select', activeOutput({
+    execution: { runId: 'run-one', revision: 1, choice: 'enno', mode: 'ask' },
+  }));
+  selected.observe('session', 'task_execution_select', JSON.stringify({
+    execution: { runId: 'run-one', revision: 2, choice: 'ordinary', mode: 'ask' }, ennoOduno: { applicable: false },
+  }));
+  selected.observe('session', 'task_execution_select', activeOutput({
+    execution: { runId: 'run-one', revision: 1, choice: 'enno', mode: 'ask' },
+  }));
+  assert.equal(selected.boundary('session'), null);
+  context = [];
+  selected.appendContext('session', context);
+  assert.match(context[0]!, /"choice":"ordinary"/u);
+});
+
+test('compaction ignores late prior-phase and prior-run responses after advancing', () => {
+  const state = new OpenCodeCompactionState();
+  state.observe('session', 'task_prepare', activeOutput());
+  const reviewing = JSON.parse(activeOutput());
+  reviewing.ennoOduno.status = 'enno_verifying';
+  reviewing.ennoOduno.currentRole = 'enno-oduno';
+  reviewing.ennoOduno.nextAction = 'prepare_final_verification';
+  reviewing.ennoOduno.directive.workUnit = null;
+  delete reviewing.executionLease;
+  state.observe('session', 'enno_work_report', JSON.stringify(reviewing));
+  state.observe('session', 'enno_plan_submit', activeOutput());
+  let context: string[] = [];
+  state.appendContext('session', context);
+  assert.match(context[0]!, /"status":"enno_verifying"/u);
+  assert.doesNotMatch(context[0]!, /lease-one/u);
+
+  state.observe('session', 'task_prepare', JSON.stringify({
+    run: { runId: 'run-two' }, execution: { runId: 'run-two', revision: 0, choice: 'pending', mode: 'ask' },
+    ennoOduno: { applicable: false },
+  }));
+  state.observe('session', 'enno_plan_submit', activeOutput());
+  state.observe('session', 'enno_meditation_submit', JSON.stringify({
+    run: { runId: 'run-one' }, ennoOduno: { status: 'completed' },
+  }));
+  context = [];
+  state.appendContext('session', context);
+  assert.equal(context.length, 1);
+  assert.match(context[0]!, /"runId":"run-two"/u);
+  assert.equal(state.boundary('session'), null);
+});
