@@ -2,13 +2,60 @@ import { createHash } from 'node:crypto';
 import { chmod, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { setTimeout as delay } from 'node:timers/promises';
 import path from 'node:path';
 import process from 'node:process';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const execFileAsync = promisify(execFile);
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const manifestPath = path.join(repositoryRoot, 'scripts', 'opencode-compatibility.json');
+
+const retryableStatuses = new Set([408, 429, 500, 502, 503, 504]);
+const retryableNetworkCodes = new Set([
+  'EAI_AGAIN', 'ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT', 'EPIPE',
+  'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT', 'UND_ERR_SOCKET',
+]);
+
+/** Retry only the download; verification and installation are never replayed. */
+export async function downloadRelease(url, {
+  fetchImpl = fetch,
+  wait = delay,
+  log = message => process.stderr.write(`${message}\n`),
+  timeoutMs = 60_000,
+} = {}) {
+  const maxAttempts = 3;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    let reason;
+    let retryable;
+    let retryDelay = 1_000 * attempt;
+    try {
+      const response = await fetchImpl(url, { signal: AbortSignal.timeout(timeoutMs) });
+      if (response.ok) return Buffer.from(await response.arrayBuffer());
+      reason = `HTTP ${response.status}`;
+      retryable = retryableStatuses.has(response.status);
+      const retryAfter = response.headers.get('retry-after');
+      if (retryAfter !== null) {
+        const milliseconds = /^\d+$/u.test(retryAfter)
+          ? Number(retryAfter) * 1_000 : Date.parse(retryAfter) - Date.now();
+        if (Number.isFinite(milliseconds) && milliseconds > 60_000) retryable = false;
+        else if (Number.isFinite(milliseconds)) retryDelay = Math.max(retryDelay, milliseconds);
+      }
+      await response.body?.cancel().catch(() => undefined);
+    } catch (error) {
+      const code = error?.cause?.code ?? error?.code;
+      const timedOut = error?.name === 'TimeoutError';
+      retryable = retryableNetworkCodes.has(code) || timedOut
+        || (code === undefined && error instanceof TypeError && error.message === 'fetch failed');
+      reason = retryableNetworkCodes.has(code) ? code : timedOut ? 'timeout' : 'network error';
+    }
+    if (!retryable || attempt === maxAttempts) {
+      throw new Error(`OpenCode release download failed (${reason}; attempt ${attempt}/${maxAttempts})`);
+    }
+    log(`OpenCode release download attempt ${attempt}/${maxAttempts} failed (${reason}); retrying in ${retryDelay}ms`);
+    await wait(retryDelay);
+  }
+}
 
 function argument(name) {
   const index = process.argv.indexOf(name);
@@ -60,9 +107,7 @@ async function main() {
   const asset = definition.versions?.[version];
   if (asset === undefined) throw new Error('version is not pinned for this platform');
   const url = `https://github.com/${manifest.releaseRepository}/releases/download/v${version}/${definition.archive}`;
-  const response = await fetch(url);
-  if (!response.ok) throw new Error('OpenCode release download failed');
-  const bytes = Buffer.from(await response.arrayBuffer());
+  const bytes = await downloadRelease(url);
   const digest = createHash('sha512').update(bytes).digest('hex');
   if (digest !== asset.sha512) throw new Error('OpenCode release checksum mismatch');
   const archive = path.join(path.dirname(output), `opencode-${version}-${definition.archive}`);
@@ -74,7 +119,7 @@ async function main() {
   process.stdout.write(`${JSON.stringify({ version, platform, sha512: digest, executable })}\n`);
 }
 
-try {
+if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) try {
   await main();
 } catch (error) {
   process.stderr.write(`${error instanceof Error ? error.message : 'OpenCode release installation failed'}\n`);
