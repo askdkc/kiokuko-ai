@@ -61,3 +61,62 @@ MCP tool 호출은 클라이언트와 모델이 결정하므로 모델이 모든
 ## 자세한 문서
 
 [영문 문서 목차](docs/README.md)에서 Getting started, Concepts, Enno-Oduno, Semantic retrieval, Security and trust와 구현자용 문서로 이동할 수 있습니다.
+
+## 오케스트레이션 모델 추가
+
+`kiokuko-ai setup`과 `kiokuko-ai embeddings setup`은 모델이 고정된 역할별 에이전트를
+등록합니다. `--enno-oduno ask|on|off`로 기본 동작을 저장하며 기본값은 `ask`입니다.
+새 요청마다 일반 실행 또는 役小角(enno-oduno)를 선택하고, 프리셋과 역할별 모델을
+선택합니다. README의 작은 문구 수정에는 일반 실행을 권장합니다. `on`에서도 모델
+구성을 선택하며 같은 요청의 후속 답변에서는 선택을 유지합니다.
+
+1. OpenCode의 `/connect`로 공급자에 연결하고 `/models` 또는 `opencode models`로
+   정확한 `provider/model`을 확인합니다.
+2. 적용 중인 OpenCode 설정(신규 생성 시 `~/.config/opencode/opencode.jsonc`)에서
+   생성된 `gokiWorker` 에이전트를 다른 이름으로 복사하고 `model`을 변경합니다.
+   역할 지침과 권한은 유지합니다. 아래 에이전트 항목을 기존 `agent` 객체에 병합합니다.
+   **`YOUR_PROVIDER/YOUR_MODEL`**을 확인한 모델ID로 바꾸고, 이름을 바꿀 경우
+   두 예제의 **`my-orchestration-worker`**를 같은 이름으로 바꿉니다.
+3. 두 번째 예제를 **기존 Kiokuko plugin 튜플의 두 번째 객체**에 병합하여
+   `orchestration.customAgents.gokiWorker`에 이름을 추가합니다. 기존 옵션과 다른
+   등록 이름을 유지하고 설정 파일 전체나 plugin 목록을 교체하지 마세요.
+4. OpenCode를 재시작하고 새 요청에서 역할소각과 프리셋을 선택한 뒤 worker를 새
+   에이전트로 변경합니다. setup을 다시 실행해도 사용자 정의는 보존됩니다.
+
+<!-- kiokuko-custom-worker-example -->
+```jsonc
+{
+  "agent": {
+    "my-orchestration-worker": {
+      "description": "My Kiokuko worker",
+      "mode": "subagent",
+      "model": "YOUR_PROVIDER/YOUR_MODEL",
+      "prompt": "Implement only the supplied approved WorkUnit and run its focused verification. Do not delegate or broaden scope. The parent owns the run, leases, and all Kiokuko reports. Do not call Kiokuko tools or change models. Return changed paths and verification evidence.",
+      "permission": {
+        "*": "deny",
+        "read": "allow", "glob": "allow", "grep": "allow", "list": "allow",
+        "skill": "allow", "edit": "allow", "bash": "allow",
+        "task": "deny", "kiokuko_*": "deny", "external_directory": "ask"
+      }
+    }
+  }
+}
+```
+<!-- /kiokuko-custom-worker-example -->
+
+<!-- kiokuko-custom-registration-example -->
+```jsonc
+// Merge these fields into the options object of your EXISTING Kiokuko plugin tuple:
+// "plugin": [["kiokuko-ai@<installed-version>", { ...existing options, ...fields below }]]
+{
+  "orchestration": {
+    "mode": "ask",
+    "customAgents": {
+      "gokiWorker": ["my-orchestration-worker"]
+    }
+  }
+}
+```
+<!-- /kiokuko-custom-registration-example -->
+
+[전체 5개 역할, 공급자 혼합, 권한 및 문제 해결](docs/orchestration-models.md#custom-agents)을 참고하세요.

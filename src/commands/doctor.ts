@@ -7,7 +7,7 @@ import { initializeDatabase } from './init.js';
 import { databaseFileIdentity, openConnection } from '../db/connection.js';
 import { KiokukoError } from '../errors.js';
 import { readRegularFile } from '../agent-file/atomic-write.js';
-import { getOpenCodeConfigDirectory, getDatabaseLockPath, getGlobalDatabasePath, getRuntimeDescriptorPath, getOpenCodeSkillsDirectory } from '../config/paths.js';
+import { getOpenCodeConfigDirectory, getOpenCodeConfigFileOverride, getDatabaseLockPath, getGlobalDatabasePath, getRuntimeDescriptorPath, getOpenCodeSkillsDirectory } from '../config/paths.js';
 import { type RepositoryLocation } from '../repository/binding.js';
 import { listRegisteredProjectLocations } from '../setup/project-agent-refresh.js';
 import { inspectProjectAgentFile, type ProjectAgentFinding } from '../setup/project-agent-health.js';
@@ -134,10 +134,13 @@ function hasColumn(database: SqliteDatabase, table: string, column: string): boo
 
 /** Resolve the OpenCode config path using setup's opencode.jsonc-before-json precedence. */
 async function openCodeConfigPath(): Promise<string> {
+  const override = getOpenCodeConfigFileOverride();
+  if (override !== undefined) return override;
   const directory = getOpenCodeConfigDirectory();
   const jsonc = path.join(directory, 'opencode.jsonc');
   if (await readRegularFile(jsonc) !== undefined) return jsonc;
-  return path.join(directory, 'opencode.json');
+  const json = path.join(directory, 'opencode.json');
+  return await readRegularFile(json) !== undefined ? json : jsonc;
 }
 
 interface OpenCodeChecks {

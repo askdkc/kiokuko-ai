@@ -39,7 +39,10 @@ export function probeMcpTools(options) {
 export function callMcpTool(options, name, argumentsValue) {
   return withMcpProbe(options, name, async (client, requestOptions) => {
     const result = await client.callTool({ name, arguments: argumentsValue }, undefined, requestOptions);
-    if (result.isError === true) throw new Error('Tool returned an error');
+    if (result.isError === true) {
+      options.onToolError?.(result.content);
+      throw new Error('Tool returned an error');
+    }
     return result.structuredContent ?? result;
   });
 }

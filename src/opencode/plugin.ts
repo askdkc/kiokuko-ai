@@ -14,6 +14,7 @@ import { OpenCodeCompactionState } from './compaction.js';
 import { OpenCodePluginLifecycle } from './lifecycle.js';
 import { runKiokukoCompactionHook } from './hook-effect.js';
 import { canonicalContentHash } from '../serialization/validate.js';
+import { createExecutionHooks } from './execution.js';
 
 const MAX_PROCESSED_COMPACTIONS = 512;
 const MAX_COMPACTION_SUMMARY_CHARS = 64 * 1024;
@@ -100,6 +101,7 @@ export const KiokukoPlugin: Plugin = async ({ client, directory }, options) => {
       ? { runtimeFailure: 'version_mismatch' as const }
       : { runtime }),
   };
+  const execution = createExecutionHooks(client, directory, options, { ...compactionHookDependencies, timeoutMs: 10_000 });
   const logCompactionWarning = async (message: string, reason: string): Promise<void> => {
     try {
       await idleDependencies.log?.(message, { reason });
@@ -184,7 +186,10 @@ export const KiokukoPlugin: Plugin = async ({ client, directory }, options) => {
     if (value?.type === 'session.compacted' && typeof value.properties?.sessionID === 'string') {
       postCompaction(value.properties.sessionID);
     }
-    return lifecycle.run(() => handleEvent(input));
+    return lifecycle.run(async () => {
+      try { await execution.event!({ event: input.event as never }); } catch { await logCompactionWarning('Execution failure record unavailable', 'execution_record_failed'); }
+      await handleEvent(input);
+    });
   };
   const reconcile = () => lifecycle.reconcile(async () => {
     try {
@@ -211,9 +216,13 @@ export const KiokukoPlugin: Plugin = async ({ client, directory }, options) => {
   void reconcile().catch(reportReconcileFailure);
   return {
     event,
-    'tool.execute.after': async ({ tool, sessionID }, output) => {
+    config: execution.config!,
+    'tool.execute.before': execution['tool.execute.before']!,
+    'tool.execute.after': async (input, output) => {
       if (!lifecycle.isActive()) return;
-      compactionState.observe(sessionID, tool, output.output);
+      const { tool, sessionID } = input;
+      await execution['tool.execute.after']!(input, output);
+      compactionState.observe(sessionID, tool, output);
     },
     'experimental.session.compacting': async ({ sessionID }, output) => {
       if (!lifecycle.isActive()) return;

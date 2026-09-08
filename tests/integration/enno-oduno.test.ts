@@ -4,7 +4,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { prepareOpenCodeTask } from '../../src/akinator/opencode-task.js';
+import { prepareSelectedTask as prepareOpenCodeTask } from '../fixtures/execution-selection.js';
 import { initializeDatabase } from '../../src/commands/init.js';
 import { useRepository } from '../../src/commands/use.js';
 import { openConnection } from '../../src/db/connection.js';

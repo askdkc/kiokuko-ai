@@ -177,6 +177,13 @@ function confirmationFor(snapshot: EnnoRunSnapshot): UserFacingConfirmation {
 }
 
 export function directiveForRun(snapshot: EnnoRunSnapshot): RoleDirective | null {
+  const directive = baseDirectiveForRun(snapshot);
+  if (directive && snapshot.executionRouting && (['oduno_ideal', 'zenki_planning', 'goki_executing', 'oduno_meditation'].includes(snapshot.status) || (snapshot.status === 'enno_verifying' && snapshot.finalEvidenceReady))) return { ...directive, executionRouting: snapshot.executionRouting,
+    objective: `${directive.objective} Delegate this phase through standard task with the exact executionRouting dispatch prefix and selected agent. Pass the full self-contained directive and the gokiWorker dispatch descriptor to Goki head. Parent alone submits the returned report and retains leases. Do not implement the delegated phase in the parent.` };
+  return directive;
+}
+
+function baseDirectiveForRun(snapshot: EnnoRunSnapshot): RoleDirective | null {
   const role = roleForStatus(snapshot.status);
   if (role === null) return null;
   const requiredSkills = requiredSkillNames(snapshot.contract.skillSet.entries);

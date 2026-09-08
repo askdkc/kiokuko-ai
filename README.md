@@ -72,6 +72,66 @@ the model calls Kiokuko's MCP tool on every turn. Automatic processing by OpenCo
 plugin hooks is separate from MCP tool calls. Trust boundaries and public error
 behavior are documented in [Security and trust](docs/security-and-trust.md).
 
+## Add an orchestration model
+
+Both `kiokuko-ai setup` and `kiokuko-ai embeddings setup` register fixed-model role
+agents. `--enno-oduno ask|on|off` saves the preference (default: `ask`). Each new
+request chooses ordinary work or 役小角(enno-oduno), then a preset and optional
+per-role changes. Use ordinary work for small README wording changes. `on` still
+asks for the model configuration; follow-ups retain the selection.
+
+1. Connect the provider in OpenCode (`/connect`) and check its exact `provider/model`
+   using `/models` or `opencode models`.
+2. In the effective OpenCode configuration (new installs use
+   `~/.config/opencode/opencode.jsonc`), copy a generated `gokiWorker` agent under
+   a new name. Change `model`; preserve its role prompt and permissions. The example
+   below is a complete worker definition: merge its `agent` member into your existing
+   `agent` object. Replace **`YOUR_PROVIDER/YOUR_MODEL`** with the confirmed model ID;
+   replace **`my-orchestration-worker`** in both snippets if you choose another name.
+3. In the **existing Kiokuko plugin tuple's second object**, merge the registration
+   below into `orchestration.customAgents.gokiWorker`. Keep existing options and
+   other registered names. Do not replace the configuration file or plugin list.
+4. Restart OpenCode. For a new request, choose Enno, choose a preset, and override
+   the worker with `my-orchestration-worker`. Setup preserves custom definitions.
+
+<!-- kiokuko-custom-worker-example -->
+```jsonc
+{
+  "agent": {
+    "my-orchestration-worker": {
+      "description": "My Kiokuko worker",
+      "mode": "subagent",
+      "model": "YOUR_PROVIDER/YOUR_MODEL",
+      "prompt": "Implement only the supplied approved WorkUnit and run its focused verification. Do not delegate or broaden scope. The parent owns the run, leases, and all Kiokuko reports. Do not call Kiokuko tools or change models. Return changed paths and verification evidence.",
+      "permission": {
+        "*": "deny",
+        "read": "allow", "glob": "allow", "grep": "allow", "list": "allow",
+        "skill": "allow", "edit": "allow", "bash": "allow",
+        "task": "deny", "kiokuko_*": "deny", "external_directory": "ask"
+      }
+    }
+  }
+}
+```
+<!-- /kiokuko-custom-worker-example -->
+
+<!-- kiokuko-custom-registration-example -->
+```jsonc
+// Merge these fields into the options object of your EXISTING Kiokuko plugin tuple:
+// "plugin": [["kiokuko-ai@<installed-version>", { ...existing options, ...fields below }]]
+{
+  "orchestration": {
+    "mode": "ask",
+    "customAgents": {
+      "gokiWorker": ["my-orchestration-worker"]
+    }
+  }
+}
+```
+<!-- /kiokuko-custom-registration-example -->
+
+See [all five roles, mixed providers, permissions, and troubleshooting](docs/orchestration-models.md#custom-agents).
+
 ## More detail
 
 - [Documentation index](docs/README.md)

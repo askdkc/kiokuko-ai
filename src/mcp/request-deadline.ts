@@ -11,6 +11,7 @@ export const MCP_MUTATION_TIMEOUT_MS = 60_000;
 export type McpToolOperation =
   | 'task_prepare'
   | 'task_answer'
+  | 'task_execution_select'
   | 'task_context_read'
   | 'memory_checkpoint'
   | 'curator_check'
@@ -90,6 +91,7 @@ const EXTERNAL_OPERATIONS: ReadonlySet<McpToolOperation> = new Set([
 ]);
 
 const MUTATION_OPERATIONS: ReadonlySet<McpToolOperation> = new Set([
+  'task_execution_select',
   'memory_checkpoint',
   'curator_globalize',
   'enno_advice_submit',

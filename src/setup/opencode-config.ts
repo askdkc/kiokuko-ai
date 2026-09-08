@@ -8,6 +8,7 @@ import type { DelimitedBlockResult } from './managed-text.js';
 import { isSetupOpenCodeMcpIdentityConflict, setupOpenCodeMcpIdentityConflict } from './mcp-conflict.js';
 import { assertStrictJsonSyntax } from './strict-json.js';
 import type { OpenCodeRuntimeInvocation } from '../opencode/hook-effect.js';
+import { renderExecutionConfig } from './execution-config.js';
 
 export const KIOKUKO_OPENCODE_PLUGIN_PACKAGE = 'kiokuko-ai';
 /** @deprecated Use KIOKUKO_OPENCODE_PLUGIN_PACKAGE. */
@@ -210,7 +211,7 @@ export function renderOpenCodeConfig(
   existing: string | undefined,
   command = KIOKUKO_OPENCODE_PLUGIN_PACKAGE,
   skillDiscoveryMode?: SkillDiscoveryMode,
-  options: { replaceConflictingIdentity?: boolean; runtime?: OpenCodeRuntimeInvocation } = {},
+  options: { replaceConflictingIdentity?: boolean; runtime?: OpenCodeRuntimeInvocation; ennoOduno?: 'ask' | 'on' | 'off'; executionTemplates?: boolean } = {},
 ): DelimitedBlockResult {
   if (!isNonEmptyCommand(command)) validation('OpenCode MCP command must be a non-empty executable path or name');
   if (skillDiscoveryMode !== undefined && !isSkillDiscoveryMode(skillDiscoveryMode)) {
@@ -240,13 +241,24 @@ export function renderOpenCodeConfig(
   const mcpCommand = runtime === undefined
     ? [command, 'mcp']
     : [runtime.nodeExecutable, runtime.cliScript, 'mcp'];
-  const edits = modify(source, ['mcp', 'kiokuko'], {
+  const desiredServer = {
     type: 'local',
     command: mcpCommand,
     enabled: true,
     environment: { [SKILL_DISCOVERY_ENV]: effectiveSkillDiscoveryMode },
-  }, { formattingOptions: { insertSpaces: true, tabSize: 2, eol } });
-  let content = applyEdits(source, edits);
+  };
+  let content = source;
+  const set = (keys: (string | number)[], value: unknown) => {
+    content = applyEdits(content, modify(content, keys, value, { formattingOptions: { insertSpaces: true, tabSize: 2, eol } }));
+  };
+  if (canonicalServer) {
+    for (const [key, value] of Object.entries(desiredServer)) {
+      if (JSON.stringify(object(canonicalServer)?.[key]) !== JSON.stringify(value)) {
+        if (key === 'environment') set(['mcp', 'kiokuko', 'environment', SKILL_DISCOVERY_ENV], effectiveSkillDiscoveryMode);
+        else set(['mcp', 'kiokuko', key], value);
+      }
+    }
+  } else set(['mcp', 'kiokuko'], desiredServer);
   const managedIndex = plugins.findIndex((entry) => pluginPackage(entry) === KIOKUKO_OPENCODE_PLUGIN_PACKAGE);
   const desiredPlugin = updatedPluginEntry(managedIndex === -1 ? undefined : plugins[managedIndex], runtime);
   if (managedIndex === -1) {
@@ -254,10 +266,15 @@ export function renderOpenCodeConfig(
       formattingOptions: { insertSpaces: true, tabSize: 2, eol },
     }));
   } else if (JSON.stringify(plugins[managedIndex]) !== JSON.stringify(desiredPlugin)) {
-    content = applyEdits(content, modify(content, ['plugin', managedIndex], desiredPlugin, {
-      formattingOptions: { insertSpaces: true, tabSize: 2, eol },
-    }));
+    const previous = plugins[managedIndex];
+    if (Array.isArray(previous) && Array.isArray(desiredPlugin)) {
+      if (previous[0] !== desiredPlugin[0]) set(['plugin', managedIndex, 0], desiredPlugin[0]);
+      for (const [key, value] of Object.entries(object(desiredPlugin[1]) ?? {})) {
+        if (JSON.stringify(object(previous[1])?.[key]) !== JSON.stringify(value)) set(['plugin', managedIndex, 1, key], value);
+      }
+    } else set(['plugin', managedIndex], desiredPlugin);
   }
+  if (options.executionTemplates) content = renderExecutionConfig(content, managedIndex === -1 ? plugins.length : managedIndex, options.ennoOduno);
   return {
     content,
     action: existing === undefined ? 'created' : content === existing ? 'unchanged' : 'updated',

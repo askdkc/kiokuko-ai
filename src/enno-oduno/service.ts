@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import type { SqliteDatabase } from '../db/adapter.js';
 import { withImmediateTransaction } from '../db/transaction.js';
 import { KiokukoError } from '../errors.js';
+import { readExecutionRow } from '../execution/store.js';
 import { assertCapabilityCatalogBinding } from '../akinator/capability-binding.js';
 import { normalizeCapabilityCatalog } from '../akinator/capabilities.js';
 import { getAkinatorContextService } from '../akinator/service.js';
@@ -259,6 +260,8 @@ export function ennoStateForPreparedTask(
   prepared: PreparedTaskShape,
   client: { kind: string; version?: string; sessionId?: string } | undefined,
 ): EnnoOdunoState {
+  const selection = readExecutionRow(database, prepared.run.runId);
+  if (selection !== undefined && selection.choice !== 'legacy' && selection.choice !== 'enno') return inapplicableEnnoState();
   const taskType = prepared.intake.profile.taskType;
   const clientKind = identifyEnnoClientKind(client?.kind);
   const clientVersion = clientKind === null ? null : client?.version ?? null;

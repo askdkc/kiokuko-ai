@@ -372,3 +372,45 @@ export async function runKiokukoCompactionHook(
     await settleChild(child);
   }
 }
+
+/** Read only exact run routing. No continuation receipt or WorkUnit lease is claimed. */
+export async function readKiokukoExecutionRouting(
+  input: { runId: string; rootSessionId: string; cwd: string; stage?: 'begin' | 'complete' | 'failed'; revision?: number; role?: string; agent?: string; promptDigest?: string; callId?: string },
+  dependencies: HookEffectDependencies = {},
+): Promise<unknown> {
+  if (dependencies.runtimeFailure || dependencies.signal?.aborted) throw new Error('Execution routing unavailable');
+  const spawn = dependencies.spawn ?? runtimeSpawn();
+  const invocation = await trustedInvocation(dependencies);
+  if (!spawn || !invocation.argv) throw new Error('Execution routing runtime unavailable');
+  const child = spawn([...invocation.argv, 'enno', input.stage ? 'execution-dispatch' : 'execution-state', '--input-json', '-'], {
+    stdin: 'pipe', stdout: 'pipe', stderr: 'pipe', cwd: input.cwd,
+  });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const cancellation = abortRace(dependencies.signal, child);
+  try {
+    const operation = (async () => {
+      const reading = Promise.all([readBounded(child.stdout), readBounded(child.stderr), child.exited]);
+      try {
+        await child.stdin.write(JSON.stringify(input));
+        await child.stdin.end();
+      } catch (error) {
+        void reading.catch(() => undefined);
+        throw error;
+      }
+      const [output, , code] = await reading;
+      if (code !== 0) throw new Error('Execution routing read failed');
+      const value: unknown = JSON.parse(output);
+      if (findSecretInValue(value)) throw new Error('Unsafe execution routing');
+      return value;
+    })();
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => { child.kill(); reject(new Error('Execution routing timed out')); }, dependencies.timeoutMs ?? KIOKUKO_HOOK_TIMEOUT_MS);
+    });
+    return await Promise.race(cancellation ? [operation, timeout, cancellation.promise] : [operation, timeout]);
+  } finally {
+    cancellation?.cleanup();
+    if (timer) clearTimeout(timer);
+    try { child.kill(); } catch { /* process may have exited */ }
+    await settleChild(child);
+  }
+}

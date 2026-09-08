@@ -401,7 +401,7 @@ export function buildCli(dependencies: CliDependencies = {}): Command {
     .option('--dry-run', 'Validate and show planned changes without writing')
     .option('--no-standard-skills', 'Skip installing bundled Kiokuko standard skills')
     .option('--skill-discovery <mode>', 'External Skill discovery: off,official,community')
-    .option('--enno-oduno <mode>', 'Enno-Oduno agent loop: on,off')
+    .option('--enno-oduno <mode>', 'Enno-Oduno per-request selection: ask,on,off')
     .option('--json', 'Emit a JSON response')
     .action(async (options: { command?: string; dryRun?: boolean; json?: boolean; standardSkills: boolean; skillDiscovery?: string; ennoOduno?: string }) => {
       const optionSkillDiscoveryMode = options.skillDiscovery === undefined

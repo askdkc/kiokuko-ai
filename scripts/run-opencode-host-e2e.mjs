@@ -6,6 +6,7 @@ import path from 'node:path';
 import process from 'node:process';
 import { pathToFileURL } from 'node:url';
 import { startFakeOpenAiServer } from '../tests/e2e/fake-openai-server.mjs';
+import { agentDefinition, buildExecutionCatalog, EXECUTION_ROLES, orchestrationOptionsSchema } from '../dist/execution/catalog.js';
 import { probeMcpTools, callMcpTool } from './lib/mcp-probe.mjs';
 
 const repositoryRoot = path.resolve(import.meta.dirname, '..');
@@ -86,7 +87,7 @@ function execute(command, args, options = {}) {
   });
 }
 
-async function requireSuccess(command, args, options = {}) {
+export async function requireSuccess(command, args, options = {}) {
   const { label, ...executionOptions } = options;
   const result = await execute(command, args, executionOptions);
   if (result.code !== 0) {
@@ -119,7 +120,7 @@ async function installedPackagePath(prefix) {
   throw new Error('installed package is missing');
 }
 
-async function resolveOpenCodeBinary(value) {
+export async function resolveOpenCodeBinary(value) {
   if (!path.isAbsolute(value)) throw new Error('OPENCODE_BIN must be an absolute path');
   const status = await lstat(value).catch(() => undefined);
   if (status?.isFile()) return value;
@@ -137,7 +138,7 @@ async function resolveOpenCodeBinary(value) {
   throw new Error('OPENCODE_BIN directory has no OpenCode executable');
 }
 
-async function startOpenCode(command, environment, cwd) {
+export async function startOpenCode(command, environment, cwd) {
   const child = spawn(command, ['serve', '--hostname', '127.0.0.1', '--port', '0'], {
     cwd, env: environment, shell: false, stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -215,6 +216,9 @@ async function main() {
     ...process.env,
     HOME: home,
     XDG_CONFIG_HOME: config,
+    OPENCODE_CONFIG: path.join(config, 'opencode/opencode.jsonc'),
+    OPENCODE_CONFIG_DIR: path.join(config, 'opencode'),
+    OPENCODE_CONFIG_CONTENT: '{}',
     XDG_DATA_HOME: data,
     KIOKUKO_DATA_DIR: data,
     KIOKUKO_SKILL_DISCOVERY: 'off',
@@ -234,13 +238,17 @@ async function main() {
   const packageJson = parseJson(await readFile(installedPackage, 'utf8'), 'installed_package');
   if (packageJson.name !== 'kiokuko-ai') throw new Error('installed package identity mismatch');
   await requireSuccess(process.execPath, [cliScript, 'setup', '--skill-discovery', 'off', '--enno-oduno', 'on', '--json'], { cwd: project, env: environment, timeoutMs: 120_000, label: 'setup' });
-  const configPath = path.join(config, 'opencode', 'opencode.json');
+  const configPath = path.join(config, 'opencode', 'opencode.jsonc');
   const openCodeConfig = parseJson(await readFile(configPath, 'utf8'), 'opencode_config');
   const pluginIndex = openCodeConfig.plugin.findIndex((entry) => Array.isArray(entry) && String(entry[0]).startsWith('kiokuko-ai@'));
   if (pluginIndex < 0) throw new Error('managed OpenCode plugin entry is missing');
   await access(path.join(config, 'opencode', 'AGENTS.md'));
   await access(path.join(config, 'opencode', 'skills', 'kiokuko-soul', 'SKILL.md'));
   openCodeConfig.plugin[pluginIndex] = [pathToFileURL(path.join(installedRoot, 'dist', 'opencode', 'plugin.js')).href, openCodeConfig.plugin[pluginIndex][1]];
+  const hostAgents = Object.fromEntries(EXECUTION_ROLES.map(role => [role, `host-${role}`]));
+  for (const role of EXECUTION_ROLES) openCodeConfig.agent[hostAgents[role]] = agentDefinition(role, 'fixture/fixture-model');
+  const orchestration = { mode: 'on', customAgents: Object.fromEntries(EXECUTION_ROLES.map(role => [role, [hostAgents[role]]])) };
+  openCodeConfig.plugin[pluginIndex][1].orchestration = orchestration;
   await writeFile(configPath, `${JSON.stringify(openCodeConfig, null, 2)}\n`);
   let continuationHandler = async () => undefined;
   let continuationFinished = Promise.resolve();
@@ -285,9 +293,10 @@ async function main() {
       'kiokuko-enno-oduno',
     ].map((name) => ({ kind: 'skill', name }));
     capabilities.push(...toolNames.map((name) => ({ kind: 'mcp_tool', name })));
-    const taskPrepare = await mcpToolCall(cliScript, environment, project, 'task_prepare', {
+    let taskPrepare = await mcpToolCall(cliScript, environment, project, 'task_prepare', {
       soulRead: true,
       requestId: 'host-active-continuation',
+      executionCatalog: buildExecutionCatalog(openCodeConfig, await jsonRequest(server.url, '/provider'), orchestrationOptionsSchema.parse(orchestration)),
       task: 'Run the deterministic OpenCode host continuation contract check.',
       cwd: project,
       profileHints: { taskType: 'build', target: 'host continuation', expected: 'one continuation receipt' },
@@ -295,6 +304,9 @@ async function main() {
       client: { kind: 'opencode', version: health.version },
       maxContextChars: 12_000,
     });
+    taskPrepare = { ...taskPrepare, ...await mcpToolCall(cliScript, environment, project, 'task_execution_select', {
+      runId: taskPrepare.run.runId, expectedRevision: 0, idempotencyKey: 'host-execution', choice: 'enno', agents: hostAgents, cwd: project,
+    }) };
     if (taskPrepare?.ennoOduno?.status !== 'oduno_ideal') throw new Error('active Enno preparation did not reach ideal phase');
     const identity = {
       runId: taskPrepare.run?.runId,
@@ -367,7 +379,7 @@ async function main() {
   }
 }
 
-try {
+if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) try {
   await main();
 } catch (error) {
   process.stderr.write(`${JSON.stringify({ protocolVersion: 1, status: 'failed', reason: error instanceof Error ? error.message : 'host_contract_failed' })}\n`);

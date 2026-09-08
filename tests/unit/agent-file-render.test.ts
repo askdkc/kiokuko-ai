@@ -30,9 +30,9 @@ test('renders the non-blocking memory-first lifecycle without legacy gateway com
     cliCommand: 'kiokuko-ai',
   });
 
-  assert.match(rendered, /<!-- kiokuko-template-version: 23 -->/);
+  assert.match(rendered, /<!-- kiokuko-template-version: 24 -->/);
   assert.match(rendered, /memory-and-plan sidecar, not a coding gate/);
-  assert.match(rendered, /unresolved advisory intake, missing Skills, failed enrichment, model fallback, verifier disagreement, and meditation delay/);
+  assert.match(rendered, /unresolved advisory intake, missing Skills, failed enrichment, verifier disagreement, and meditation delay/);
   assert.match(rendered, /Only safety, missing authorization for an irreversible effect, path or identity violations, database corruption, and stale revision or lease identity may block adoption/);
   assert.match(rendered, /Akinator questions are advisory when `continuationPolicy\.codingAllowed=true`/);
   assert.match(rendered, /claim resource-compatible Goki WorkUnits atomically/);

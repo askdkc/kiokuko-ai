@@ -103,7 +103,26 @@ function requireHome(options: PathEnvironment): { home: string; join: typeof pat
 }
 
 /** OpenCode's documented global configuration directory. */
+function configuredOpenCodePath(options: PathEnvironment, key: 'OPENCODE_CONFIG' | 'OPENCODE_CONFIG_DIR'): string | undefined {
+  const { platform, env } = selectedEnvironment(options);
+  const value = env[key];
+  if (value === undefined) return undefined;
+  const p = platform === 'win32' ? path.win32 : path.posix;
+  if (!value || value.length > 4096 || value !== value.trim() || /[\p{Cc}\p{Cf}]/u.test(value) || !p.isAbsolute(value) || p.normalize(value) === p.parse(value).root) {
+    throw new KiokukoError('VALIDATION_ERROR', `${key} must be a bounded absolute path below a filesystem root`);
+  }
+  return p.normalize(value);
+}
+
+export function getOpenCodeConfigFileOverride(options: PathEnvironment = {}): string | undefined {
+  const file = configuredOpenCodePath(options, 'OPENCODE_CONFIG');
+  if (file !== undefined && !/\.jsonc?$/iu.test(file)) throw new KiokukoError('VALIDATION_ERROR', 'OPENCODE_CONFIG must name a JSON or JSONC file');
+  return file;
+}
+
 export function getOpenCodeConfigDirectory(options: PathEnvironment = {}): string {
+  const override = configuredOpenCodePath(options, 'OPENCODE_CONFIG_DIR');
+  if (override !== undefined) return override;
   const { platform, env } = selectedEnvironment(options);
   const join = platform === 'win32' ? path.win32.join : path.posix.join;
   if (env.XDG_CONFIG_HOME) return join(env.XDG_CONFIG_HOME, 'opencode');

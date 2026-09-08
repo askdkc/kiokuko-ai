@@ -48,6 +48,7 @@ import {
 import type { SkillDiscoveryMode, SkillDiscoverySummary } from '../skills/types.js';
 import { captureRepositoryState } from './repository-state.js';
 import { readPlanArtifact } from './plan-artifact.js';
+import { executionView } from '../execution/store.js';
 
 interface ContractRow extends SqliteRow {
   run_id: string;
@@ -440,6 +441,10 @@ export function readEnnoSnapshot(database: SqliteDatabase, identity: EnnoIdentit
     finalEvidenceReady,
     currentInputDigest,
   });
+  const execution = executionView(database, row.run_id);
+  if (execution?.choice === 'enno') snapshot.executionRouting = {
+    runId: execution.runId, revision: execution.revision, selected: execution.selected, dispatch: execution.dispatch,
+  };
   return snapshot;
 }
 

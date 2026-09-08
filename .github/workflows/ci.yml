@@ -139,3 +139,8 @@ jobs:
         run: npm run test:e2e:opencode:host
         env:
           OPENCODE_BIN: ${{ runner.temp }}/opencode
+
+      - name: Verify role routing, custom README models, permissions, and provider failures
+        run: node scripts/run-opencode-execution-e2e.mjs
+        env:
+          OPENCODE_BIN: ${{ runner.temp }}/opencode

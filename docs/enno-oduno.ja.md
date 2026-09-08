@@ -2,7 +2,9 @@
 
 ![役小角(enno-oduno)](../skills/kiokuko-enno-oduno/enno-oduno.png)
 
-build、debug、review、devopsでは、Enno-Odunoがrun-bound loopを管理します。
+依頼ごとに通常実行／役小角を選びます。限定的な修正には通常実行を推奨します。
+役小角を選んだ場合はモデル構成を指定し、build・debug・review・devopsの処理を進めます。
+[おすすめ構成とカスタムモデルの追加](orchestration-models.ja.md#custom-agents)を参照してください。
 
 ```text
 intake → ideal → plan → 確認 → WorkUnit実行 → 最終検証 → meditation

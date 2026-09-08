@@ -1,7 +1,10 @@
 {
   "schemaVersion": 1,
   "minimum": "1.18.25",
-  "tested": ["1.18.25", "1.18.26"],
+  "tested": [
+    "1.18.25",
+    "1.18.26"
+  ],
   "releaseRepository": "anomalyco/opencode",
   "platforms": {
     "linux-x64": {
@@ -36,6 +39,9 @@
       "versions": {
         "1.18.26": {
           "sha512": "9d1586f8c6d25f3e0227ec7a5d014180e015a0e6e9df41cc12b8759e168027c630f846c39b5c6f9ebbea9b36e1ed53175c9449ad787a64e062c432525f88940e"
+        },
+        "1.18.25": {
+          "sha512": "04108eb23f00534dce36e360bcf1ff556655512ac8fe0061779c0ae6c7baf45b368ec8b427ab88738f603c009b160392b6cd9a309c60ce192aa7126ea5d26116"
         }
       }
     },

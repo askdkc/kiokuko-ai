@@ -1,3 +1,5 @@
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import { fixtureExecutionCatalog } from '../fixtures/execution-selection.js';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { access, mkdtemp, realpath, writeFile } from 'node:fs/promises';
@@ -52,7 +54,7 @@ test('MCP exposes the memory-first task and lifecycle tools and persists candida
     assert.match(instructions, /missing Skills.*coding continues/iu);
     assert.match(instructions, /Akinator questions are advisory/iu);
     assert.match(instructions, /without suspending active coding, planning, or checkpointing/iu);
-    assert.match(instructions, /`task_prepare` is the Enno-Oduno orchestration entry point/u);
+    assert.match(instructions, /`task_prepare` is the memory entry point/u);
     assert.match(instructions, /first identifies OpenCode from MCP `clientInfo`/u);
     assert.match(instructions, /provenance-bound ideal.*high-capability-planner preference/iu);
     assert.match(instructions, /economical-fast-worker execution/iu);
@@ -80,6 +82,7 @@ test('MCP exposes the memory-first task and lifecycle tools and persists candida
       'memory_checkpoint',
       'task_answer',
       'task_context_read',
+      'task_execution_select',
       'task_prepare',
     ]);
     assert.equal(tools.tools.find((tool) => tool.name === 'task_prepare')?.annotations?.idempotentHint, false);
@@ -263,7 +266,7 @@ test('MCP exposes the memory-first task and lifecycle tools and persists candida
     assert.equal(checkpointContent.entries[0]?.status, 'candidate');
     assert.match(checkpointContent.entries[0]?.workspace ?? '', /^project:/);
 
-    const prepared = await client.callTool({
+    const prepared = await selectedPrepare(client, {
       name: 'task_prepare',
       arguments: {
         soulRead: true,
@@ -347,7 +350,7 @@ test('MCP exposes the memory-first task and lifecycle tools and persists candida
       SOUL_CAPABILITY,
       { kind: 'skill', name: 'memory-reasoning', description: 'Verify recalled memory before implementation' },
     ];
-    const unclassified = await client.callTool({
+    const unclassified = await selectedPrepare(client, {
       name: 'task_prepare',
       arguments: {
         soulRead: true,
@@ -411,7 +414,7 @@ test('MCP exposes the memory-first task and lifecycle tools and persists candida
       && item.availability === 'missing'
       && item.required === true));
 
-    const incomplete = await client.callTool({
+    const incomplete = await selectedPrepare(client, {
       name: 'task_prepare',
       arguments: {
         soulRead: true,
@@ -644,7 +647,7 @@ test('task_prepare identifies OpenCode before Oduno derives the ideal', async ()
   await server.connect(serverTransport);
   await client.connect(clientTransport);
   try {
-    const prepared = await client.callTool({
+    const prepared = await selectedPrepare(client, {
       name: 'task_prepare',
       arguments: {
         soulRead: true,
@@ -737,7 +740,7 @@ test('enno_plan_submit starts non-destructive work without a general plan-confir
       name: 'kiokuko-single-purpose-functions',
       description: 'Focused code contracts and tests.',
     }];
-    const prepared = await client.callTool({
+    const prepared = await selectedPrepare(client, {
       name: 'task_prepare',
       arguments: {
         soulRead: true,
@@ -845,7 +848,7 @@ test('MCP transports advisory submission and final verification preparation with
       name: 'kiokuko-single-purpose-functions',
       description: 'Focused code contracts and tests.',
     }];
-    const prepared = await client.callTool({
+    const prepared = await selectedPrepare(client, {
       name: 'task_prepare',
       arguments: {
         soulRead: true,
@@ -1059,7 +1062,7 @@ test('plan capability loss degrades quality and leaves the same run executable',
       name: 'kiokuko-single-purpose-functions',
       description: 'Focused code contracts and tests.',
     }];
-    const prepared = await client.callTool({
+    const prepared = await selectedPrepare(client, {
       name: 'task_prepare',
       arguments: {
         soulRead: true,
@@ -1226,7 +1229,7 @@ test('malformed compatibility discovery degrades across task_prepare and enno_pl
       name: 'kiokuko-single-purpose-functions',
       description: 'Focused code contracts and tests.',
     }];
-    const prepared = await client.callTool({
+    const prepared = await selectedPrepare(client, {
       name: 'task_prepare',
       arguments: {
         soulRead: true,
@@ -1350,7 +1353,7 @@ test('memory_checkpoint returns actionable MCP guidance during intake and succee
   await client.connect(clientTransport);
   try {
     const capabilities = [SOUL_CAPABILITY, { kind: 'skill', name: 'memory-reasoning' }];
-    const prepared = await client.callTool({
+    const prepared = await selectedPrepare(client, {
       name: 'task_prepare',
       arguments: {
         soulRead: true,
@@ -1591,7 +1594,7 @@ test('task_prepare degrades safely for oversized and malformed capability items'
     assert.deepEqual(budgetContent.capabilities.diagnostics, { received: 8, accepted: 8, truncated: 8, dropped: 0 });
     assert.ok(budgetContent.capabilities.warnings.some((warning) => warning.code === 'CAPABILITY_CATALOG_BUDGET_EXCEEDED'));
 
-    const incomplete = await client.callTool({
+    const incomplete = await selectedPrepare(client, {
       name: 'task_prepare',
       arguments: { soulRead: true, requestId: 'mcp-oversized-incomplete-request', task: 'Implement the oversized catalog beacon', profileHints: { taskType: 'build' }, capabilities: oversizedCapabilities },
     });
@@ -2095,3 +2098,14 @@ test('stdio framing rejects an oversized envelope before parsing and accepts the
     await transport.close();
   }
 });
+
+async function selectedPrepare(client: Client, request: { name: string; arguments: Record<string, unknown> }) {
+  const result = await client.callTool({ ...request, arguments: { ...request.arguments, executionCatalog: fixtureExecutionCatalog() } }) as CallToolResult;
+  if (result.isError) return result;
+  const prepared = result.structuredContent as { run: { runId: string }; execution: { revision: number; choice: string } };
+  const selected = await client.callTool({ name: 'task_execution_select', arguments: {
+    runId: prepared.run.runId, expectedRevision: prepared.execution.revision, idempotencyKey: 'mcp-fixture-selection', choice: 'enno', preset: 'openai',
+  } }) as CallToolResult;
+  assert.notEqual(selected.isError, true, JSON.stringify(selected));
+  return { ...result, structuredContent: { ...prepared, ...selected.structuredContent } };
+}

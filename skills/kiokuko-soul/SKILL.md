@@ -13,6 +13,24 @@ Give the agent useful memory and a bounded plan before coding when possible, whi
 
 This Skill routes memory, Akinator, and Enno-Oduno assistance. It does not authorize effects beyond the user request and current client permissions.
 
+## Per-request execution choice
+
+Inspect `execution` after the single `task_prepare`. Default `ask` asks whether to use
+ordinary work or 役小角(enno-oduno); recommend ordinary work for bounded README wording
+changes. Honor an explicit choice and retain it for follow-ups. `off` proceeds
+ordinarily; `on` selects Enno but still asks for the model configuration each request.
+Use `task_execution_select` with the exact run ID and selection revision, a new
+idempotency key, and either `ordinary`, `enno` plus a preset/per-role agent names, or
+`cancelled`. A dismissed question is not consent. Ordinary work retains memory and
+verification and creates no Enno draft, child agents, or continuation loop.
+
+Only registered available candidates may be selected. Use the exact `execution.dispatch`
+agent and prompt prefix, followed by a self-contained phase directive. Give Goki head
+the selected worker dispatch descriptor too. The parent submits reports after awaiting
+the role result. Model failures require explicit alternative selection, ordinary work,
+or cancellation. Reuse completed reports; do not repeat an uncertain model call.
+Existing runs without an execution selection retain their legacy continuation.
+
 ## Required entry
 
 Read this Skill before any other bundled Kiokuko Skill.
