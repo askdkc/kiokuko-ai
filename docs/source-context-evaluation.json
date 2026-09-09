@@ -1,0 +1,745 @@
+{
+  "version": 1,
+  "ripwire": "0.4.0",
+  "tokenizer": "js-tiktoken@1.0.21/cl100k_base",
+  "repositoryCommit": "701f136b07e581349688971324f83ca6adb5b625",
+  "trackedChanges": ".github/workflows/ci.yml               | 18 ++++++++++-\n docs/enno-oduno.ja.md                  |  3 ++\n docs/enno-oduno.md                     |  3 ++\n package-lock.json                      | 32 ++++++++++++++++++\n package.json                           |  5 ++-\n scripts/run-opencode-execution-e2e.mjs | 35 +++++++++++++++++++-\n scripts/verify-opencode-boundary.mjs   |  2 ++\n skills/kiokuko-enno-oduno/SKILL.md     |  7 ++++\n skills/kiokuko-soul/SKILL.md           |  8 +++++\n src/agent-file/render.ts               |  4 ++-\n src/cli.ts                             |  5 ++-\n src/commands/doctor.ts                 |  4 +++\n src/execution/store.ts                 | 11 +++++--\n src/mcp/request-deadline.ts            |  1 +\n src/mcp/server.ts                      |  9 ++++++\n src/opencode/execution.ts              | 33 ++++++++++++++++++-\n templates/AGENTS.md                    |  4 ++-\n tests/integration/mcp.test.ts          |  1 +\n tests/integration/use.test.ts          | 42 ++++++++++++------------\n tests/unit/agent-file-render.test.ts   |  2 +-\n tests/unit/cli-help.test.ts            |  1 +\n tests/unit/execution-hooks.test.ts     | 59 +++++++++++++++++++++++++++++++---\n 22 files changed, 254 insertions(+), 35 deletions(-)",
+  "evaluatedAt": "2026-09-08T12:53:23.306Z",
+  "platform": "darwin-arm64",
+  "criteria": {
+    "recallMaintained": true,
+    "tokenReduction30Percent": true,
+    "warmLatencyNotIncreased": false,
+    "noFalseVerification": true,
+    "investigationAvailable": true
+  },
+  "accepted": false,
+  "medianTokenRatio": 0.6001780802315043,
+  "medianPairedTokenRatio": 0.7368806119055538,
+  "baselineWarmMs": 10.512750499999584,
+  "sourceWarmMs": 408.6333120000004,
+  "rows": [
+    {
+      "id": "routing-ja",
+      "language": "ja",
+      "temperature": "cold",
+      "baseline": {
+        "bytes": 64324,
+        "tokens": 15035,
+        "ms": 21.089083000000016,
+        "recall": 1
+      },
+      "source": {
+        "bytes": 45409,
+        "tokens": 11049,
+        "ms": 638.484083,
+        "recall": 1,
+        "status": "degraded",
+        "sourceDigest": "46ac973a57981f2933e2289f31ce08f1bb8cebf2d130b28bde697f2c416f9620",
+        "inputDigest": "55de1dc40dde9b391e3aece3163691b505883d6550f6b8a21cab61ca740552af",
+        "resultDigest": "9b8dc9eb9e9507add1160a415410f78363463bb1f738e07d4c158db6cdf5b7b7",
+        "reasons": [
+          "parse_health_unavailable",
+          "edge_confidence_unavailable",
+          "git_history_unavailable",
+          "files_excluded",
+          "upstream_truncated"
+        ],
+        "additionalFiles": 4,
+        "receivedBytes": 7221
+      }
+    },
+    {
+      "id": "routing-ja",
+      "language": "ja",
+      "temperature": "warm",
+      "baseline": {
+        "bytes": 64324,
+        "tokens": 15035,
+        "ms": 10.682542000000012,
+        "recall": 1
+      },
+      "source": {
+        "bytes": 45409,
+        "tokens": 11049,
+        "ms": 399.4705,
+        "recall": 1,
+        "status": "degraded",
+        "sourceDigest": "46ac973a57981f2933e2289f31ce08f1bb8cebf2d130b28bde697f2c416f9620",
+        "inputDigest": "55de1dc40dde9b391e3aece3163691b505883d6550f6b8a21cab61ca740552af",
+        "resultDigest": "9b8dc9eb9e9507add1160a415410f78363463bb1f738e07d4c158db6cdf5b7b7",
+        "reasons": [
+          "parse_health_unavailable",
+          "edge_confidence_unavailable",
+          "git_history_unavailable",
+          "files_excluded",
+          "upstream_truncated"
+        ],
+        "additionalFiles": 4,
+        "receivedBytes": 7221
+      }
+    },
+    {
+      "id": "routing-en",
+      "language": "en",
+      "temperature": "cold",
+      "baseline": {
+        "bytes": 64324,
+        "tokens": 15035,
+        "ms": 10.942166999999927,
+        "recall": 1
+      },
+      "source": {
+        "bytes": 45652,
+        "tokens": 11109,
+        "ms": 704.4345840000001,
+        "recall": 1,
+        "status": "degraded",
+        "sourceDigest": "46ac973a57981f2933e2289f31ce08f1bb8cebf2d130b28bde697f2c416f9620",
+        "inputDigest": "e49295af4faf10d0075ee68687d44982655f5db2c2daa0858113d73a7b3a663a",
+        "resultDigest": "ae8dec3ed6ac219f5505f3a74e400a6400c00c616390699b73054ed8c1ee03f3",
+        "reasons": [
+          "parse_health_unavailable",
+          "edge_confidence_unavailable",
+          "git_history_unavailable",
+          "files_excluded",
+          "upstream_truncated"
+        ],
+        "additionalFiles": 4,
+        "receivedBytes": 7269
+      }
+    },
+    {
+      "id": "routing-en",
+      "language": "en",
+      "temperature": "warm",
+      "baseline": {
+        "bytes": 64324,
+        "tokens": 15035,
+        "ms": 11.986750000000029,
+        "recall": 1
+      },
+      "source": {
+        "bytes": 45652,
+        "tokens": 11109,
+        "ms": 409.21679099999983,
+        "recall": 1,
+        "status": "degraded",
+        "sourceDigest": "46ac973a57981f2933e2289f31ce08f1bb8cebf2d130b28bde697f2c416f9620",
+        "inputDigest": "e49295af4faf10d0075ee68687d44982655f5db2c2daa0858113d73a7b3a663a",
+        "resultDigest": "ae8dec3ed6ac219f5505f3a74e400a6400c00c616390699b73054ed8c1ee03f3",
+        "reasons": [
+          "parse_health_unavailable",
+          "edge_confidence_unavailable",
+          "git_history_unavailable",
+          "files_excluded",
+          "upstream_truncated"
+        ],
+        "additionalFiles": 4,
+        "receivedBytes": 7269
+      }
+    },
+    {
+      "id": "deadline-ja",
+      "language": "ja",
+      "temperature": "cold",
+      "baseline": {
+        "bytes": 61399,
+        "tokens": 13600,
+        "ms": 8.837500000000091,
+        "recall": 1
+      },
+      "source": {
+        "bytes": 13132,
+        "tokens": 3514,
+        "ms": 667.1481670000003,
+        "recall": 1,
+        "status": "degraded",
+        "sourceDigest": "46ac973a57981f2933e2289f31ce08f1bb8cebf2d130b28bde697f2c416f9620",
+        "inputDigest": "d3acfdf24967c4fb358e4e2b4c7d43985391681f06a2cf869f2a753283c27d43",
+        "resultDigest": "284b45c98090be613d2b268387bcc7ac3a29690cbaacd8b983eef5c7e04f88f2",
+        "reasons": [
+          "parse_health_unavailable",
+          "edge_confidence_unavailable",
+          "git_history_unavailable",
+          "files_excluded",
+          "upstream_truncated"
+        ],
+        "additionalFiles": 1,
+        "receivedBytes": 6503
+      }
+    },
+    {
+      "id": "deadline-ja",
+      "language": "ja",
+      "temperature": "warm",
+      "baseline": {
+        "bytes": 61399,
+        "tokens": 13600,
+        "ms": 10.025499999999738,
+        "recall": 1
+      },
+      "source": {
+        "bytes": 13125,
+        "tokens": 3511,
+        "ms": 400.76470800000016,
+        "recall": 1,
+        "status": "degraded",
+        "sourceDigest": "46ac973a57981f2933e2289f31ce08f1bb8cebf2d130b28bde697f2c416f9620",
+        "inputDigest": "d3acfdf24967c4fb358e4e2b4c7d43985391681f06a2cf869f2a753283c27d43",
+        "resultDigest": "284b45c98090be613d2b268387bcc7ac3a29690cbaacd8b983eef5c7e04f88f2",
+        "reasons": [
+          "parse_health_unavailable",
+          "edge_confidence_unavailable",
+          "git_history_unavailable",
+          "files_excluded",
+          "upstream_truncated"
+        ],
+        "additionalFiles": 1,
+        "receivedBytes": 6503
+      }
+    },
+    {
+      "id": "deadline-en",
+      "language": "en",
+      "temperature": "cold",
+      "baseline": {
+        "bytes": 61399,
+        "tokens": 13600,
+        "ms": 10.980291999999736,
+        "recall": 1
+      },
+      "source": {
+        "bytes": 13366,
+        "tokens": 3536,
+        "ms": 621.1331249999994,
+        "recall": 1,
+        "status": "degraded",
+        "sourceDigest": "46ac973a57981f2933e2289f31ce08f1bb8cebf2d130b28bde697f2c416f9620",
+        "inputDigest": "7923ba7c5e877b671b25dfa76bad72bf2f66ec0d12df304893805a3106086d75",
+        "resultDigest": "8cf9f73645f2556a1cca8169c25a650444fd08619b41979607ee8b0c6da9b5ca",
+        "reasons": [
+          "parse_health_unavailable",
+          "edge_confidence_unavailable",
+          "git_history_unavailable",
+          "files_excluded",
+          "upstream_truncated"
+        ],
+        "additionalFiles": 1,
+        "receivedBytes": 6753
+      }
+    },
+    {
+      "id": "deadline-en",
+      "language": "en",
+      "temperature": "warm",
+      "baseline": {
+        "bytes": 61399,
+        "tokens": 13600,
+        "ms": 9.409125000000131,
+        "recall": 1
+      },
+      "source": {
+        "bytes": 13367,
+        "tokens": 3536,
+        "ms": 392.5771670000004,
+        "recall": 1,
+        "status": "degraded",
+        "sourceDigest": "46ac973a57981f2933e2289f31ce08f1bb8cebf2d130b28bde697f2c416f9620",
+        "inputDigest": "7923ba7c5e877b671b25dfa76bad72bf2f66ec0d12df304893805a3106086d75",
+        "resultDigest": "8cf9f73645f2556a1cca8169c25a650444fd08619b41979607ee8b0c6da9b5ca",
+        "reasons": [
+          "parse_health_unavailable",
+          "edge_confidence_unavailable",
+          "git_history_unavailable",
+          "files_excluded",
+          "upstream_truncated"
+        ],
+        "additionalFiles": 1,
+        "receivedBytes": 6753
+      }
+    },
+    {
+      "id": "advisory-ja",
+      "language": "ja",
+      "temperature": "cold",
+      "baseline": {
+        "bytes": 361038,
+        "tokens": 83744,
+        "ms": 8.759082999999919,
+        "recall": 1
+      },
+      "source": {
+        "bytes": 283859,
+        "tokens": 66649,
+        "ms": 615.3612080000003,
+        "recall": 1,
+        "status": "degraded",
+        "sourceDigest": "46ac973a57981f2933e2289f31ce08f1bb8cebf2d130b28bde697f2c416f9620",
+        "inputDigest": "833864682ec8286ec98e89127d1450293a44467e2825a1a20e73d4c15d17ca8a",
+        "resultDigest": "83bae2a2728e4a3be39b73614880929b4e7c17e984f8dcd7288a81b52d2d051d",
+        "reasons": [
+          "parse_health_unavailable",
+          "edge_confidence_unavailable",
+          "git_history_unavailable",
+          "files_excluded",
+          "upstream_truncated"
+        ],
+        "additionalFiles": 5,
+        "receivedBytes": 7215
+      }
+    },
+    {
+      "id": "advisory-ja",
+      "language": "ja",
+      "temperature": "warm",
+      "baseline": {
+        "bytes": 361038,
+        "tokens": 83744,
+        "ms": 10.787416000000121,
+        "recall": 1
+      },
+      "source": {
+        "bytes": 283860,
+        "tokens": 66649,
+        "ms": 413.65841700000055,
+        "recall": 1,
+        "status": "degraded",
+        "sourceDigest": "46ac973a57981f2933e2289f31ce08f1bb8cebf2d130b28bde697f2c416f9620",
+        "inputDigest": "833864682ec8286ec98e89127d1450293a44467e2825a1a20e73d4c15d17ca8a",
+        "resultDigest": "83bae2a2728e4a3be39b73614880929b4e7c17e984f8dcd7288a81b52d2d051d",
+        "reasons": [
+          "parse_health_unavailable",
+          "edge_confidence_unavailable",
+          "git_history_unavailable",
+          "files_excluded",
+          "upstream_truncated"
+        ],
+        "additionalFiles": 5,
+        "receivedBytes": 7215
+      }
+    },
+    {
+      "id": "advisory-en",
+      "language": "en",
+      "temperature": "cold",
+      "baseline": {
+        "bytes": 361038,
+        "tokens": 83744,
+        "ms": 11.242709000000104,
+        "recall": 1
+      },
+      "source": {
+        "bytes": 283859,
+        "tokens": 66650,
+        "ms": 671.0410419999998,
+        "recall": 1,
+        "status": "degraded",
+        "sourceDigest": "46ac973a57981f2933e2289f31ce08f1bb8cebf2d130b28bde697f2c416f9620",
+        "inputDigest": "43e7a21fcaf1c56259b53f2d9fa53e7e7fca10a502eb0fbcf314acf033ef5a0b",
+        "resultDigest": "d46a9aefcbbc9a4ada46d161d1b411e72fa7874ee64706dfe3714484dd208e0e",
+        "reasons": [
+          "parse_health_unavailable",
+          "edge_confidence_unavailable",
+          "git_history_unavailable",
+          "files_excluded",
+          "upstream_truncated"
+        ],
+        "additionalFiles": 5,
+        "receivedBytes": 7206
+      }
+    },
+    {
+      "id": "advisory-en",
+      "language": "en",
+      "temperature": "warm",
+      "baseline": {
+        "bytes": 361038,
+        "tokens": 83744,
+        "ms": 10.493459000000257,
+        "recall": 1
+      },
+      "source": {
+        "bytes": 283860,
+        "tokens": 66650,
+        "ms": 408.04983300000094,
+        "recall": 1,
+        "status": "degraded",
+        "sourceDigest": "46ac973a57981f2933e2289f31ce08f1bb8cebf2d130b28bde697f2c416f9620",
+        "inputDigest": "43e7a21fcaf1c56259b53f2d9fa53e7e7fca10a502eb0fbcf314acf033ef5a0b",
+        "resultDigest": "d46a9aefcbbc9a4ada46d161d1b411e72fa7874ee64706dfe3714484dd208e0e",
+        "reasons": [
+          "parse_health_unavailable",
+          "edge_confidence_unavailable",
+          "git_history_unavailable",
+          "files_excluded",
+          "upstream_truncated"
+        ],
+        "additionalFiles": 5,
+        "receivedBytes": 7206
+      }
+    },
+    {
+      "id": "state-ja",
+      "language": "ja",
+      "temperature": "cold",
+      "baseline": {
+        "bytes": 330105,
+        "tokens": 78030,
+        "ms": 8.908792000000176,
+        "recall": 1
+      },
+      "source": {
+        "bytes": 332259,
+        "tokens": 78823,
+        "ms": 650.2435830000013,
+        "recall": 1,
+        "status": "degraded",
+        "sourceDigest": "46ac973a57981f2933e2289f31ce08f1bb8cebf2d130b28bde697f2c416f9620",
+        "inputDigest": "9a6fe1d1f7b2e67def09fcaa2c4e6e2dad1a85dcd491174d99ac7eb7f951b4c5",
+        "resultDigest": "87ef454208bef789123ee4aedf2ee0e3425d7ccb334db9d6fe693b446291b76a",
+        "reasons": [
+          "parse_health_unavailable",
+          "edge_confidence_unavailable",
+          "git_history_unavailable",
+          "files_excluded"
+        ],
+        "additionalFiles": 6,
+        "receivedBytes": 5837
+      }
+    },
+    {
+      "id": "state-ja",
+      "language": "ja",
+      "temperature": "warm",
+      "baseline": {
+        "bytes": 330105,
+        "tokens": 78030,
+        "ms": 9.5434580000001,
+        "recall": 1
+      },
+      "source": {
+        "bytes": 332260,
+        "tokens": 78823,
+        "ms": 396.3207079999993,
+        "recall": 1,
+        "status": "degraded",
+        "sourceDigest": "46ac973a57981f2933e2289f31ce08f1bb8cebf2d130b28bde697f2c416f9620",
+        "inputDigest": "9a6fe1d1f7b2e67def09fcaa2c4e6e2dad1a85dcd491174d99ac7eb7f951b4c5",
+        "resultDigest": "87ef454208bef789123ee4aedf2ee0e3425d7ccb334db9d6fe693b446291b76a",
+        "reasons": [
+          "parse_health_unavailable",
+          "edge_confidence_unavailable",
+          "git_history_unavailable",
+          "files_excluded"
+        ],
+        "additionalFiles": 6,
+        "receivedBytes": 5837
+      }
+    },
+    {
+      "id": "state-en",
+      "language": "en",
+      "temperature": "cold",
+      "baseline": {
+        "bytes": 330105,
+        "tokens": 78030,
+        "ms": 12.446458000000348,
+        "recall": 1
+      },
+      "source": {
+        "bytes": 324621,
+        "tokens": 77042,
+        "ms": 639.874667,
+        "recall": 1,
+        "status": "degraded",
+        "sourceDigest": "46ac973a57981f2933e2289f31ce08f1bb8cebf2d130b28bde697f2c416f9620",
+        "inputDigest": "cf064868677392f98d09f0c64e4539304f4b6a37eabac4c2200a3ce17d3d33bf",
+        "resultDigest": "bd4f17673bf6fbb5957903c5ec99c781046e32c10080e44795510a7455369430",
+        "reasons": [
+          "parse_health_unavailable",
+          "edge_confidence_unavailable",
+          "git_history_unavailable",
+          "files_excluded",
+          "upstream_truncated"
+        ],
+        "additionalFiles": 5,
+        "receivedBytes": 6989
+      }
+    },
+    {
+      "id": "state-en",
+      "language": "en",
+      "temperature": "warm",
+      "baseline": {
+        "bytes": 330105,
+        "tokens": 78030,
+        "ms": 10.53204199999891,
+        "recall": 1
+      },
+      "source": {
+        "bytes": 324628,
+        "tokens": 77045,
+        "ms": 420.62724999999955,
+        "recall": 1,
+        "status": "degraded",
+        "sourceDigest": "46ac973a57981f2933e2289f31ce08f1bb8cebf2d130b28bde697f2c416f9620",
+        "inputDigest": "cf064868677392f98d09f0c64e4539304f4b6a37eabac4c2200a3ce17d3d33bf",
+        "resultDigest": "bd4f17673bf6fbb5957903c5ec99c781046e32c10080e44795510a7455369430",
+        "reasons": [
+          "parse_health_unavailable",
+          "edge_confidence_unavailable",
+          "git_history_unavailable",
+          "files_excluded",
+          "upstream_truncated"
+        ],
+        "additionalFiles": 5,
+        "receivedBytes": 6989
+      }
+    },
+    {
+      "id": "lease-ja",
+      "language": "ja",
+      "temperature": "cold",
+      "baseline": {
+        "bytes": 143711,
+        "tokens": 32476,
+        "ms": 10.39666600000055,
+        "recall": 1
+      },
+      "source": {
+        "bytes": 82640,
+        "tokens": 19092,
+        "ms": 672.8448329999992,
+        "recall": 1,
+        "status": "degraded",
+        "sourceDigest": "46ac973a57981f2933e2289f31ce08f1bb8cebf2d130b28bde697f2c416f9620",
+        "inputDigest": "8282030aeef0cd7bece706aaa1019c5b17c6c7764f5256cad829121f10eaa60a",
+        "resultDigest": "234ddb69bf144a21769cf8a27ac38ccf70c1888bcfbc4789beeb64777cf26162",
+        "reasons": [
+          "parse_health_unavailable",
+          "edge_confidence_unavailable",
+          "git_history_unavailable",
+          "files_excluded",
+          "upstream_truncated"
+        ],
+        "additionalFiles": 2,
+        "receivedBytes": 7537
+      }
+    },
+    {
+      "id": "lease-ja",
+      "language": "ja",
+      "temperature": "warm",
+      "baseline": {
+        "bytes": 143711,
+        "tokens": 32476,
+        "ms": 10.327124999999796,
+        "recall": 1
+      },
+      "source": {
+        "bytes": 82641,
+        "tokens": 19092,
+        "ms": 399.94166699999914,
+        "recall": 1,
+        "status": "degraded",
+        "sourceDigest": "46ac973a57981f2933e2289f31ce08f1bb8cebf2d130b28bde697f2c416f9620",
+        "inputDigest": "8282030aeef0cd7bece706aaa1019c5b17c6c7764f5256cad829121f10eaa60a",
+        "resultDigest": "234ddb69bf144a21769cf8a27ac38ccf70c1888bcfbc4789beeb64777cf26162",
+        "reasons": [
+          "parse_health_unavailable",
+          "edge_confidence_unavailable",
+          "git_history_unavailable",
+          "files_excluded",
+          "upstream_truncated"
+        ],
+        "additionalFiles": 2,
+        "receivedBytes": 7537
+      }
+    },
+    {
+      "id": "lease-en",
+      "language": "en",
+      "temperature": "cold",
+      "baseline": {
+        "bytes": 143711,
+        "tokens": 32476,
+        "ms": 10.411708999999973,
+        "recall": 1
+      },
+      "source": {
+        "bytes": 81089,
+        "tokens": 18655,
+        "ms": 674.5629590000008,
+        "recall": 1,
+        "status": "degraded",
+        "sourceDigest": "46ac973a57981f2933e2289f31ce08f1bb8cebf2d130b28bde697f2c416f9620",
+        "inputDigest": "4eaff318e18aed810898541a30144c1032ee76b05b08494e818a936b5232ec10",
+        "resultDigest": "cf2746e76f74b5b4bc56774778c290f4ae33a091610fd832b3f051160523026b",
+        "reasons": [
+          "parse_health_unavailable",
+          "edge_confidence_unavailable",
+          "git_history_unavailable",
+          "files_excluded",
+          "upstream_truncated"
+        ],
+        "additionalFiles": 2,
+        "receivedBytes": 7451
+      }
+    },
+    {
+      "id": "lease-en",
+      "language": "en",
+      "temperature": "warm",
+      "baseline": {
+        "bytes": 143711,
+        "tokens": 32476,
+        "ms": 11.528542000000016,
+        "recall": 1
+      },
+      "source": {
+        "bytes": 81090,
+        "tokens": 18655,
+        "ms": 419.6983330000003,
+        "recall": 1,
+        "status": "degraded",
+        "sourceDigest": "46ac973a57981f2933e2289f31ce08f1bb8cebf2d130b28bde697f2c416f9620",
+        "inputDigest": "4eaff318e18aed810898541a30144c1032ee76b05b08494e818a936b5232ec10",
+        "resultDigest": "cf2746e76f74b5b4bc56774778c290f4ae33a091610fd832b3f051160523026b",
+        "reasons": [
+          "parse_health_unavailable",
+          "edge_confidence_unavailable",
+          "git_history_unavailable",
+          "files_excluded",
+          "upstream_truncated"
+        ],
+        "additionalFiles": 2,
+        "receivedBytes": 7451
+      }
+    },
+    {
+      "id": "managed-ja",
+      "language": "ja",
+      "temperature": "cold",
+      "baseline": {
+        "bytes": 139632,
+        "tokens": 30417,
+        "ms": 11.063958000000639,
+        "recall": 1
+      },
+      "source": {
+        "bytes": 142330,
+        "tokens": 31405,
+        "ms": 655.9932079999999,
+        "recall": 1,
+        "status": "degraded",
+        "sourceDigest": "46ac973a57981f2933e2289f31ce08f1bb8cebf2d130b28bde697f2c416f9620",
+        "inputDigest": "a971f5515228fa6a95e1ff2430bf2db17e900c7350dd617620c4c5c975e74e84",
+        "resultDigest": "8d589726c9c6b2201fe058897a96f95473de8457ebc55d99af8e71a2fca593cb",
+        "reasons": [
+          "parse_health_unavailable",
+          "edge_confidence_unavailable",
+          "git_history_unavailable",
+          "files_excluded"
+        ],
+        "additionalFiles": 6,
+        "receivedBytes": 4491
+      }
+    },
+    {
+      "id": "managed-ja",
+      "language": "ja",
+      "temperature": "warm",
+      "baseline": {
+        "bytes": 139632,
+        "tokens": 30417,
+        "ms": 11.013624999999593,
+        "recall": 1
+      },
+      "source": {
+        "bytes": 142330,
+        "tokens": 31405,
+        "ms": 421.442959,
+        "recall": 1,
+        "status": "degraded",
+        "sourceDigest": "46ac973a57981f2933e2289f31ce08f1bb8cebf2d130b28bde697f2c416f9620",
+        "inputDigest": "a971f5515228fa6a95e1ff2430bf2db17e900c7350dd617620c4c5c975e74e84",
+        "resultDigest": "8d589726c9c6b2201fe058897a96f95473de8457ebc55d99af8e71a2fca593cb",
+        "reasons": [
+          "parse_health_unavailable",
+          "edge_confidence_unavailable",
+          "git_history_unavailable",
+          "files_excluded"
+        ],
+        "additionalFiles": 6,
+        "receivedBytes": 4491
+      }
+    },
+    {
+      "id": "managed-en",
+      "language": "en",
+      "temperature": "cold",
+      "baseline": {
+        "bytes": 139632,
+        "tokens": 30417,
+        "ms": 11.147249999998166,
+        "recall": 1
+      },
+      "source": {
+        "bytes": 77618,
+        "tokens": 18013,
+        "ms": 648.8990000000013,
+        "recall": 1,
+        "status": "degraded",
+        "sourceDigest": "46ac973a57981f2933e2289f31ce08f1bb8cebf2d130b28bde697f2c416f9620",
+        "inputDigest": "58d9a02a227d1aef1dd6663b0a4ed2bb2480845afacda7cf8b2ee7295cf8259b",
+        "resultDigest": "125478896a2b82e4f3a647395364c495bade0b637b633a887c90f7f90d86dd8a",
+        "reasons": [
+          "parse_health_unavailable",
+          "edge_confidence_unavailable",
+          "git_history_unavailable",
+          "files_excluded",
+          "upstream_truncated"
+        ],
+        "additionalFiles": 5,
+        "receivedBytes": 6994
+      }
+    },
+    {
+      "id": "managed-en",
+      "language": "en",
+      "temperature": "warm",
+      "baseline": {
+        "bytes": 139632,
+        "tokens": 30417,
+        "ms": 9.265583000000333,
+        "recall": 1
+      },
+      "source": {
+        "bytes": 77617,
+        "tokens": 18012,
+        "ms": 412.90045800000007,
+        "recall": 1,
+        "status": "degraded",
+        "sourceDigest": "46ac973a57981f2933e2289f31ce08f1bb8cebf2d130b28bde697f2c416f9620",
+        "inputDigest": "58d9a02a227d1aef1dd6663b0a4ed2bb2480845afacda7cf8b2ee7295cf8259b",
+        "resultDigest": "125478896a2b82e4f3a647395364c495bade0b637b633a887c90f7f90d86dd8a",
+        "reasons": [
+          "parse_health_unavailable",
+          "edge_confidence_unavailable",
+          "git_history_unavailable",
+          "files_excluded",
+          "upstream_truncated"
+        ],
+        "additionalFiles": 5,
+        "receivedBytes": 6994
+      }
+    }
+  ],
+  "limitations": [
+    "Deterministic localization, not agent task completion",
+    "12 task prompts in 6 paired subsystems; small sample",
+    "Baseline runs first in each pair; OS filesystem cache is not flushed",
+    "All mirror creation, snapshots and supplemental reads counted; tokenization excluded from both timings"
+  ]
+}

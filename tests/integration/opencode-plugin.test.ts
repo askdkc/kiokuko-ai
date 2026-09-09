@@ -6,6 +6,27 @@ import path from 'node:path';
 import { KiokukoPlugin } from '../../src/opencode/plugin.js';
 import { PACKAGE_VERSION } from '../../src/package-version.js';
 
+test('restored execution survives custom compaction prompts and disappears after checkpoint', async () => {
+  const client = { session: { list: async () => ({ data: [] }), status: async () => ({ data: {} }) }, app: { log: async () => ({ data: true }) } };
+  const hooks = await KiokukoPlugin({ client, directory: '/repo' } as never);
+  const observe = async (tool: string, result: unknown) => hooks['tool.execute.after']!({ tool: `kiokuko_${tool}`, sessionID: 'restored', callID: tool, args: {} }, { content: [{ type: 'text', text: JSON.stringify(result) }] } as never);
+  try {
+    await observe('task_context_read', { runId: 'run-restored', execution: { runId: 'run-restored', revision: 1, choice: 'ordinary', mode: 'ask' }, revisions: [] });
+    const output = { context: ['other plugin context'], prompt: 'Custom summary instructions' };
+    await hooks['experimental.session.compacting']!({ sessionID: 'restored' }, output);
+    assert.match(output.prompt, /^Custom summary instructions/u);
+    assert.match(output.prompt, /"runId":"run-restored"/u);
+    assert.equal(output.context.length, 2);
+    assert.doesNotMatch(output.prompt, /other plugin context/u);
+    await observe('memory_checkpoint', { run: { runId: 'run-restored', status: 'completed' } });
+    const terminal = { context: [] as string[], prompt: 'Custom summary instructions' };
+    await hooks['experimental.session.compacting']!({ sessionID: 'restored' }, terminal);
+    assert.deepEqual(terminal, { context: [], prompt: 'Custom summary instructions' });
+  } finally {
+    await hooks.dispose!();
+  }
+});
+
 test('OpenCode plugin prompts after explicit hook approval', async () => {
   const originalBun = (globalThis as { Bun?: unknown }).Bun;
   const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), 'kiokuko-plugin-'));

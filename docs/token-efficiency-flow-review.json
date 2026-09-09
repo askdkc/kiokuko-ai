@@ -1,0 +1,243 @@
+{
+  "date": "2026-09-09",
+  "head": "701f136b07e581349688971324f83ca6adb5b625",
+  "productionEfficiencyImplemented": false,
+  "productionRecoveryFixes": [
+    "observe task_context_read execution after restart",
+    "retire matching terminal run execution and continuation records",
+    "preserve own context in a pre-existing custom compaction prompt",
+    "ignore error envelopes and stale terminal revisions"
+  ],
+  "upstream": {
+    "v11825": "cb7d8b2f5e44876ef98b661dc10590c915af3a9f",
+    "v11826": "774cc7c1914e4329eefde5a669f938b0cf566661",
+    "devSourceOnly": "830d5eb5354874105cc31599635a80c1662609e8"
+  },
+  "correctionToPreviousEvidence": "The earlier source-derived ordinary fixture checked returned execution but not new observer state; its empty terminal context did not prove correct restoration or cleanup.",
+  "nativeFlows": [
+    {
+      "status": "passed",
+      "opencodeVersion": "1.18.25",
+      "experiment": "off",
+      "scope": "real host, real MCP, real Kiokuko hooks, deterministic local provider",
+      "steps": [
+        {
+          "tool": "kiokuko_task_prepare",
+          "originalBytes": 27568,
+          "visibleBytes": 27568
+        },
+        {
+          "tool": "kiokuko_task_execution_select",
+          "originalBytes": 19887,
+          "visibleBytes": 19887
+        },
+        {
+          "tool": "kiokuko_task_context_read",
+          "originalBytes": 19149,
+          "visibleBytes": 19149
+        },
+        {
+          "tool": "kiokuko_memory_checkpoint",
+          "originalBytes": 485,
+          "visibleBytes": 485
+        }
+      ],
+      "compactions": 3,
+      "restarts": 1,
+      "finalResponse": true,
+      "mcpInstructionsVisible": true,
+      "oversize": {
+        "pretty": "partial prefix; tail missing",
+        "compact": "empty body preview; tail missing",
+        "fullResultFile": "intact in both cases"
+      },
+      "providerRequests": 17,
+      "evidenceFile": "/private/tmp/kiokuko-upstream.vMPi21/presentation-off.log"
+    },
+    {
+      "status": "passed",
+      "opencodeVersion": "1.18.25",
+      "experiment": "prototype-compact",
+      "scope": "real host, real MCP, real Kiokuko hooks, deterministic local provider",
+      "steps": [
+        {
+          "tool": "kiokuko_task_prepare",
+          "originalBytes": 27568,
+          "visibleBytes": 20214
+        },
+        {
+          "tool": "kiokuko_task_execution_select",
+          "originalBytes": 19887,
+          "visibleBytes": 14545
+        },
+        {
+          "tool": "kiokuko_task_context_read",
+          "originalBytes": 19149,
+          "visibleBytes": 13957
+        },
+        {
+          "tool": "kiokuko_memory_checkpoint",
+          "originalBytes": 485,
+          "visibleBytes": 406
+        }
+      ],
+      "compactions": 3,
+      "restarts": 1,
+      "finalResponse": true,
+      "mcpInstructionsVisible": true,
+      "oversize": {
+        "pretty": "partial prefix; tail missing",
+        "compact": "empty body preview; tail missing",
+        "fullResultFile": "intact in both cases"
+      },
+      "providerRequests": 17,
+      "evidenceFile": "/private/tmp/kiokuko-upstream.vMPi21/presentation-compact.log"
+    },
+    {
+      "status": "passed",
+      "opencodeVersion": "1.18.26",
+      "experiment": "off",
+      "scope": "real host, real MCP, real Kiokuko hooks, deterministic local provider",
+      "steps": [
+        {
+          "tool": "kiokuko_task_prepare",
+          "originalBytes": 27568,
+          "visibleBytes": 27568
+        },
+        {
+          "tool": "kiokuko_task_execution_select",
+          "originalBytes": 19887,
+          "visibleBytes": 19887
+        },
+        {
+          "tool": "kiokuko_task_context_read",
+          "originalBytes": 19149,
+          "visibleBytes": 19149
+        },
+        {
+          "tool": "kiokuko_memory_checkpoint",
+          "originalBytes": 485,
+          "visibleBytes": 485
+        }
+      ],
+      "compactions": 3,
+      "restarts": 1,
+      "finalResponse": true,
+      "mcpInstructionsVisible": true,
+      "oversize": {
+        "pretty": "partial prefix; tail missing",
+        "compact": "empty body preview; tail missing",
+        "fullResultFile": "intact in both cases"
+      },
+      "providerRequests": 17,
+      "evidenceFile": "/private/tmp/kiokuko-upstream.vMPi21/presentation26-off.log"
+    },
+    {
+      "status": "passed",
+      "opencodeVersion": "1.18.26",
+      "experiment": "prototype-compact",
+      "scope": "real host, real MCP, real Kiokuko hooks, deterministic local provider",
+      "steps": [
+        {
+          "tool": "kiokuko_task_prepare",
+          "originalBytes": 27568,
+          "visibleBytes": 20214
+        },
+        {
+          "tool": "kiokuko_task_execution_select",
+          "originalBytes": 19887,
+          "visibleBytes": 14545
+        },
+        {
+          "tool": "kiokuko_task_context_read",
+          "originalBytes": 19149,
+          "visibleBytes": 13957
+        },
+        {
+          "tool": "kiokuko_memory_checkpoint",
+          "originalBytes": 485,
+          "visibleBytes": 406
+        }
+      ],
+      "compactions": 3,
+      "restarts": 1,
+      "finalResponse": true,
+      "mcpInstructionsVisible": true,
+      "oversize": {
+        "pretty": "partial prefix; tail missing",
+        "compact": "empty body preview; tail missing",
+        "fullResultFile": "intact in both cases"
+      },
+      "providerRequests": 17,
+      "evidenceFile": "/private/tmp/kiokuko-upstream.vMPi21/presentation26-compact.log"
+    }
+  ],
+  "executionE2E": {
+    "status": "passed",
+    "opencode": "1.18.26",
+    "models": [
+      "parent",
+      "ideal",
+      "zenki",
+      "gokiHead",
+      "worker",
+      "check"
+    ],
+    "nativeOrdinarySelection": true,
+    "readmeCustomWorker": true,
+    "nestedDelegation": true,
+    "restart": true,
+    "permissions": true,
+    "providerFailures": [
+      401,
+      404,
+      429
+    ]
+  },
+  "packedHostE2E": {
+    "protocolVersion": 1,
+    "status": "passed",
+    "opencodeVersion": "1.18.26",
+    "mcp": "connected",
+    "toolCatalog": 17,
+    "hook": "no_active_run",
+    "fixtureRequests": 3,
+    "taskPrepareResponses": 0,
+    "preparedEnnoStatus": "zenki_planning",
+    "continuationRequests": 1,
+    "durableReceipts": 1,
+    "fixtureDigests": [
+      "8f8d94ba2f2cbca5",
+      "f7e9f25a7ef45fcb",
+      "f55704c45b7689b2"
+    ]
+  },
+  "regression": {
+    "files": 8,
+    "passed": 67,
+    "failed": 0,
+    "skipped": 0,
+    "isolated": true,
+    "initialUnisolatedRun": {
+      "passed": 66,
+      "failed": 1,
+      "reason": "managed-file registry used the default data directory; sandbox rejected chmod; reran the entire selection with isolated data and config"
+    }
+  },
+  "build": "passed",
+  "typecheck": "passed",
+  "diffCheck": "passed",
+  "publicBoundary": {
+    "status": "failed",
+    "finding": "src/source-context/snapshot.ts:11",
+    "scope": "pre-existing untracked work; unchanged by this task"
+  },
+  "limitations": [
+    "deterministic fake provider, not real model quality or task-total tokens",
+    "compact JSON remains a test wrapper, not a production option",
+    "full Enno loop with presentation prototype on every result remains unverified",
+    "Code Mode inspected in source only; structuredContent takes precedence",
+    "a later plugin can overwrite the entire custom prompt",
+    "installed user plugin not updated; no publication"
+  ]
+}

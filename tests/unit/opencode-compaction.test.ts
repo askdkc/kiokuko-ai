@@ -2,6 +2,40 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { OpenCodeCompactionState } from '../../src/opencode/compaction.js';
 
+test('a new plugin restores ordinary selection from context read and retires it on checkpoint', () => {
+  const state = new OpenCodeCompactionState();
+  const restored = { runId: 'restored-run', execution: { runId: 'restored-run', revision: 1, choice: 'ordinary', mode: 'ask' }, revisions: [] };
+  state.observe('session', 'kiokuko_task_context_read', { content: [{ type: 'text', text: JSON.stringify(restored) }] });
+  const before: string[] = [];
+  state.appendContext('session', before);
+  assert.equal(before.length, 1);
+  assert.match(before[0]!, /"choice":"ordinary"/u);
+  state.observe('session', 'kiokuko_memory_checkpoint', { isError: true, content: [{ type: 'text', text: JSON.stringify({ run: { runId: 'restored-run', status: 'completed' } }) }] });
+  const failed: string[] = [];
+  state.appendContext('session', failed);
+  assert.deepEqual(failed, before, 'An error envelope is not a successful terminal observation');
+  state.observe('session', 'kiokuko_memory_checkpoint', JSON.stringify({ run: { runId: 'another-run', status: 'completed' } }));
+  const unrelated: string[] = [];
+  state.appendContext('session', unrelated);
+  assert.deepEqual(unrelated, before);
+  state.observe('session', 'kiokuko_memory_checkpoint', JSON.stringify({ run: { runId: 'restored-run', status: 'completed' } }));
+  state.observe('session', 'kiokuko_task_context_read', JSON.stringify(restored));
+  const after: string[] = [];
+  state.appendContext('session', after);
+  assert.deepEqual(after, [], 'A late read cannot revive a completed request');
+});
+
+test('Enno completion clears both the continuation and its selected execution choice', () => {
+  const state = new OpenCodeCompactionState();
+  state.observe('session', 'kiokuko_task_execution_select', activeOutput({ execution: { runId: 'run-one', revision: 1, choice: 'enno', mode: 'ask' } }));
+  state.observe('session', 'kiokuko_enno_meditation_submit', JSON.stringify({ ennoOduno: { applicable: true, status: 'completed', contractRevision: 3, directive: { runId: 'run-one' } } }));
+  assert.equal(state.boundary('session')?.contractRevision, 4, 'A stale terminal result cannot retire current execution');
+  state.observe('session', 'kiokuko_enno_meditation_submit', JSON.stringify({ ennoOduno: { applicable: true, status: 'completed' } }));
+  const context: string[] = [];
+  state.appendContext('session', context);
+  assert.deepEqual(context, []);
+});
+
 function activeOutput(overrides: Record<string, unknown> = {}): string {
   return JSON.stringify({
     run: { runId: 'run-one' },
