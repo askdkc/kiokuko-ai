@@ -19,6 +19,14 @@ test('source_context is a read-only, database-independent bounded MCP operation'
     assert.equal(tool?.annotations?.readOnlyHint, true);
     const response = await client.callTool({ name: 'source_context', arguments: { cwd: 'relative', task: 'investigate' } });
     assert.equal(response.isError, true); assert.equal(databaseOpened, false);
+    const valid = await client.callTool({ name: 'source_context', arguments: {
+      cwd: process.cwd(), task: `Inspect ghp_${'a'.repeat(36)}`,
+    } });
+    assert.notEqual(valid.isError, true);
+    const payload = valid.structuredContent as Record<string, unknown> | undefined;
+    assert.equal(payload?.status, 'unavailable');
+    assert.deepEqual(payload?.reasons, ['unsafe_query']);
+    assert.equal(databaseOpened, false);
   } finally { await client.close(); await server.close(); }
 });
 

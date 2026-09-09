@@ -31,6 +31,12 @@ function interactiveAnswers(...answers: string[]): PassThrough & { isTTY?: boole
   return input;
 }
 
+test('registers the documented explicit source commands', () => {
+  const source = buildCli().commands.find(command => command.name() === 'source');
+  assert.ok(source);
+  assert.deepEqual(source.commands.map(command => command.name()).sort(), ['configure', 'inspect', 'setup', 'status']);
+});
+
 test('reports the package version instead of a stale hard-coded CLI version', () => {
   const packageMetadata = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')) as { version: string };
   assert.equal(buildCli().version(), packageMetadata.version);
@@ -78,6 +84,7 @@ test('registers exactly the supported OpenCode and operator commands', () => {
     'enno',
     'embeddings',
     'trace',
+    'source',
     'web',
     'export',
     'import',

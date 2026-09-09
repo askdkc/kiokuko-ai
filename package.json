@@ -43,6 +43,7 @@
     "test": "node scripts/run-tests.mjs tests",
     "test:unit": "node scripts/run-tests.mjs tests/unit",
     "test:integration": "node scripts/run-tests.mjs tests/integration",
+    "test:source": "node scripts/run-tests.mjs tests/unit/source-context.test.ts tests/unit/source-llm-metrics.test.ts tests/integration/source-context.test.ts",
     "test:sqlite-vec": "node --import tsx tests/ci/sqlite-vec-package-smoke.ts",
     "test:global-install": "node tests/ci/global-install-smoke.mjs",
     "test:evaluation": "npm run build && node scripts/run-retrieval-evaluation.mjs",

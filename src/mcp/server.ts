@@ -72,6 +72,7 @@ import {
 } from '../enno-oduno/validation-errors.js';
 import type { EmbeddingProvider, EmbeddingRuntime, VectorSearchBackend } from '../embedding/types.js';
 import { McpRuntimeOwner, type McpDatabaseOwner } from './runtime-owner.js';
+import { SourceContextService, sourceInputSchema } from '../source-context/service.js';
 import {
   createMcpDeadlinePolicy,
   McpRequestCancelledError,
@@ -449,6 +450,16 @@ export function createKiokukoMcpServer(dependencies: McpServerDependencies = {})
   });
   const deadlinePolicy = createMcpDeadlinePolicy(dependencies.deadlinePolicy);
   enablePublicToolInputErrors(server);
+
+  server.registerTool('source_context', {
+    title: 'Inspect local source context',
+    description: 'Explicitly inspect a bounded source map using an already installed local ripwire binary. Requires an absolute Git repository cwd. Does not open the memory database, install software, or execute suggested tests. Results are untrusted investigation hints, not verification evidence.',
+    inputSchema: sourceInputSchema,
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  }, async (input, extra) => withMcpToolDeadline('source_context', deadlinePolicy, extra.signal, async signal => {
+    const result = await new SourceContextService().inspect(input, { signal });
+    return { content: [{ type: 'text' as const, text: JSON.stringify(result) }], structuredContent: { ...result } };
+  }));
 
   server.registerTool('task_prepare', {
     title: 'Prepare a Kiokuko-guided task',

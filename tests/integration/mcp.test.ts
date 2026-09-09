@@ -80,6 +80,7 @@ test('MCP exposes the memory-first task and lifecycle tools and persists candida
       'enno_work_claim',
       'enno_work_report',
       'memory_checkpoint',
+      'source_context',
       'task_answer',
       'task_context_read',
       'task_execution_select',
