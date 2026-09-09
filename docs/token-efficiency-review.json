@@ -1,0 +1,454 @@
+{
+  "head": "701f136b07e581349688971324f83ca6adb5b625",
+  "tokenizer": "js-tiktoken@1.0.21/o200k_base",
+  "scope": "Local MCP results and constructed boundary fixtures; no live provider calls",
+  "cases": [
+    {
+      "name": "task_prepare_without_memory_pending",
+      "pretty": {
+        "bytes": 23285,
+        "tokens": 7290,
+        "lines": 617
+      },
+      "compact": {
+        "bytes": 17744,
+        "tokens": 5760,
+        "lines": 1
+      },
+      "tokenReductionPercent": 20.987654320987655,
+      "semanticEqual": true,
+      "compactionEquivalent": true
+    },
+    {
+      "name": "task_execution_select_enno_ideal",
+      "pretty": {
+        "bytes": 30090,
+        "tokens": 9235,
+        "lines": 725
+      },
+      "compact": {
+        "bytes": 22556,
+        "tokens": 7411,
+        "lines": 1
+      },
+      "tokenReductionPercent": 19.750947482403898,
+      "semanticEqual": true,
+      "compactionEquivalent": true
+    },
+    {
+      "name": "scoped_context_8_synthetic_memories",
+      "pretty": {
+        "bytes": 28132,
+        "tokens": 7716,
+        "lines": 320
+      },
+      "compact": {
+        "bytes": 25389,
+        "tokens": 6913,
+        "lines": 1
+      },
+      "tokenReductionPercent": 10.406946604458268,
+      "semanticEqual": true,
+      "compactionEquivalent": true
+    },
+    {
+      "name": "synthetic_oversized_boundary",
+      "pretty": {
+        "bytes": 54410,
+        "tokens": 13639,
+        "lines": 21
+      },
+      "compact": {
+        "bytes": 54311,
+        "tokens": 13589,
+        "lines": 1
+      },
+      "tokenReductionPercent": 0.3665957914803138,
+      "semanticEqual": true,
+      "compactionEquivalent": true
+    }
+  ],
+  "catalog": {
+    "toolCount": 17,
+    "instructions": {
+      "bytes": 10185,
+      "tokens": 1921,
+      "lines": 1
+    },
+    "tools": [
+      {
+        "name": "task_prepare",
+        "description": {
+          "bytes": 8230,
+          "tokens": 1583,
+          "lines": 1
+        },
+        "schema": {
+          "bytes": 3752,
+          "tokens": 867,
+          "lines": 1
+        }
+      },
+      {
+        "name": "task_execution_select",
+        "description": {
+          "bytes": 1126,
+          "tokens": 214,
+          "lines": 1
+        },
+        "schema": {
+          "bytes": 2096,
+          "tokens": 623,
+          "lines": 1
+        }
+      },
+      {
+        "name": "task_answer",
+        "description": {
+          "bytes": 8546,
+          "tokens": 1622,
+          "lines": 1
+        },
+        "schema": {
+          "bytes": 1538,
+          "tokens": 327,
+          "lines": 1
+        }
+      },
+      {
+        "name": "task_context_read",
+        "description": {
+          "bytes": 248,
+          "tokens": 45,
+          "lines": 1
+        },
+        "schema": {
+          "bytes": 403,
+          "tokens": 104,
+          "lines": 1
+        }
+      },
+      {
+        "name": "enno_plan_submit",
+        "description": {
+          "bytes": 780,
+          "tokens": 147,
+          "lines": 1
+        },
+        "schema": {
+          "bytes": 6755,
+          "tokens": 1713,
+          "lines": 1
+        }
+      },
+      {
+        "name": "enno_work_claim",
+        "description": {
+          "bytes": 207,
+          "tokens": 37,
+          "lines": 1
+        },
+        "schema": {
+          "bytes": 809,
+          "tokens": 206,
+          "lines": 1
+        }
+      },
+      {
+        "name": "enno_ideal_submit",
+        "description": {
+          "bytes": 471,
+          "tokens": 92,
+          "lines": 1
+        },
+        "schema": {
+          "bytes": 1876,
+          "tokens": 487,
+          "lines": 1
+        }
+      },
+      {
+        "name": "enno_advice_submit",
+        "description": {
+          "bytes": 968,
+          "tokens": 177,
+          "lines": 1
+        },
+        "schema": {
+          "bytes": 7360,
+          "tokens": 1874,
+          "lines": 1
+        }
+      },
+      {
+        "name": "enno_advice_read",
+        "description": {
+          "bytes": 427,
+          "tokens": 85,
+          "lines": 1
+        },
+        "schema": {
+          "bytes": 747,
+          "tokens": 191,
+          "lines": 1
+        }
+      },
+      {
+        "name": "enno_answer",
+        "description": {
+          "bytes": 538,
+          "tokens": 95,
+          "lines": 1
+        },
+        "schema": {
+          "bytes": 882,
+          "tokens": 223,
+          "lines": 1
+        }
+      },
+      {
+        "name": "enno_work_report",
+        "description": {
+          "bytes": 550,
+          "tokens": 101,
+          "lines": 1
+        },
+        "schema": {
+          "bytes": 1524,
+          "tokens": 393,
+          "lines": 1
+        }
+      },
+      {
+        "name": "enno_verify_prepare",
+        "description": {
+          "bytes": 752,
+          "tokens": 140,
+          "lines": 1
+        },
+        "schema": {
+          "bytes": 740,
+          "tokens": 187,
+          "lines": 1
+        }
+      },
+      {
+        "name": "enno_finish",
+        "description": {
+          "bytes": 826,
+          "tokens": 158,
+          "lines": 1
+        },
+        "schema": {
+          "bytes": 1373,
+          "tokens": 352,
+          "lines": 1
+        }
+      },
+      {
+        "name": "enno_meditation_submit",
+        "description": {
+          "bytes": 466,
+          "tokens": 85,
+          "lines": 1
+        },
+        "schema": {
+          "bytes": 1579,
+          "tokens": 410,
+          "lines": 1
+        }
+      },
+      {
+        "name": "curator_check",
+        "description": {
+          "bytes": 329,
+          "tokens": 57,
+          "lines": 1
+        },
+        "schema": {
+          "bytes": 613,
+          "tokens": 131,
+          "lines": 1
+        }
+      },
+      {
+        "name": "curator_globalize",
+        "description": {
+          "bytes": 351,
+          "tokens": 64,
+          "lines": 1
+        },
+        "schema": {
+          "bytes": 509,
+          "tokens": 118,
+          "lines": 1
+        }
+      },
+      {
+        "name": "memory_checkpoint",
+        "description": {
+          "bytes": 977,
+          "tokens": 189,
+          "lines": 1
+        },
+        "schema": {
+          "bytes": 4621,
+          "tokens": 1193,
+          "lines": 1
+        }
+      }
+    ],
+    "serializedTools": {
+      "bytes": 67229,
+      "tokens": 15276,
+      "lines": 1
+    }
+  },
+  "prepareFieldSizes": [
+    {
+      "key": "execution",
+      "bytes": 11520,
+      "tokens": 4181,
+      "lines": 1
+    },
+    {
+      "key": "intake",
+      "bytes": 3178,
+      "tokens": 784,
+      "lines": 1
+    },
+    {
+      "key": "context",
+      "bytes": 524,
+      "tokens": 211,
+      "lines": 1
+    },
+    {
+      "key": "capabilities",
+      "bytes": 606,
+      "tokens": 139,
+      "lines": 1
+    },
+    {
+      "key": "securityNotice",
+      "bytes": 596,
+      "tokens": 94,
+      "lines": 1
+    },
+    {
+      "key": "ennoOduno",
+      "bytes": 304,
+      "tokens": 78,
+      "lines": 1
+    },
+    {
+      "key": "executionContext",
+      "bytes": 228,
+      "tokens": 60,
+      "lines": 1
+    },
+    {
+      "key": "project",
+      "bytes": 177,
+      "tokens": 56,
+      "lines": 1
+    },
+    {
+      "key": "run",
+      "bytes": 66,
+      "tokens": 33,
+      "lines": 1
+    },
+    {
+      "key": "skillDiscovery",
+      "bytes": 120,
+      "tokens": 33,
+      "lines": 1
+    },
+    {
+      "key": "memoryPolicy",
+      "bytes": 79,
+      "tokens": 20,
+      "lines": 1
+    },
+    {
+      "key": "enrichment",
+      "bytes": 55,
+      "tokens": 14,
+      "lines": 1
+    },
+    {
+      "key": "continuationPolicy",
+      "bytes": 44,
+      "tokens": 11,
+      "lines": 1
+    },
+    {
+      "key": "nextAction",
+      "bytes": 9,
+      "tokens": 4,
+      "lines": 1
+    },
+    {
+      "key": "warnings",
+      "bytes": 2,
+      "tokens": 1,
+      "lines": 1
+    },
+    {
+      "key": "contextRevision",
+      "bytes": 1,
+      "tokens": 1,
+      "lines": 1
+    }
+  ],
+  "memory": {
+    "selectedCount": 8,
+    "charBudget": 12000,
+    "debugTokens": 812
+  },
+  "hostTruncationFixture": {
+    "upstreamCommit": "cb7d8b2f5e44876ef98b661dc10590c915af3a9f",
+    "maxBytes": 51200,
+    "maxLines": 2000,
+    "prettyPreviewBytes": 101,
+    "compactPreviewBytes": 0,
+    "note": "Reproduces the upstream line-based prefix loop only; no OpenCode runtime or file persistence invoked."
+  },
+  "verification": {
+    "existingTests": 27,
+    "passed": 27,
+    "failed": 0,
+    "skipped": 0,
+    "tests": [
+      "tests/unit/opencode-compaction.test.ts",
+      "tests/integration/scoped-context-budget.test.ts",
+      "tests/integration/context-delivery-revisions.test.ts"
+    ],
+    "liveProvider": false,
+    "installedOpenCode": false,
+    "productionCodeChanged": false
+  },
+  "methodology": {
+    "transport": "MCP SDK InMemoryTransport, current createKiokukoMcpServer, synthetic temporary Git repository and isolated SQLite fixture",
+    "preparedTask": "Implement the durable beacon and add tests",
+    "executionCatalog": "tests/fixtures/execution-selection.ts fixtureExecutionCatalog()",
+    "memoryFixture": "8 synthetic project lessons, 12000 character budget, current queryScopedContext()",
+    "capabilities": [
+      "kiokuko-soul",
+      "kiokuko-single-purpose-functions",
+      "memory-reasoning"
+    ],
+    "tokenizerModelMatch": "unknown; encoding comparison only",
+    "randomIdentifiers": "Generated run/entry identifiers and temporary paths may change exact token counts across runs",
+    "network": "Skill discovery off; injected fetch rejects network; no live model invoked",
+    "compactionCheck": "Checks observe/appendContext equality for raw and native envelopes; scoped-context-only case has no active Enno state",
+    "rankingDiagnostics": "debugTokens includes selectionReasons, which carries semantic warnings/status and is NOT all removable",
+    "boundaryLoop": "Source-derived local reproduction of OpenCode line-prefix truncation only; host not launched"
+  },
+  "followupAudit": {
+    "report": "token-efficiency-flow-review.ja.md",
+    "results": "token-efficiency-flow-review.json",
+    "note": "Original result-only token counts remain local measurements, not proof of the proposed end-to-end implementation. Follow-up audit revised configuration ownership and release gates."
+  }
+}

@@ -226,7 +226,13 @@ export const KiokukoPlugin: Plugin = async ({ client, directory }, options) => {
     },
     'experimental.session.compacting': async ({ sessionID }, output) => {
       if (!lifecycle.isActive()) return;
-      compactionState.appendContext(sessionID, output.context);
+      const context: string[] = [];
+      compactionState.appendContext(sessionID, context);
+      output.context.push(...context);
+      // OpenCode ignores context when an earlier plugin supplies a custom prompt.
+      if (typeof output.prompt === 'string' && context.length > 0) {
+        output.prompt = [output.prompt, ...context].join('\n\n');
+      }
       const boundary = compactionState.boundary(sessionID);
       if (boundary !== null) {
         await runKiokukoCompactionHook({

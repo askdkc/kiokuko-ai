@@ -1,3 +1,5 @@
+import { TERMINAL_RUN_STATUSES } from '../ledger/types.js';
+
 const MAX_TRACKED_SESSIONS = 512;
 const MAX_TOOL_OUTPUT_BYTES = 256 * 1024;
 
@@ -11,7 +13,7 @@ const ACTIVE_ENNO_STATUSES = new Set([
   'oduno_meditation',
 ]);
 
-const ENNO_STATE_TOOL = /(?:^|_)(?:task_prepare|task_answer|task_execution_select|enno_[a-z_]+)$/u;
+const ENNO_STATE_TOOL = /(?:^|_)(?:task_prepare|task_answer|task_execution_select|task_context_read|memory_checkpoint|enno_[a-z_]+)$/u;
 const PHASE_ORDER = ['intake', 'oduno_ideal', 'zenki_planning', 'needs_confirmation',
   'goki_executing', 'enno_verifying', 'oduno_meditation'];
 
@@ -52,6 +54,7 @@ function parseToolOutput(value: unknown): Record<string, unknown> | undefined {
   // Native tools return `output`; OpenCode passes raw MCP CallToolResult to
   // this same hook before converting its text content into a native result.
   const envelope = record(value);
+  if (envelope?.isError === true) return undefined;
   let output = typeof value === 'string' ? value : envelope?.output;
   if (typeof output !== 'string' && Array.isArray(envelope?.content)) {
     let text = '';
@@ -163,6 +166,9 @@ export class OpenCodeCompactionState {
       ?? boundedText(execution?.runId, 256) ?? prior?.runId;
     if (observedRunId && this.retiredRuns.get(sessionId)?.has(observedRunId)) return;
     const choice = this.choices.get(sessionId);
+    const runStatus = record(parsed.run)?.status;
+    const terminal = TERMINAL_RUN_STATUSES.some(status => status === runStatus)
+      || ['completed', 'cancelled'].includes(String(parsedState?.status));
     if (execution?.runId === choice?.runId && typeof execution?.revision === 'number' && typeof choice?.revision === 'number'
       && (execution.revision < choice.revision
         || (execution.revision === choice.revision && execution.choice !== choice.choice))) return;
@@ -174,6 +180,12 @@ export class OpenCodeCompactionState {
       if (revision === prior.contractRevision && typeof parsedState.status === 'string'
         && ACTIVE_ENNO_STATUSES.has(parsedState.status)
         && PHASE_ORDER.indexOf(parsedState.status) < PHASE_ORDER.indexOf(prior.status)) return;
+    }
+    if (terminal && observedRunId !== undefined) {
+      this.retire(sessionId, observedRunId);
+      if (choice?.runId === observedRunId) this.choices.delete(sessionId);
+      if (prior?.runId === observedRunId) this.entries.delete(sessionId);
+      return;
     }
     if (observedRunId !== undefined) {
       if (prior !== undefined && prior.runId !== observedRunId) this.retire(sessionId, prior.runId);
@@ -197,6 +209,7 @@ export class OpenCodeCompactionState {
       const status = boundedText(parsedState?.status, 100);
       if (status !== undefined && !ACTIVE_ENNO_STATUSES.has(status)) {
         if (observedRunId !== undefined) this.retire(sessionId, observedRunId);
+        if (this.choices.get(sessionId)?.runId === observedRunId) this.choices.delete(sessionId);
         this.entries.delete(sessionId);
       }
       return;

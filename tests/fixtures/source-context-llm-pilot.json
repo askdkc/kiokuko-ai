@@ -1,0 +1,24 @@
+[
+  {
+    "id": "routing-ja",
+    "task": "idealとZenkiへの委譲前にソース調査を行う間、選択モデルやphase、revisionが変わった場合に古い状態で委譲しないための改善計画を作ってください。現在の実装を確認し、既に満たしている条件には変更不要と明記してください。実装は変更せず、根拠のファイル・シンボル、必要な変更、回帰テスト、残る不確実性を報告してください。",
+    "rubric": [
+      { "id": "routing", "path": "src/opencode/execution.ts", "symbol": "createExecutionHooks", "criterion": "Identify pre-dispatch ancestry, exact selected role/model and configuration checks; do not add a model argument to standard task." },
+      { "id": "race", "path": "src/opencode/execution.ts", "symbol": "refreshed", "criterion": "Recognize existing post-investigation route digest and model configuration rechecks, and prompt digest computed after enrichment. Do not propose already-present checks as missing." },
+      { "id": "identity", "path": "src/execution/store.ts", "symbol": "sourceRevision", "criterion": "Trace the saved original task and contract/mutation/route bindings through readExecutionRouting; do not send control identities to ripwire." },
+      { "id": "regression", "path": "tests/unit/execution-hooks.test.ts", "symbol": "source investigation cannot dispatch after phase/revision changes", "criterion": "Inspect existing race tests and distinguish model, phase, contract, mutation and route changes; name focused validation without claiming it was executed." },
+      { "id": "scope", "path": "src/source-context/config.ts", "symbol": "SOURCE_AUTO_ACCEPTED", "criterion": "Recognize the acceptance gate remains false, keep model failures explicit and distinguish source enrichment from verification evidence; justify no-op or a bounded change." }
+    ]
+  },
+  {
+    "id": "cancellation-en",
+    "task": "Plan how source_context must distinguish caller cancellation from its own investigation timeout. Timeouts may return an unavailable result for ordinary research, caller cancellation must propagate, and permission/path violations must reject the operation. Inspect the current implementation and report requirements already satisfied, any bounded changes still needed, focused regression tests and uncertainty. Do not edit files or claim tests have run. Cite implementation files and symbols.",
+    "rubric": [
+      { "id": "caller", "path": "src/source-context/service.ts", "symbol": "dependencies.signal", "criterion": "Distinguish the caller signal from the composite deadline signal and recognize the caller-aborted catch path rethrows instead of returning unavailable." },
+      { "id": "deadline", "path": "src/source-context/service.ts", "symbol": "TimeoutError", "criterion": "Identify the configured investigation timeout and unavailable timeout projection; do not turn absence into success or silently treat a caller abort as fallback." },
+      { "id": "process", "path": "src/source-context/process.ts", "symbol": "runSourceProcess", "criterion": "Trace shell:false, detached process-group termination and waiting for close; distinguish supported POSIX process-group behavior from a universal descendant guarantee." },
+      { "id": "mcp", "path": "src/mcp/server.ts", "symbol": "source_context", "criterion": "Trace extra.signal through withMcpToolDeadline and inspect request-deadline.ts cancellation/deadline handling; distinguish outer MCP response lifetime from child cleanup." },
+      { "id": "regression", "path": "tests/unit/source-context.test.ts", "symbol": "caller cancellation propagates", "criterion": "Inspect existing cancellation/timeout tests, identify whether cancellation during active analysis is covered, and propose focused evidence without claiming tests were executed." }
+    ]
+  }
+]

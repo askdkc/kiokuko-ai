@@ -13,6 +13,7 @@ export type McpToolOperation =
   | 'task_answer'
   | 'task_execution_select'
   | 'task_context_read'
+  | 'source_context'
   | 'memory_checkpoint'
   | 'curator_check'
   | 'curator_globalize'

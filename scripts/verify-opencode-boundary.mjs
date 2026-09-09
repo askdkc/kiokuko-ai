@@ -51,7 +51,14 @@ for (const file of files.sort()) {
       if (line.includes(phrase)) findings.push(`${file}:${index + 1}:${phrase}`);
     }
     if (foreignAgentAllowlist.has(file)) continue;
-    const lowercase = line.toLowerCase();
+    // Excluding a private agent directory from snapshots is not client support.
+    // Allow only this quoted entry in the exclusion declaration; keep scanning
+    // the rest of the file and any comment following the declaration.
+    const checkedLine = file === 'src/source-context/snapshot.ts'
+      ? line.replace(/^const EXCLUDED = new Set\(\[[^\]]*\]\);/u,
+        (declaration) => declaration.replaceAll(`'.${foreignAgents[0]}'`, ''))
+      : line;
+    const lowercase = checkedLine.toLowerCase();
     for (const agent of foreignAgents) {
       if (lowercase.includes(agent)) findings.push(`${file}:${index + 1}:${agent}`);
     }
