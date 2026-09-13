@@ -1,6 +1,6 @@
 import type { SqliteDatabase } from '../db/adapter.js';
 import { KiokukoError } from '../errors.js';
-import { readEntry } from '../memory/entries.js';
+import { readEntries, type readEntry } from '../memory/entries.js';
 import {
   activeExternalSkillReferenceCandidateSql,
   externalSkillReferenceCandidateSql,
@@ -10,7 +10,7 @@ import { isRetrievableEntry } from '../memory/hybrid-retrieval.js';
 import { canonicalContentHash, compareCanonicalStrings } from '../serialization/validate.js';
 import { isExternalSkillReference, readExternalSkill } from '../skills/store.js';
 import { isCuratorManagedGlobalMemory } from '../memory/curator-trust.js';
-import { contextFeedbackSignals } from './feedback.js';
+import { contextFeedbackSignalsForEntries, type ContextFeedbackSignal } from './feedback.js';
 import { readActiveEmbeddingProfile, readEmbeddingRuntimeState, readEntryEmbedding, type ActiveEmbeddingProfile } from '../embedding/store.js';
 
 export const CONTEXT_SELECTION_STATE_MAX_ENTRIES = 10_000;
@@ -86,20 +86,25 @@ function assertExternalEntryMappings(
   }
 }
 
-function searchSignalSnapshot(database: SqliteDatabase, entryId: string): Array<{ type: string; value: string }> {
+function searchSignalSnapshots(database: SqliteDatabase, entryIds: readonly string[]): Map<string, Array<{ type: string; value: string }>> {
+  const snapshots = new Map<string, Array<{ type: string; value: string }>>();
+  if (entryIds.length === 0) return snapshots;
   const rows = database.prepare(`
-    SELECT signal_type AS type, normalized_value AS value
+    SELECT entry_id AS entryId, signal_type AS type, normalized_value AS value
       FROM entry_search_signals
-     WHERE entry_id = ?
-     ORDER BY signal_type ASC, normalized_value ASC
-  `).all<{ type: unknown; value: unknown }>(entryId);
-  return rows.map((row) => {
+     WHERE entry_id IN (${entryIds.map(() => '?').join(', ')})
+     ORDER BY entry_id ASC, signal_type ASC, normalized_value ASC
+  `).all<{ entryId: string; type: unknown; value: unknown }>(...entryIds);
+  for (const row of rows) {
     if (typeof row.type !== 'string' || row.type.length === 0
       || typeof row.value !== 'string' || row.value.length === 0) {
       throw new KiokukoError('INTEGRITY_ERROR', 'Stored context search signal is invalid');
     }
-    return { type: row.type, value: row.value };
-  });
+    const values = snapshots.get(row.entryId) ?? [];
+    values.push({ type: row.type, value: row.value });
+    snapshots.set(row.entryId, values);
+  }
+  return snapshots;
 }
 
 function externalSkillSnapshot(database: SqliteDatabase, entryId: string): Record<string, unknown> | null {
@@ -229,6 +234,8 @@ function selectionEntrySnapshot(
   database: SqliteDatabase,
   entry: ReturnType<typeof readEntry>,
   semanticState: SemanticProjectionState | null,
+  searchSignals: Array<{ type: string; value: string }>,
+  feedback: ContextFeedbackSignal[],
 ): Record<string, unknown> {
   const external = isExternalSkillReference(entry) ? externalSkillSnapshot(database, entry.id) : null;
   return {
@@ -251,9 +258,9 @@ function selectionEntrySnapshot(
     createdAt: entry.createdAt,
     updatedAt: entry.updatedAt,
     verifiedAt: entry.verifiedAt,
-    searchSignals: searchSignalSnapshot(database, entry.id),
+    searchSignals,
     ...(external === null ? {} : { external }),
-    feedback: contextFeedbackSignals(database, entry.id),
+    feedback,
     ...(semanticState === null ? {} : { semantic: semanticProjectionSnapshotForState(database, entry, semanticState) }),
   };
 }
@@ -367,29 +374,33 @@ function contextCandidateState(
     throw new KiokukoError('INTEGRITY_ERROR', 'Context selection state exceeds the policy bound');
   }
   const relevant = new Set(workspaces);
-  const entries = rows.flatMap((row) => {
+  const inputs = rows.map((row) => {
     if (typeof row.id !== 'string'
       || typeof row.workspace !== 'string'
       || row.isExternal !== 0 && row.isExternal !== 1) {
       throw new KiokukoError('INTEGRITY_ERROR', 'Stored context selection state is invalid');
     }
-    const entry = readEntry(
-      database,
-      { workspace: row.workspace, entryId: row.id },
-      // Managed external entries require the current structured scope shape.
-      { requireStructuredScope: row.isExternal === 1 },
-    );
-    if (entry.status === 'superseded') return [];
-    const local = relevant.has(entry.workspace);
-    const external = isExternalSkillReference(entry);
-    if (external && !options.includeExternal) return [];
-    if (isCuratorManagedGlobalMemory(entry) && !options.includeTrustedCurator) return [];
-    const retrievable = local
-      ? isRetrievableEntry(database, entry)
-      : options.includeEcosystem && isFederatedEcosystemCandidate(database, entry);
-    if (!retrievable) return [];
-     return [selectionEntrySnapshot(database, entry, semanticState)];
+    return { workspace: row.workspace, entryId: row.id, requireStructuredScope: row.isExternal === 1 };
   });
+  const entries: Record<string, unknown>[] = [];
+  for (let offset = 0; offset < inputs.length; offset += 256) {
+    const batch = readEntries(database, inputs.slice(offset, offset + 256)).filter((entry) => {
+      if (entry.status === 'superseded') return false;
+      const local = relevant.has(entry.workspace);
+      const external = isExternalSkillReference(entry);
+      if (external && !options.includeExternal) return false;
+      if (isCuratorManagedGlobalMemory(entry) && !options.includeTrustedCurator) return false;
+      // Local ordinary mappings were checked in bulk by assertExternalEntryMappings.
+      // External and cross-workspace candidates retain their canonical eligibility checks.
+      return local
+        ? !external || isRetrievableEntry(database, entry)
+        : options.includeEcosystem && isFederatedEcosystemCandidate(database, entry);
+    });
+    const ids = batch.map((entry) => entry.id);
+    const signals = searchSignalSnapshots(database, ids);
+    const feedback = contextFeedbackSignalsForEntries(database, ids);
+    for (const entry of batch) entries.push(selectionEntrySnapshot(database, entry, semanticState, signals.get(entry.id) ?? [], feedback.get(entry.id) ?? []));
+  }
   return {
     workspaces,
     entries,

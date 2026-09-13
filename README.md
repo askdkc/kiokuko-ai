@@ -139,6 +139,7 @@ See [all five roles, mixed providers, permissions, and troubleshooting](docs/orc
 - [Concepts](docs/concepts.md)
 - [役小角(enno-oduno)](docs/enno-oduno.md)
 - [Semantic retrieval](docs/semantic-retrieval.md)
+- [Akinator profile memory: configuration, backfill, and limitations](docs/akinator-memory.md)
 - [Security and trust](docs/security-and-trust.md)
 - [CLI contract](docs/cli-contract.md)
 

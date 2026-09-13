@@ -1,3 +1,4 @@
+import { parseMemoryResolution } from '../akinator/memory-probe-types.js';
 import { createHash } from 'node:crypto';
 
 import type { SqliteDatabase, SqliteValue } from '../db/adapter.js';
@@ -21,7 +22,7 @@ import {
 } from './types.js';
 
 export const LEDGER_ARCHIVE_FORMAT = 'kiokuko-ledger-jsonl' as const;
-export const LEDGER_ARCHIVE_VERSION = 1 as const;
+export const LEDGER_ARCHIVE_VERSION = 2 as const;
 
 export const MAX_ARCHIVE_LINE_COUNT = 10_000;
 export const MAX_ARCHIVE_LINE_BYTES = 512 * 1024;
@@ -33,7 +34,7 @@ const TEXT_MAX_LENGTH = 16 * 1024;
 const TIMESTAMP_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 const HASH_PATTERN = /^[0-9a-f]{64}$/;
 const PROFILE_FIELDS = new Set(['taskType', 'target', 'expected', 'constraints']);
-const PROFILE_SOURCES = new Set(['inferred', 'client_supplied', 'user_answer']);
+const PROFILE_SOURCES = new Set(['inferred', 'client_supplied', 'user_answer', 'memory']);
 const TASK_TYPES = new Set(['build', 'debug', 'research', 'review', 'devops', 'writing', 'analysis']);
 const REDACTION_KINDS = new Set([
   'sensitive_key', 'secret_pattern', 'url', 'home_path', 'preview_truncated', 'environment_value', 'hidden_reasoning',
@@ -44,6 +45,7 @@ const EVIDENCE_KINDS = new Set(['command', 'test', 'file', 'diff', 'url', 'artif
 const PURGE_TARGET_TYPES = new Set(['run', 'event', 'evidence', 'delivery', 'feedback', 'memory_link']);
 
 export interface LedgerArchiveCounts {
+  memoryResolutions: number;
   runs: number;
   sessions: number;
   answers: number;
@@ -91,6 +93,7 @@ type ArchiveRecord = Record<string, unknown> & { type: string };
 type Row = Record<string, unknown>;
 
 const EMPTY_COUNTS: LedgerArchiveCounts = {
+  memoryResolutions: 0,
   runs: 0,
   sessions: 0,
   answers: 0,
@@ -108,6 +111,7 @@ const EMPTY_COUNTS: LedgerArchiveCounts = {
 };
 
 const RECORD_FIELDS: Record<ArchiveRecordType | 'manifest' | 'checksum', readonly string[]> = {
+  memoryResolutions: ['type', 'run_id', 'resolution_json', 'created_at'],
   checksum: ['type', 'sha256'],
   manifest: ['type', 'archiveVersion', 'format', 'workspace', 'counts'],
   runs: [
@@ -153,6 +157,7 @@ const RECORD_FIELDS: Record<ArchiveRecordType | 'manifest' | 'checksum', readonl
 };
 
 const TABLE_FIELDS: Record<ArchiveRecordType, readonly string[]> = {
+  memoryResolutions: RECORD_FIELDS.memoryResolutions.slice(1),
   runs: RECORD_FIELDS.runs.slice(1),
   sessions: RECORD_FIELDS.sessions.slice(1),
   answers: RECORD_FIELDS.answers.slice(1),
@@ -170,6 +175,7 @@ const TABLE_FIELDS: Record<ArchiveRecordType, readonly string[]> = {
 };
 
 const TABLE_NAMES: Record<ArchiveRecordType, string> = {
+  memoryResolutions: 'akinator_memory_resolutions',
   runs: 'ledger_runs',
   sessions: 'akinator_sessions',
   answers: 'akinator_answers',
@@ -187,6 +193,7 @@ const TABLE_NAMES: Record<ArchiveRecordType, string> = {
 };
 
 const UNIQUE_CONSTRAINT_TARGETS: Record<ArchiveRecordType, readonly string[]> = {
+  memoryResolutions: ['akinator_memory_resolutions.run_id'],
   runs: ['ledger_runs.run_id'],
   sessions: ['akinator_sessions.id'],
   answers: ['akinator_answers.session_id, akinator_answers.question_id'],
@@ -208,6 +215,7 @@ const UNIQUE_CONSTRAINT_TARGETS: Record<ArchiveRecordType, readonly string[]> = 
 };
 
 const RECORD_NAMES: Record<ArchiveRecordType, string> = {
+  memoryResolutions: 'memory_resolution',
   runs: 'run',
   sessions: 'session',
   answers: 'answer',
@@ -427,6 +435,11 @@ function normalizeRecord(type: ArchiveRecordType, source: Row, workspace: string
   assertFields(raw, RECORD_FIELDS[type]);
   const normalized: Row = { type };
   switch (type) {
+    case 'memoryResolutions':
+      normalized.run_id = stringValue(raw.run_id, true, IDENTIFIER_MAX_LENGTH);
+      normalized.resolution_json = parsedJson(raw.resolution_json, value => { parseMemoryResolution(value); });
+      normalized.created_at = timestampValue(raw.created_at);
+      break;
     case 'runs': {
       if (stringValue(raw.workspace) !== workspace) validation();
       normalized.run_id = stringValue(raw.run_id, true, IDENTIFIER_MAX_LENGTH);
@@ -639,6 +652,7 @@ function rows(database: SqliteDatabase, sql: string, ...parameters: SqliteValue[
 function queryRows(database: SqliteDatabase, type: ArchiveRecordType, workspace: string): ArchiveRecord[] {
   const fields = TABLE_FIELDS[type].join(', ');
   const scoped: Record<ArchiveRecordType, { sql: string; parameters: SqliteValue[] }> = {
+    memoryResolutions: { sql: 'SELECT m.run_id, m.resolution_json, m.created_at FROM akinator_memory_resolutions AS m JOIN ledger_runs AS lr ON lr.run_id = m.run_id WHERE lr.workspace = ? ORDER BY m.run_id', parameters: [workspace] },
     runs: { sql: `SELECT ${fields} FROM ledger_runs WHERE workspace = ? ORDER BY run_id ASC`, parameters: [workspace] },
     sessions: { sql: `SELECT s.${TABLE_FIELDS.sessions.join(', s.')} FROM akinator_sessions AS s JOIN run_intakes AS ri ON ri.session_id = s.id JOIN ledger_runs AS lr ON lr.run_id = ri.run_id WHERE lr.workspace = ? ORDER BY s.id ASC`, parameters: [workspace] },
     answers: { sql: `SELECT a.${TABLE_FIELDS.answers.join(', a.')} FROM akinator_answers AS a JOIN akinator_sessions AS s ON s.id = a.session_id JOIN run_intakes AS ri ON ri.session_id = s.id JOIN ledger_runs AS lr ON lr.run_id = ri.run_id WHERE lr.workspace = ? ORDER BY a.session_id ASC, a.question_id ASC`, parameters: [workspace] },
@@ -722,9 +736,9 @@ function parseLine(line: string, fields: readonly string[]): Row {
   return parsed;
 }
 
-function parseCounts(value: unknown): LedgerArchiveCounts {
+function parseCounts(value: unknown, legacy = false): LedgerArchiveCounts {
   assertObject(value);
-  const fields = Object.keys(EMPTY_COUNTS);
+  const fields = Object.keys(EMPTY_COUNTS).filter(field => !legacy || field !== 'memoryResolutions');
   assertFields(value, fields);
   const counts = { ...EMPTY_COUNTS };
   for (const type of fields as ArchiveRecordType[]) counts[type] = integerValue(value[type]);
@@ -742,11 +756,11 @@ function parseArchive(content: string): { workspace: string; counts: LedgerArchi
   const manifest = parseLine(lines[1]!, RECORD_FIELDS.manifest);
   if (manifest.type !== 'manifest'
     || typeof manifest.archiveVersion !== 'number'
-    || manifest.archiveVersion !== LEDGER_ARCHIVE_VERSION
+    || (manifest.archiveVersion !== 1 && manifest.archiveVersion !== LEDGER_ARCHIVE_VERSION)
     || manifest.format !== LEDGER_ARCHIVE_FORMAT) validation();
   secretScan(manifest as ArchiveRecord);
   const workspace = requireWorkspace(manifest.workspace);
-  const counts = parseCounts(manifest.counts);
+  const counts = parseCounts(manifest.counts, manifest.archiveVersion === 1);
   const records = new Map<ArchiveRecordType, ArchiveRecord[]>();
   for (const type of Object.keys(EMPTY_COUNTS) as ArchiveRecordType[]) records.set(type, []);
   const seenManifest = [manifest];
@@ -780,6 +794,7 @@ function parseArchive(content: string): { workspace: string; counts: LedgerArchi
 
 function identity(type: ArchiveRecordType, record: ArchiveRecord): string {
   switch (type) {
+    case 'memoryResolutions': return String(record.run_id);
     case 'runs': return String(record.run_id);
     case 'sessions': return String(record.id);
     case 'answers': return `${record.session_id}\u0000${record.question_id}`;
@@ -823,6 +838,11 @@ function validateGraph(records: Map<ArchiveRecordType, ArchiveRecord[]>, workspa
   const sessions = records.get('sessions') ?? [];
   const intakes = records.get('runIntakes') ?? [];
   const runIds = new Set(runs.map((record) => String(record.run_id)));
+  for (const record of records.get('memoryResolutions') ?? []) {
+    if (!runIds.has(String(record.run_id))) integrity();
+    const resolution = parseMemoryResolution(JSON.parse(String(record.resolution_json)));
+    if (resolution.candidates.some(ref => ref.workspace !== workspace)) integrity();
+  }
   const sessionIds = new Set(sessions.map((record) => String(record.id)));
   const intakeByRun = new Map<string, ArchiveRecord>();
   const intakeBySession = new Map<string, ArchiveRecord>();
@@ -1027,6 +1047,7 @@ function selectExisting(database: SqliteDatabase, type: ArchiveRecordType, recor
   let sql = `SELECT ${fields} FROM ${table} WHERE `;
   const parameters: SqliteValue[] = [];
   switch (type) {
+    case 'memoryResolutions': sql += 'run_id = ?'; parameters.push(String(record.run_id)); break;
     case 'runs': sql += 'run_id = ?'; parameters.push(String(record.run_id)); break;
     case 'sessions': sql += 'id = ?'; parameters.push(String(record.id)); break;
     case 'answers': sql += 'session_id = ? AND question_id = ?'; parameters.push(String(record.session_id), String(record.question_id)); break;
@@ -1124,7 +1145,7 @@ function orderedForImport(records: Map<ArchiveRecordType, ArchiveRecord[]>): Arc
   for (const run of runRecords) emitRun(run);
   const orderedTypes: ArchiveRecordType[] = [
     'sessions', 'answers', 'runIntakes', 'intakeFeedback', 'events', 'evidence', 'deliveries', 'nudgeDeliveries',
-    'deliveryEntries', 'contextFeedback', 'runFeedback', 'memoryLinks', 'purgeAudit',
+    'deliveryEntries', 'contextFeedback', 'runFeedback', 'memoryLinks', 'purgeAudit', 'memoryResolutions',
   ];
   for (const type of orderedTypes) output.push(...(records.get(type) ?? []));
   return output;
@@ -1170,6 +1191,7 @@ export function importLedgerArchive(database: SqliteDatabase | undefined, option
         const type = record.type as ArchiveRecordType;
         if (duplicates[type] > 0 && selectExisting(db, type, record)) continue;
         insertRecord(db, type, record);
+        if (type === 'runIntakes') db.prepare('DELETE FROM akinator_profile_backfill WHERE workspace = ?').run(parsed.workspace);
       }
     });
   } catch (error) {

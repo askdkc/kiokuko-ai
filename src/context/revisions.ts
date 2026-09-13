@@ -1,3 +1,4 @@
+import { snapshotProfileHints, hydrateProfileHints } from '../akinator/profile-hint-snapshot.js';
 import type { SqliteDatabase, SqliteRow } from '../db/adapter.js';
 import { withImmediateTransaction } from '../db/transaction.js';
 import { KiokukoError } from '../errors.js';
@@ -50,7 +51,8 @@ export function recordTaskContextRevision(database: SqliteDatabase, input: {
 }): TaskContextRevision {
   return withImmediateTransaction(database, () => {
     const now = input.now ?? new Date().toISOString();
-    const selectionStateHash = canonicalContentHash(input.context);
+    const snapshot = snapshotProfileHints(input.context);
+    const selectionStateHash = canonicalContentHash(snapshot);
     const existing = database.prepare(`
       SELECT run_id, context_revision, selection_state_hash, context_json, created_at
       FROM task_context_revisions
@@ -65,7 +67,7 @@ export function recordTaskContextRevision(database: SqliteDatabase, input: {
       INSERT INTO task_context_revisions (
         run_id, context_revision, selection_state_hash, context_json, created_at
       ) VALUES (?, ?, ?, ?, ?)
-    `).run(input.runId, next, selectionStateHash, canonicalJson(input.context), now);
+    `).run(input.runId, next, selectionStateHash, canonicalJson(snapshot), now);
     const stored = database.prepare(`
       SELECT run_id, context_revision, selection_state_hash, context_json, created_at
       FROM task_context_revisions WHERE run_id = ? AND context_revision = ?
@@ -91,5 +93,8 @@ export function readTaskContextRevisions(database: SqliteDatabase, input: {
     WHERE run_id = ? AND context_revision > ?
     ORDER BY context_revision
     LIMIT ?
-  `).all<RevisionRow>(input.runId, after, limit).map(parseRevision);
+  `).all<RevisionRow>(input.runId, after, limit).map(row => {
+    const revision = parseRevision(row);
+    return { ...revision, context: hydrateProfileHints(database, revision.context, input.runId) };
+  });
 }

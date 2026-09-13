@@ -142,6 +142,7 @@ test('exports an empty workspace as a deterministic ledger manifest without memo
       nudgeDeliveries: 0,
       contextFeedback: 0,
       runFeedback: 0,
+      memoryResolutions: 0,
       memoryLinks: 0,
       purgeAudit: 0,
     });
@@ -150,7 +151,7 @@ test('exports an empty workspace as a deterministic ledger manifest without memo
     assert.equal(before.includes('ledger_events'), false);
     assert.equal(first.content.split('\n').length, 3);
     assert.match(first.content, /"type":"checksum"/);
-    assert.match(first.content, /"archiveVersion":1/);
+    assert.match(first.content, /"archiveVersion":2/);
     assert.match(first.content, /"format":"kiokuko-ledger-jsonl"/);
   } finally {
     database.close();
@@ -180,7 +181,7 @@ test('exports runs and events with stable allowlisted records and canonical stor
     const archive = exportLedgerArchive(database, { workspace: 'workspace:archive' });
     const lines = archive.content.trimEnd().split('\n').map((line: string) => JSON.parse(line) as Record<string, unknown>);
     assert.deepEqual(lines.slice(1).map((line: Record<string, unknown>) => line.type), ['manifest', 'run', 'event']);
-    assert.deepEqual(archive.counts, { runs: 1, sessions: 0, answers: 0, runIntakes: 0, intakeFeedback: 0, events: 1, evidence: 0, deliveries: 0, deliveryEntries: 0, nudgeDeliveries: 0, contextFeedback: 0, runFeedback: 0, memoryLinks: 0, purgeAudit: 0 });
+    assert.deepEqual(archive.counts, { runs: 1, sessions: 0, answers: 0, runIntakes: 0, intakeFeedback: 0, events: 1, evidence: 0, deliveries: 0, deliveryEntries: 0, nudgeDeliveries: 0, contextFeedback: 0, runFeedback: 0, memoryResolutions: 0, memoryLinks: 0, purgeAudit: 0 });
     assert.equal((lines[2]?.coverage_json as string), '{"approval":"unavailable","command":"declared","file":"unavailable","run":"complete","tool":"best_effort"}');
     assert.equal((lines[2]?.metadata_json as string), '{"a":"stable","z":true}');
     assert.equal((lines[3]?.payload_json as string), '{"a":"two","z":1}');
@@ -373,7 +374,7 @@ test('archives the complete linked ledger graph without curated memory bodies or
     assert.equal(archive.content.includes('unrelated-run'), false);
     assert.deepEqual(archive.counts, {
       runs: 1, sessions: 1, answers: 1, runIntakes: 1, intakeFeedback: 1, events: 1, evidence: 1,
-      deliveries: 1, deliveryEntries: 1, nudgeDeliveries: 1, contextFeedback: 1, runFeedback: 1, memoryLinks: 1, purgeAudit: 1,
+      deliveries: 1, deliveryEntries: 1, nudgeDeliveries: 1, contextFeedback: 1, runFeedback: 1, memoryResolutions: 0, memoryLinks: 1, purgeAudit: 1,
     });
     const lines = archive.content.trimEnd().split('\n').map((line: string) => JSON.parse(line) as Record<string, unknown>);
     const delivery = lines.find((line: Record<string, unknown>) => line.type === 'delivery');
@@ -668,7 +669,7 @@ test('rejects checksum/count/schema/version corruption with fixed typed errors a
     assert.throws(() => importLedgerArchive(target, { content: unknownType }), (error: unknown) => (error as { code?: string }).code === 'VALIDATION_ERROR');
     const duplicateManifest = rebuildArchive(archive, (lines) => { lines.push({ ...lines[0]! }); });
     assert.throws(() => importLedgerArchive(target, { content: duplicateManifest }), (error: unknown) => (error as { code?: string }).code === 'INTEGRITY_ERROR');
-    const unsupported = rebuildArchive(archive, (lines) => { lines[0]!.archiveVersion = 2; });
+    const unsupported = rebuildArchive(archive, (lines) => { lines[0]!.archiveVersion = 999; });
     assert.throws(() => importLedgerArchive(target, { content: unsupported }), (error: unknown) => (error as { code?: string }).code === 'VALIDATION_ERROR');
     const nonCanonicalNestedJson = rebuildArchive(archive, (lines) => {
       lines.find((line) => line.type === 'run')!.metadata_json = '{ "nested":true}';
@@ -894,4 +895,18 @@ test('archive database boundaries preserve programmer faults and classify only S
   } finally {
     source.close();
   }
+});
+
+
+test('reads version 1 archives without profile memory records', async () => {
+  const source = await setup();
+  const target = await setup();
+  try {
+    const archive = seedSingleRun(source);
+    const legacy = rebuildArchive(archive, lines => {
+      lines[0]!.archiveVersion = 1;
+      delete (lines[0]!.counts as Record<string, number>).memoryResolutions;
+    });
+    assert.equal(importLedgerArchive(target, { content: legacy }).imported.runs, 1);
+  } finally { source.close(); target.close(); }
 });

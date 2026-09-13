@@ -243,7 +243,7 @@ function expectedDisqualificationReasons(input: {
 
 function expectedQuestionPath(session: AkinatorSessionView, profileSources: AkinatorProfileSources): Array<{
   field: keyof AkinatorSessionView['profile'];
-  source: 'inferred' | 'client_supplied' | 'user_answer';
+  source: 'inferred' | 'client_supplied' | 'user_answer' | 'memory';
 }> {
   return (['taskType', 'target', 'expected', 'constraints'] as const)
     .filter((field) => session.profile[field] !== null)

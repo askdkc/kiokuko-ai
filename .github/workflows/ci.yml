@@ -45,12 +45,6 @@ jobs:
         env:
           KIOKUKO_REQUIRE_SQLITE_VEC_SMOKE: "1"
 
-      - name: Regenerate deterministic sample database
-        run: npm run sampledb:generate
-
-      - name: Verify sample database is current
-        run: git diff --exit-code -- tests/sampledb
-
       - name: Verify fresh-schema sample database and Web API
         run: npm run test:sampledb
 

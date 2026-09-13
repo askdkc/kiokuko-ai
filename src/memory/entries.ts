@@ -110,6 +110,10 @@ function rowToEntry(database: SqliteDatabase, row: EntryRow, options: DecodeStor
     .prepare('SELECT tag FROM entry_revision_tags WHERE entry_id = ? AND revision = ? ORDER BY tag ASC')
     .all<{ tag: unknown }>(row.revision_entry_id, Number(row.current_revision))
     .map((tag) => tag.tag);
+  return decodeEntryRow(row, tags, options);
+}
+
+function decodeEntryRow(row: EntryRow, tags: unknown[], options: DecodeStoredMemoryOptions): EntryRecord {
   const decoded = decodeStoredMemoryRow({
     revision: {
       entryId: row.revision_entry_id,
@@ -171,10 +175,7 @@ function rowToEntry(database: SqliteDatabase, row: EntryRow, options: DecodeStor
   };
 }
 
-function selectEntry(database: SqliteDatabase, workspace: string, entryId: string, options: DecodeStoredMemoryOptions = {}): EntryRecord | undefined {
-  const row = database
-    .prepare(
-      `SELECT e.id, e.workspace, e.status, e.trust_level, e.confidence,
+const ENTRY_ROW_SELECT = `SELECT e.id, e.workspace, e.status, e.trust_level, e.confidence,
               e.current_revision,
               (SELECT MIN(all_revisions.revision)
                  FROM entry_revisions AS all_revisions
@@ -197,13 +198,54 @@ function selectEntry(database: SqliteDatabase, workspace: string, entryId: strin
          FROM entries AS e
          JOIN entry_revisions AS r
            ON r.entry_id = e.id AND r.revision = e.current_revision
-        WHERE e.id = ? AND e.workspace = ?`,
+`;
+
+function selectEntry(database: SqliteDatabase, workspace: string, entryId: string, options: DecodeStoredMemoryOptions = {}): EntryRecord | undefined {
+  const row = database
+    .prepare(
+      `${ENTRY_ROW_SELECT} WHERE e.id = ? AND e.workspace = ?`,
     )
     .get<EntryRow>(entryId, workspace);
   if (row) return rowToEntry(database, row, options);
   const orphan = database.prepare('SELECT 1 AS present FROM entries WHERE id = ? AND workspace = ?').get<{ present: number }>(entryId, workspace);
   if (orphan !== undefined) throw new KiokukoError('INTEGRITY_ERROR', 'Stored entry points to a missing current revision');
   return undefined;
+}
+
+/** Read one bounded batch through the same canonical decoder as readEntry. */
+export function readEntries(
+  database: SqliteDatabase,
+  inputs: readonly (ReadEntryInput & DecodeStoredMemoryOptions)[],
+): EntryRecord[] {
+  if (inputs.length > 256) throw new KiokukoError('VALIDATION_ERROR', 'Entry batch exceeds 256');
+  if (inputs.length === 0) return [];
+  const validated = inputs.map((input) => {
+    const workspace = requireWorkspace(input.workspace);
+    if (typeof input.entryId !== 'string' || input.entryId.length === 0) {
+      throw new KiokukoError('VALIDATION_ERROR', 'entryId must be a non-empty string');
+    }
+    return { ...input, workspace };
+  });
+  const ids = [...new Set(validated.map((input) => input.entryId))];
+  const placeholders = ids.map(() => '?').join(', ');
+  const rows = database.prepare(`${ENTRY_ROW_SELECT} WHERE e.id IN (${placeholders})`).all<EntryRow>(...ids);
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  const tags = new Map<unknown, unknown[]>();
+  for (const row of database.prepare(`
+    SELECT t.entry_id, t.tag FROM entry_revision_tags AS t
+    JOIN entries AS e ON e.id = t.entry_id AND e.current_revision = t.revision
+    WHERE e.id IN (${placeholders}) ORDER BY t.entry_id ASC, t.tag ASC
+  `).all<{ entry_id: unknown; tag: unknown }>(...ids)) {
+    const values = tags.get(row.entry_id) ?? [];
+    values.push(row.tag);
+    tags.set(row.entry_id, values);
+  }
+  return validated.map((input) => {
+    const row = byId.get(input.entryId);
+    // Preserve readEntry's missing-record versus corrupt-current-revision errors.
+    if (row === undefined || row.workspace !== input.workspace) return readEntry(database, input, input);
+    return decodeEntryRow(row, tags.get(row.id) ?? [], input);
+  });
 }
 
 function semanticRevision(

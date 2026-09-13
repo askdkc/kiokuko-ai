@@ -48,6 +48,10 @@ export function contextFeedbackSignals(database: SqliteDatabase, entryId: string
      WHERE entry_id = ?
      GROUP BY verdict
   `).all<{ verdict: unknown; distinctRuns: unknown }>(entryId);
+  return decodeContextFeedbackSignals(rows);
+}
+
+function decodeContextFeedbackSignals(rows: readonly { verdict: unknown; distinctRuns: unknown }[]): ContextFeedbackSignal[] {
   const byVerdict = new Map<ContextFeedbackVerdict, number>();
   for (const row of rows) {
     if (typeof row.verdict !== 'string'
@@ -63,6 +67,24 @@ export function contextFeedbackSignals(database: SqliteDatabase, entryId: string
     const distinctRuns = byVerdict.get(verdict);
     return distinctRuns === undefined ? [] : [{ verdict, distinctRuns, boundedInfluence: Math.min(2, distinctRuns) }];
   });
+}
+
+/** Aggregate one bounded snapshot batch without changing per-entry verdict semantics. */
+export function contextFeedbackSignalsForEntries(database: SqliteDatabase, entryIds: readonly string[]): Map<string, ContextFeedbackSignal[]> {
+  if (entryIds.length > 256) throw new KiokukoError('VALIDATION_ERROR', 'Feedback batch exceeds 256');
+  const grouped = new Map<string, { verdict: unknown; distinctRuns: unknown }[]>();
+  if (entryIds.length === 0) return new Map();
+  const rows = database.prepare(`
+    SELECT entry_id AS entryId, verdict, COUNT(DISTINCT run_id) AS distinctRuns
+      FROM context_feedback WHERE entry_id IN (${entryIds.map(() => '?').join(', ')})
+     GROUP BY entry_id, verdict
+  `).all<{ entryId: string; verdict: unknown; distinctRuns: unknown }>(...entryIds);
+  for (const row of rows) {
+    const values = grouped.get(row.entryId) ?? [];
+    values.push(row);
+    grouped.set(row.entryId, values);
+  }
+  return new Map(entryIds.map((id) => [id, decodeContextFeedbackSignals(grouped.get(id) ?? [])]));
 }
 
 export interface FeedbackListPage<T> {
