@@ -1,9 +1,10 @@
 # Semantic retrieval
 
-軽量インストールではlexical検索が動きます。semantic検索は任意のlocal `local-small` embedding profileです。
+`kiokuko-ai setup`はlexical検索に加え、ローカルの`local-small` embedding profileを有効にします。
+モデルの準備を省く場合は`setup --no-embeddings`を使います。旧`embeddings setup`は互換用に残ります。
 
 ```bash
-kiokuko-ai embeddings setup
+kiokuko-ai setup
 kiokuko-ai embeddings status --json
 kiokuko-ai embeddings repair
 ```

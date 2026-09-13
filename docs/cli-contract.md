@@ -15,24 +15,21 @@ wrapped in the shared envelope. Success and error envelopes share the numeric
 redacted to `INTEGRITY_ERROR` with no internal details. The envelope is a
 human/operator-facing CLI contract; it is not a network API version.
 
-The default global installation is intentionally lightweight:
+Install and configure OpenCode, including local semantic retrieval, with:
 
 ```bash
 npm install --global kiokuko-ai
 kiokuko-ai setup
 ```
 
-This keeps lexical retrieval and the normal setup flow available without the
-optional local semantic runtime. To opt into local semantic retrieval, run the
-following command. It installs the pinned optional dependencies when needed,
-then applies the same client configuration flow as `kiokuko-ai setup`: managed
-MCP blocks are updated and registered-project instructions are refreshed.
+Setup installs the pinned runtime and model when needed, activates semantic
+retrieval, updates managed MCP blocks, and refreshes registered-project
+instructions. Subsequent runs reuse verified model artifacts. Use
+`kiokuko-ai setup --no-embeddings` to skip embedding preparation; this does not
+disable an already active profile. `embeddings setup` remains a compatibility
+entry point with the same installation lifecycle.
 Unmanaged MCP identities require interactive confirmation before replacement;
 non-interactive or `--dry-run --json` runs fail closed without changing them.
-
-```bash
-kiokuko-ai embeddings setup
-```
 
 `boolean@3.2.0` is an upstream transitive dependency of the Transformers.js
 runtime. It is not a Kiokuko dependency and is not present in the lightweight
@@ -41,11 +38,11 @@ through npm. On macOS it installs into Kiokuko's package-local `node_modules`
 instead of the shared npm global prefix; other platforms invoke npm directly.
 Do not persist npm script permissions or use `--dangerously-allow-all-scripts`.
 
-`kiokuko-ai embeddings setup` installs the pinned `local-small` preset without a
+`kiokuko-ai setup` installs the pinned `local-small` preset without a
 separate confirmation flag. Automation uses:
 
 ```bash
-kiokuko-ai embeddings setup --preset local-small --json
+kiokuko-ai setup --preset local-small --json
 ```
 
 `--dry-run` performs no download, model load, database write, or filesystem
@@ -62,6 +59,9 @@ A dry-run reports planned actions without claiming that files were repaired.
 Human text outside a valid Kiokuko block is preserved. Missing files/blocks and
 outdated instructions can be repaired; malformed boundaries, unsafe paths, or
 conflicting identities require explicit correction.
+
+Valid newer templates and DSH-owned blocks are preserved and reported separately;
+they do not make setup fail. Malformed or ambiguous blocks remain errors.
 
 Both commands return `data.ok: false` and exit **9** when project repair is
 incomplete. The JSON envelope can still have `ok: true`: it means a result was

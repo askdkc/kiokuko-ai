@@ -207,6 +207,14 @@ export function hasCanonicalOpenCodeMcpConfig(
   return inspection.mcp === 'current';
 }
 
+/** Read the existing choice only from a recognized managed MCP configuration. */
+export function readManagedSkillDiscoveryMode(existing: string | undefined, runtime?: OpenCodeRuntimeInvocation): SkillDiscoveryMode | undefined {
+  if (existing === undefined) return undefined;
+  const server = object(parseOpenCodeRoot(existing).mcp)?.kiokuko;
+  if (!isCanonicalManagedServer(server, runtime) && !isLegacyManagedServer(server)) return undefined;
+  return object(object(server)?.environment)?.[SKILL_DISCOVERY_ENV] as SkillDiscoveryMode;
+}
+
 export function renderOpenCodeConfig(
   existing: string | undefined,
   command = KIOKUKO_OPENCODE_PLUGIN_PACKAGE,

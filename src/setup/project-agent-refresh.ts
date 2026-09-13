@@ -6,7 +6,7 @@ import type { SqliteDatabase } from '../db/adapter.js';
 import { KiokukoError, type ErrorCode } from '../errors.js';
 import { validateRepositoryBindingIdentity } from '../repository/identity-value.js';
 import { useRepository, type UseOptions } from '../commands/use.js';
-import { inspectProjectAgentFile, describeProjectAgentFinding, type ProjectAgentFinding } from './project-agent-health.js';
+import { inspectProjectAgentFile, describeProjectAgentFinding, preservesProjectAgentFinding, type ProjectAgentFinding } from './project-agent-health.js';
 
 export const MAX_SETUP_PROJECT_LOCATIONS = 10_000;
 const MAX_STORED_ROOT_BYTES = 4_096;
@@ -22,6 +22,11 @@ export type ProjectAgentRefreshResult = RegisteredProjectLocation & (
       status: 'created' | 'updated' | 'unchanged';
       agentFile: string;
       bindingAction: 'created' | 'updated' | 'unchanged' | 'planned';
+    }
+  | {
+      status: 'preserved';
+      agentFile: string;
+      finding: ProjectAgentFinding;
     }
   | {
       status: 'skipped';
@@ -153,6 +158,11 @@ async function refreshRegisteredProject(
     return { ...location, status: 'skipped', agentFile: null, reason: 'unsafe_root' };
   }
 
+  const health = await inspectProjectAgentFile(location);
+  if (!health.ok && health.finding.agentFile !== null && preservesProjectAgentFinding(health.finding)) {
+    return { ...location, status: 'preserved', agentFile: health.finding.agentFile, finding: health.finding };
+  }
+
   const useOptions: UseOptions = {
     root: location.repositoryRoot,
     repositoryId: location.repositoryId,
@@ -234,17 +244,20 @@ export async function refreshRegisteredProjectAgentFiles(
 export function summarizeProjectAgentRefresh(results: readonly ProjectAgentRefreshResult[]) {
   const changed = results.filter(file => file.status === 'created' || file.status === 'updated').length;
   const unchanged = results.filter(file => file.status === 'unchanged').length;
+  const preserved = results.filter(file => file.status === 'preserved').length;
   const skipped = results.filter(file => file.status === 'skipped').length;
   const failed = results.filter(file => file.status === 'failed').length;
-  return { ok: skipped + failed === 0, total: results.length, changed, unchanged, skipped, failed };
+  return { ok: skipped + failed === 0, total: results.length, changed, unchanged, preserved, skipped, failed };
 }
 
 export function formatProjectAgentRefresh(results: readonly ProjectAgentRefreshResult[]): string {
   if (results.length === 0) return '';
   const summary = summarizeProjectAgentRefresh(results);
-  const lines = [`Registered project instructions: ${summary.changed} changed, ${summary.unchanged} unchanged, ${summary.skipped} skipped, ${summary.failed} failed.`];
+  const lines = [`Registered project instructions: ${summary.changed} changed, ${summary.unchanged} unchanged, ${summary.preserved} preserved, ${summary.skipped} skipped, ${summary.failed} failed.`];
   for (const result of results) {
-    if (result.status === 'failed') {
+    if (result.status === 'preserved') {
+      lines.push(describeProjectAgentFinding(result.finding));
+    } else if (result.status === 'failed') {
       lines.push(result.finding ? describeProjectAgentFinding(result.finding) + ` (${result.errorCode})`
         : `${JSON.stringify(result.repositoryRoot)}: ${result.reason} (${result.errorCode}). Check the project path, permissions, and binding before retrying setup.`);
     } else if (result.status === 'skipped') {

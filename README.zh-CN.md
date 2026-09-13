@@ -24,24 +24,21 @@ npm install --global kiokuko-ai
 kiokuko-ai setup
 ```
 
-`setup` 会初始化数据库、安装标准 Skill，并配置 OpenCode MCP 和 npm 插件。已运行的 OpenCode 请在设置后重启。
+`setup` 会初始化数据库、安装标准 Skill，配置 OpenCode MCP 和 npm 插件，并启用本地 semantic 检索。首次运行会下载模型。已运行的 OpenCode 请在设置后重启。
 精确配置和恢复规则请参阅[英文 Getting started](docs/getting-started.md)。
 
 使用 `kiokuko-ai trace record --` 记录 OpenCode，并在退出后导入最终跟踪。交互式设置可添加 `orca-opencode` 快捷命令。同步和恢复方法见 [OrcaReplay 集成](docs/orcareplay-integration.md)。
 
 ## 主要功能
 
-- RAG 记忆（默认 lexical，可选本地 semantic 检索）
+- RAG 记忆（lexical 检索和 setup 启用的本地 semantic 检索）
 - Akinator 让模糊请求先变得具体
 - 役小角(enno-oduno) 负责计划、确认、验证和恢复
 - 本地 Web UI 用于检查和整理记忆
 - 外部 Skill 仅作为经过验证的参考，绝不自动执行
 
-可选的 semantic 检索使用与 `setup` 相同的客户端配置流程：
-
-```bash
-kiokuko-ai embeddings setup
-```
+无需另外运行 embeddings setup。若要跳过模型准备，请使用
+`kiokuko-ai setup --no-embeddings`。
 
 它会更新 managed MCP block 和项目 instructions。替换 unmanaged identity 需要交互确认；非交互或 `--dry-run --json`
 执行会在不修改配置的情况下 fail closed。详见[英文 semantic retrieval](docs/semantic-retrieval.md)。

@@ -148,6 +148,25 @@ async function reportManualFallback(output: NodeJS.WritableStream, install: Orca
     output.write(`OrcaReplay installation failed. Run it manually: ${install.command} ${install.args.join(' ')}\n`);
     output.write(`Then add this line to ${rcPath ?? 'your shell configuration'}:\n${ORCA_ALIAS_LINE}\n`);
 }
+/** A completed managed alias is evidence that this optional integration was already enabled. */
+async function hasCurrentOrcaAlias(rcPath: string | undefined): Promise<boolean> {
+    if (rcPath === undefined) return false;
+    try {
+        const stat = await lstat(rcPath);
+        if (!stat.isFile() || stat.isSymbolicLink()) return false;
+        const parent = await realpath(dirname(rcPath));
+        const content = (await readBoundedTraceFile(join(parent, basename(rcPath)), parent, MAX_RC_BYTES)).toString('utf8');
+        const lines = content.split(/\r?\n/u);
+        const marker = lines.indexOf(ORCA_ALIAS_MARKER);
+        const aliases = lines.filter(line => /^\s*(?:alias\s+orca-opencode=|function\s+orca-opencode\b|orca-opencode\s*\(\))/u.test(line));
+        return marker >= 0 && lines.lastIndexOf(ORCA_ALIAS_MARKER) === marker
+            && lines[marker + 1] === ORCA_ALIAS_LINE && aliases.length === 1;
+    } catch {
+        // An unreadable or ambiguous file is not evidence of completed setup.
+        return false;
+    }
+}
+
 /** Run the opt-in OrcaReplay enablement flow after a successful setup. */
 export async function enableOrcaReplayIntegration(options: OrcaReplayEnableOptions): Promise<OrcaReplayEnableSummary> {
     const output = options.output;
@@ -159,6 +178,17 @@ export async function enableOrcaReplayIntegration(options: OrcaReplayEnableOptio
     }).readableEnded === true) {
         return { accepted: false, installed: 'skipped', alias: 'skipped' };
     }
+    const check = options.checkInstalled ?? checkOrcaInstalled;
+    let alreadyInstalled = false;
+    try {
+        await check('orca', ['--version']);
+        alreadyInstalled = true;
+    } catch {
+        // Absent or broken CLI still needs the ordinary opt-in install flow.
+    }
+    if (alreadyInstalled && await hasCurrentOrcaAlias(shellRcPath(options.platform, options.environment))) {
+        return { accepted: true, installed: 'already_installed', alias: 'already_present' };
+    }
     const prompt = createInterface({ input, output });
     try {
         const accepted = await askOrcaOptIn(prompt, output);
@@ -166,15 +196,6 @@ export async function enableOrcaReplayIntegration(options: OrcaReplayEnableOptio
             return { accepted: false, installed: 'skipped', alias: 'skipped' };
         }
         const install = orcaReplayInstallInvocation(options.platform);
-        const check = options.checkInstalled ?? checkOrcaInstalled;
-        let alreadyInstalled = false;
-        try {
-            await check('orca', ['--version']);
-            alreadyInstalled = true;
-        }
-        catch {
-            // Absent or broken `orca` CLI: proceed with the global install.
-        }
         if (!alreadyInstalled) {
             try {
                 await (options.spawnInstall ?? spawnOrcaReplayInstall)(install.command, install.args);

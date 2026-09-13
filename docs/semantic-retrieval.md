@@ -1,10 +1,11 @@
 # Semantic retrieval
 
-Lexical retrieval works in the lightweight install. Semantic retrieval is an
-optional local `local-small` embedding profile.
+`kiokuko-ai setup` enables the local `local-small` embedding profile alongside
+lexical retrieval. Use `setup --no-embeddings` to skip model preparation.
+The older `embeddings setup` command remains a compatibility entry point.
 
 ```bash
-kiokuko-ai embeddings setup
+kiokuko-ai setup
 kiokuko-ai embeddings status --json
 kiokuko-ai embeddings repair
 ```

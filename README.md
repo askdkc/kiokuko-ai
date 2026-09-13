@@ -31,23 +31,21 @@ kiokuko-ai setup
 ```
 
 `setup` initializes the local database, installs the bundled standard Skills, and
-configures OpenCode's MCP connection and npm plugin. Restart OpenCode after setup.
+configures OpenCode's MCP connection and npm plugin. It also installs and enables
+the local semantic search model; the first run downloads it. Restart OpenCode after setup.
 Exact configuration rules and recovery procedures are in the
 [Getting started guide](docs/getting-started.md).
 
 ## Main features
 
-- **RAG memory**: lexical retrieval by default, with optional local semantic retrieval.
+- **RAG memory**: lexical retrieval with local semantic retrieval enabled by setup.
 - **Akinator**: clarifies vague requests before work begins.
 - **役小角(enno-oduno)**: plans, confirms, verifies, and recovers multi-step agent work.
 - **Local Web UI**: review and curate saved memories.
 - **Reference-only Skills**: discovered external Skills are verified and never executed automatically.
 
-Enable optional semantic retrieval with the same client setup flow:
-
-```bash
-kiokuko-ai embeddings setup
-```
+No separate embeddings setup is needed. Use `kiokuko-ai setup --no-embeddings`
+for a lightweight installation without model provisioning.
 
 Managed MCP blocks are updated and registered-project instructions are refreshed.
 An unmanaged identity is replaced only after interactive confirmation; non-interactive

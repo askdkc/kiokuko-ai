@@ -37,16 +37,25 @@ plugin hook と MCP server が同じ絶対 Node/CLI runtime を使う設定を�
 unmanagedな`kiokuko` identityはconflictとして無断上書きしません。対話実行では置換前に確認し、
 JSON・非対話・dry-runでは`CONFLICT`を返して変更しません。
 
+setupは対応する形式のプロジェクトinstructionsだけを更新します。新しいtemplateやDSH管理のblockは、
+ファイルとbindingを変更せず、保持したことを表示します。不正なmarker、読めないpath、identity不一致は引き続きエラーです。
+再実行時は設定済みのdiscovery modeを維持し、OrcaReplayと管理対象aliasが導入済みなら再確認しません。
+
 起動中のOpenCodeは設定後に再起動してください。`kiokuko-ai doctor --json`はruntime、DB、
 OpenCode MCPを読み取り専用で検査します。
 
-## Embeddings
+## ローカルsemantic検索
 
-`kiokuko-ai embeddings setup`は固定semantic runtimeを導入し、`kiokuko-ai setup`と同じclient設定フロー（conflict確認、managed MCP更新、
-登録済みプロジェクトのinstructions更新）を実行します。
+`kiokuko-ai setup`でOpenCodeの設定とモデルの検証・有効化まで完了します。
+初回は必要なruntimeとモデルをダウンロードし、次回から検証済みのものを再利用します。
+追加のsetupコマンドは不要です。モデルの準備を省く場合は`--no-embeddings`を指定します。
+この指定で既存のprofileが無効になることはありません。
+`embeddings setup`は互換用に残し、同じ導入処理を実行しますが、任意の連携機能の質問は行いません。
+
+runtimeと検証済みモデルが導入済みなら、オフラインでも実行できます。
 
 ```bash
-kiokuko-ai embeddings setup --preset local-small --offline
+kiokuko-ai setup --offline
 kiokuko-ai embeddings status --json
 ```
 

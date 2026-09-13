@@ -18,7 +18,7 @@ const env = { ...process.env, HOME: path.join(root, 'home'), XDG_CONFIG_HOME: pa
 Object.assign(env, { OPENCODE_DISABLE_AUTOUPDATE: 'true', OPENCODE_DISABLE_DEFAULT_PLUGINS: 'true', OPENCODE_EXPERIMENTAL_CODE_MODE: 'false' });
 const cli = path.join(repo, 'dist/bin/kiokuko.js');
 await requireSuccess('git', ['init', '-q'], { cwd: project, env });
-await requireSuccess(process.execPath, [cli, 'setup', '--skill-discovery', 'off', '--enno-oduno', 'ask', '--json'], { cwd: project, env, label: 'setup' });
+await requireSuccess(process.execPath, [cli, 'setup', '--no-embeddings', '--skill-discovery', 'off', '--enno-oduno', 'ask', '--json'], { cwd: project, env, label: 'setup' });
 const config = JSON.parse(await readFile(env.OPENCODE_CONFIG, 'utf8'));
 const plugin = config.plugin.find(entry => Array.isArray(entry) && entry[0].startsWith('kiokuko-ai@'));
 assert.ok(plugin);

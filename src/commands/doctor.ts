@@ -10,7 +10,7 @@ import { readRegularFile } from '../agent-file/atomic-write.js';
 import { getOpenCodeConfigDirectory, getOpenCodeConfigFileOverride, getDatabaseLockPath, getGlobalDatabasePath, getRuntimeDescriptorPath, getOpenCodeSkillsDirectory } from '../config/paths.js';
 import { type RepositoryLocation } from '../repository/binding.js';
 import { listRegisteredProjectLocations } from '../setup/project-agent-refresh.js';
-import { inspectProjectAgentFile, type ProjectAgentFinding } from '../setup/project-agent-health.js';
+import { inspectProjectAgentFile, preservesProjectAgentFinding, type ProjectAgentFinding } from '../setup/project-agent-health.js';
 import { isPidAlive } from '../server/instance-lock.js';
 import { readRuntimeDescriptor } from '../server/runtime-descriptor.js';
 import { inspectLedger } from '../ledger/maintenance.js';
@@ -56,7 +56,7 @@ export interface DoctorResult {
     danglingLinks: DoctorCheck;
     contradictions: DoctorCheck;
     bindings: DoctorCheck;
-    agentFiles: DoctorCheck & { findings?: ProjectAgentFinding[] };
+    agentFiles: DoctorCheck & { findings?: ProjectAgentFinding[]; notices?: ProjectAgentFinding[] };
     permissions: DoctorCheck;
     secrets: DoctorCheck;
     ledger: DoctorCheck;
@@ -371,16 +371,18 @@ async function collectDoctorResult(
   const bindingRows = listRegisteredProjectLocations(database);
   let missingRoots = 0;
   const agentFindings: ProjectAgentFinding[] = [];
+  const agentNotices: ProjectAgentFinding[] = [];
   for (const row of bindingRows) {
     const health = await inspectProjectAgentFile(row);
     // Absent locations are owned by the existing bindings check and removal prompt.
     if (!health.ok) {
       if (health.finding.reason === 'missing_root') missingRoots++;
+      else if (preservesProjectAgentFinding(health.finding)) agentNotices.push(health.finding);
       else agentFindings.push(health.finding);
     }
   }
   const bindingCheck = { ok: missingRoots === 0, count: missingRoots, detail: `locations=${bindingRows.length}` };
-  const agentFilesCheck = { ok: agentFindings.length === 0, count: agentFindings.length, findings: agentFindings };
+  const agentFilesCheck = { ok: agentFindings.length === 0, count: agentFindings.length, findings: agentFindings, ...(agentNotices.length === 0 ? {} : { notices: agentNotices }) };
 
   let secretCount = 0;
   const secretRows = database.prepare(`
