@@ -7,12 +7,12 @@ import test from 'node:test';
 import { Command } from 'commander';
 import { openConnection } from '../../src/db/connection.js';
 import { migrateDatabase } from '../../src/db/migrate.js';
-import { registerEmbeddingsCommands, type EmbeddingsCommandDependencies } from '../../src/commands/embeddings.js';
+import { registerSetupCommand, registerEmbeddingsCommands, type EmbeddingsCommandDependencies } from '../../src/commands/embeddings.js';
 import type { SetupOptions, SetupResult } from '../../src/commands/setup.js';
 import { KiokukoError } from '../../src/errors.js';
 import { createLocalEmbeddingProfile } from '../../src/embedding/profile.js';
 import { LOCAL_SMALL_PRESET } from '../../src/embedding/presets/local-small.js';
-import { activateLocalEmbeddingProfile } from '../../src/embedding/store.js';
+import { activateLocalEmbeddingProfile, readActiveEmbeddingProfile } from '../../src/embedding/store.js';
 import { recordEntry } from '../../src/memory/entries.js';
 import type { EmbeddingProvider } from '../../src/embedding/types.js';
 import { setupOpenCodeMcpIdentityConflict } from '../../src/setup/mcp-conflict.js';
@@ -41,7 +41,7 @@ function command(database: ReturnType<typeof openConnection>, output: string[], 
   const cli = new Command();
   cli.exitOverride();
   const setup = options.setupOpenCode ?? (async () => ({ client: 'opencode' as const, projectAgentFiles: [] }));
-  registerEmbeddingsCommands(cli, {
+  const dependencies: EmbeddingsCommandDependencies = {
     withDatabase: async (operation) => operation(database),
     ...(options.environment === undefined ? {} : { environment: options.environment }),
     ...(options.provider === undefined ? {} : { provider: options.provider }),
@@ -56,7 +56,9 @@ function command(database: ReturnType<typeof openConnection>, output: string[], 
     output: (json, operation, data, message) => {
       output.push(json ? JSON.stringify({ operation, data }) : message);
     },
-  });
+  };
+  registerSetupCommand(cli.command('setup'), dependencies);
+  registerEmbeddingsCommands(cli, dependencies);
   return cli;
 }
 
@@ -174,7 +176,7 @@ test('embedding setup configures OpenCode and refreshes project instructions', a
     assert.equal(setupCall.dryRun, true);
     assert.equal(setupCall.standardSkills, true);
     assert.equal(setupCall.replaceConflictingOpenCodeMcp, false);
-    assert.deepEqual(response.data.projectSetup, { client: 'opencode', health: { ok: true, total: 0, changed: 0, unchanged: 0, skipped: 0, failed: 0 }, projectAgentFiles: [] });
+    assert.deepEqual(response.data.projectSetup, { client: 'opencode', health: { ok: true, total: 0, changed: 0, unchanged: 0, preserved: 0, skipped: 0, failed: 0 }, projectAgentFiles: [] });
   } finally {
     database.close();
   }
@@ -233,17 +235,17 @@ test('embedding setup confirms and replaces a conflicting client MCP identity', 
         return { client: 'opencode' as const, projectAgentFiles: [] };
       },
     }).parseAsync(['node', 'kiokuko-ai', 'embeddings', 'setup', '--dry-run']);
+    assert.equal(answeredCommunity, false);
+    assert.equal(answeredReplacement, true);
     assert.deepEqual(setupCalls, [
       {
         dryRun: true,
         standardSkills: true,
-        skillDiscoveryMode: 'official',
         replaceConflictingOpenCodeMcp: false,
       },
       {
         dryRun: true,
         standardSkills: true,
-        skillDiscoveryMode: 'official',
         replaceConflictingOpenCodeMcp: true,
       },
     ]);
@@ -252,7 +254,8 @@ test('embedding setup confirms and replaces a conflicting client MCP identity', 
   }
 });
 
-test('embedding setup does not require a confirmation flag', async () => {
+for (const entrypoint of [['setup'], ['embeddings', 'setup']]) {
+test(`${entrypoint.join(' ')} activates semantic retrieval without a confirmation flag`, async () => {
   const database = await temporaryDatabase('embedding-cli-no-confirmation-flag');
   const dataDirectory = await mkdtemp(path.join(tmpdir(), 'kiokuko-embedding-cli-data-'));
   try {
@@ -273,13 +276,17 @@ test('embedding setup does not require a confirmation flag', async () => {
         },
       },
       pathEnvironment: { env: { KIOKUKO_DATA_DIR: dataDirectory } },
-    }).parseAsync(['node', 'kiokuko-ai', 'embeddings', 'setup', '--json']);
+    }).parseAsync(['node', 'kiokuko-ai', ...entrypoint, '--json']);
+    assert.equal(output.length, 1);
     const response = JSON.parse(output[0]!) as { data: { semanticEnabled: boolean } };
     assert.equal(response.data.semanticEnabled, true);
+    assert.ok(readActiveEmbeddingProfile(database));
   } finally {
     database.close();
   }
 });
+
+}
 
 function environment(model: string): NodeJS.ProcessEnv {
   return {
@@ -404,4 +411,40 @@ test('embedding setup reports unresolved project repair in human and JSON output
       }
     }
   } finally { process.exitCode = previousExitCode; database.close(); }
+});
+
+
+test('setup --no-embeddings skips runtime, model, and database preparation', async () => {
+  const cli = new Command();
+  let clientCalls = 0;
+  let result: any;
+  const unexpected = async (): Promise<never> => { throw new Error('Embedding side effect must not run'); };
+  registerSetupCommand(cli.command('setup'), {
+    withDatabase: unexpected,
+    optionalRuntimeChecker: unexpected,
+    optionalRuntimeInstaller: unexpected,
+    modelInstaller: unexpected,
+    acquireSetupLock: unexpected,
+    setupOpenCode: async () => { clientCalls += 1; return { client: 'opencode', projectAgentFiles: [] }; },
+    output: (_json, _operation, data) => { result = data; },
+  });
+  await cli.parseAsync(['node', 'kiokuko-ai', 'setup', '--no-embeddings', '--json']);
+  assert.equal(clientCalls, 1);
+  assert.equal(result.embeddingsSetup, 'skipped');
+  assert.equal(result.ok, true);
+});
+
+test('offline setup never installs a missing runtime or mutates client/database state', async () => {
+  const cli = new Command();
+  let released = false;
+  const unexpected = async (): Promise<never> => { throw new Error('Offline preparation must not cause this effect'); };
+  registerSetupCommand(cli.command('setup'), {
+    withDatabase: unexpected,
+    optionalRuntimeChecker: async () => { throw new Error('Missing offline runtime'); },
+    optionalRuntimeInstaller: unexpected,
+    setupOpenCode: unexpected,
+    acquireSetupLock: async () => ({ path: '/fixture/setup.lock', release: async () => { released = true; } }),
+  });
+  await assert.rejects(cli.parseAsync(['node', 'kiokuko-ai', 'setup', '--offline', '--json']), /Missing offline runtime/);
+  assert.equal(released, true);
 });

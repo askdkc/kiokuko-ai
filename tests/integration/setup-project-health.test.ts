@@ -3,11 +3,15 @@ import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promi
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { PassThrough } from 'node:stream';
+import { orcaAliasBlock } from '../../src/commands/orca-replay.js';
+import { AGENT_TEMPLATE_VERSION } from '../../src/agent-file/render.js';
+import { parse } from 'jsonc-parser';
 import { buildCli } from '../../src/cli.js';
 import { inspectProjectAgentFile } from '../../src/setup/project-agent-health.js';
 import { openConnection } from '../../src/db/connection.js';
-import { listRegisteredProjectLocations, refreshRegisteredProjectAgentFiles } from '../../src/setup/project-agent-refresh.js';
-import { setupOpenCode } from '../../src/commands/setup.js';
+import { listRegisteredProjectLocations, refreshRegisteredProjectAgentFiles, summarizeProjectAgentRefresh, formatProjectAgentRefresh } from '../../src/setup/project-agent-refresh.js';
+import { runSetupFlow, setupOpenCode } from '../../src/commands/setup.js';
 import { useRepository } from '../../src/commands/use.js';
 import { runDoctor } from '../../src/commands/doctor.js';
 import { BEGIN_MARKER, END_MARKER } from '../../src/agent-file/managed-block.js';
@@ -73,7 +77,7 @@ test('setup reports partial repair and exits nonzero in both human and JSON mode
       process.exitCode = undefined;
       let output = '';
       process.stdout.write = ((chunk: string | Uint8Array) => { output += chunk.toString(); return true; }) as typeof process.stdout.write;
-      await buildCli({ setupEnvironment: { env: options.env } }).parseAsync(['node', 'kiokuko-ai', 'setup', '--no-standard-skills', ...(json ? ['--json'] : [])]);
+      await buildCli({ setupEnvironment: { env: options.env } }).parseAsync(['node', 'kiokuko-ai', 'setup', '--no-embeddings', '--no-standard-skills', ...(json ? ['--json'] : [])]);
       assert.equal(process.exitCode, 9);
       if (json) {
         const response = JSON.parse(output);
@@ -136,4 +140,77 @@ test('project refresh verifies the file after a reported successful write and sk
   const [planned] = await refreshRegisteredProjectAgentFiles(locations, { databasePath, dryRun: true }, dependencies);
   assert.equal(planned?.status, 'created');
   await assert.rejects(readFile(receipt.agentFile!), { code: 'ENOENT' });
+});
+
+for (const kind of ['newer_template', 'other_product'] as const) {
+  test(`setup preserves ${kind} instructions and reports a notice without downgrading or rewriting`, async t => {
+    const { project, databasePath, options } = await fixture(t);
+    const bindingPath = path.join(project, '.kiokuko.json');
+    const binding = JSON.parse(await readFile(bindingPath, 'utf8'));
+    if (kind === 'newer_template') binding.templateVersion = AGENT_TEMPLATE_VERSION + 1;
+    const bindingText = JSON.stringify(binding);
+    await writeFile(bindingPath, bindingText);
+    const declaration = kind === 'other_product'
+      ? '<!-- kiokuko-dsh-template-version: 1 -->'
+      : `<!-- kiokuko-template-version: ${AGENT_TEMPLATE_VERSION + 1} -->`;
+    const agent = `Human prefix\n${BEGIN_MARKER}\n${declaration}\nOwned instructions.\n${END_MARKER}\nHuman suffix\n`;
+    await writeFile(path.join(project, 'AGENTS.md'), agent);
+    for (const dryRun of [true, false]) {
+      const result = await setupOpenCode({ ...options, dryRun });
+      const health = summarizeProjectAgentRefresh(result.projectAgentFiles);
+      assert.equal(health.ok, true);
+      assert.equal(health.failed, 0);
+      assert.equal(health.preserved, 1);
+      assert.equal(result.projectAgentFiles[0]?.status, 'preserved');
+      assert.match(formatProjectAgentRefresh(result.projectAgentFiles), new RegExp(kind));
+      assert.equal(await readFile(bindingPath, 'utf8'), bindingText);
+      assert.equal(await readFile(path.join(project, 'AGENTS.md'), 'utf8'), agent);
+    }
+    const doctor = await runDoctor({ databasePath });
+    assert.equal(doctor.checks.agentFiles.ok, true);
+    assert.equal(doctor.checks.agentFiles.notices?.[0]?.reason, kind);
+  });
+}
+
+test('future versions and DSH declarations cannot bypass malformed marker or identity checks', async t => {
+  const { project, options } = await fixture(t);
+  const bindingPath = path.join(project, '.kiokuko.json');
+  const binding = JSON.parse(await readFile(bindingPath, 'utf8'));
+  await writeFile(bindingPath, JSON.stringify({ ...binding, templateVersion: AGENT_TEMPLATE_VERSION + 1 }));
+  const cases = [
+    `${BEGIN_MARKER}\n<!-- kiokuko-template-version: 99999 -->\n`,
+    `${BEGIN_MARKER}\n<!-- kiokuko-template-version: 24 -->\n<!-- kiokuko-dsh-template-version: 1 -->\n${END_MARKER}`,
+  ];
+  for (const content of cases) {
+    await writeFile(path.join(project, 'AGENTS.md'), content);
+    const result = await setupOpenCode(options);
+    assert.equal(result.projectAgentFiles[0]?.status, 'failed');
+    assert.equal(await readFile(path.join(project, 'AGENTS.md'), 'utf8'), content);
+  }
+  await writeFile(path.join(project, 'AGENTS.md'), `${BEGIN_MARKER}\n<!-- kiokuko-dsh-template-version: 1 -->\n${END_MARKER}`);
+  await writeFile(bindingPath, JSON.stringify({ ...binding, workspace: 'project:another' }));
+  assert.equal((await setupOpenCode(options)).projectAgentFiles[0]?.status, 'failed');
+});
+
+test('repeated and embedding dependency setup preserve completed choices without optional prompts or installs', async t => {
+  const { options } = await fixture(t);
+  const initial = await setupOpenCode({ ...options, skillDiscoveryMode: 'community' });
+  const configPath = initial.files.find(file => file.purpose === 'mcp-config')!.path;
+  const input = new PassThrough() as PassThrough & { isTTY: boolean };
+  const output = new PassThrough() as PassThrough & { isTTY: boolean };
+  input.isTTY = true; output.isTTY = true;
+  t.after(() => { input.destroy(); output.destroy(); });
+  let text = '';
+  output.on('data', chunk => { text += chunk.toString(); });
+  await writeFile(path.join(options.env.HOME, '.zshrc'), orcaAliasBlock());
+  for (const optionalPrompts of [true, false]) {
+    let checks = 0;
+    await runSetupFlow({ environment: { env: { ...options.env, SHELL: '/bin/zsh' } }, standardSkills: false, optionalPrompts, input, output }, {
+      orcaReplayCheckInstalled: async () => { checks++; },
+      orcaReplaySpawnInstall: async () => { assert.fail('must not reinstall optional Orca'); },
+    });
+    assert.equal(checks, optionalPrompts ? 1 : 0);
+  }
+  assert.equal(text, '');
+  assert.equal(parse(await readFile(configPath, 'utf8')).mcp.kiokuko.environment.KIOKUKO_SKILL_DISCOVERY, 'community');
 });

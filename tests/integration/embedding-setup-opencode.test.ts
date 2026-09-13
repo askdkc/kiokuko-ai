@@ -7,7 +7,7 @@ import { promisify } from 'node:util';
 import test from 'node:test';
 import { Command } from 'commander';
 import { parse } from 'jsonc-parser';
-import { registerEmbeddingsCommands } from '../../src/commands/embeddings.js';
+import { registerEmbeddingsCommands, registerSetupCommand, type EmbeddingsCommandDependencies } from '../../src/commands/embeddings.js';
 import type { DoctorResult } from '../../src/commands/doctor.js';
 import { setupOpenCode } from '../../src/commands/setup.js';
 import { getGlobalDatabasePath } from '../../src/config/paths.js';
@@ -17,8 +17,9 @@ import { renderOpenCodeConfig } from '../../src/setup/opencode-config.js';
 
 const execFileAsync = promisify(execFile);
 
+for (const entrypoint of [['setup'], ['embeddings', 'setup']]) {
 for (const initial of ['fresh', 'legacy', 'current'] as const) {
-  test(`embedding setup leaves ${initial} OpenCode registration healthy and repeatable`, async () => {
+  test(`${entrypoint.join(' ')} leaves ${initial} OpenCode registration healthy and repeatable`, async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'kiokuko-embedding-opencode-'));
     const env = {
       HOME: path.join(root, 'home'),
@@ -39,7 +40,7 @@ for (const initial of ['fresh', 'legacy', 'current'] as const) {
       const setup = async () => {
         const cli = new Command();
         cli.exitOverride();
-        registerEmbeddingsCommands(cli, {
+        const dependencies: EmbeddingsCommandDependencies = {
           pathEnvironment: { env },
           withDatabase: async (operation) => {
             const database = openConnection(getGlobalDatabasePath({ env }));
@@ -63,8 +64,10 @@ for (const initial of ['fresh', 'legacy', 'current'] as const) {
             embed: async () => { throw new Error('Empty database must not request embeddings'); },
           },
           output: (_json, _operation, data) => { output = JSON.stringify(data); },
-        });
-        await cli.parseAsync(['node', 'kiokuko-ai', 'embeddings', 'setup', '--json']);
+        };
+        registerSetupCommand(cli.command('setup'), dependencies);
+        registerEmbeddingsCommands(cli, dependencies);
+        await cli.parseAsync(['node', 'kiokuko-ai', ...entrypoint, '--json']);
         assert.equal(JSON.parse(output).semanticEnabled, true);
       };
 
@@ -101,6 +104,8 @@ for (const initial of ['fresh', 'legacy', 'current'] as const) {
       await rm(root, { recursive: true, force: true });
     }
   });
+}
+
 }
 
 test('embedding setup actually repairs two registered projects before reporting success', async () => {

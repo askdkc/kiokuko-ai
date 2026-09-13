@@ -79,7 +79,7 @@ async function runOpenCode() {
   const databasePath = path.join(data, 'kiokuko-ai.sqlite');
   const environment = createOpenCodeE2eEnvironment({ home, config, data });
   const command = process.env.OPENCODE_E2E_COMMAND || 'opencode';
-  await requireSuccess(kiokuko, ['setup', '--enno-oduno', 'on', '--skill-discovery', 'off', '--json'], {
+  await requireSuccess(kiokuko, ['setup', '--no-embeddings', '--enno-oduno', 'on', '--skill-discovery', 'off', '--json'], {
     cwd: project, env: environment, timeoutMs: 60_000,
   });
   await requireSuccess(kiokuko, ['use', '--root', project, '--json'], { cwd: project, env: environment, timeoutMs: 60_000 });

@@ -116,6 +116,7 @@ export interface EmbeddingsSignalSource {
 
 export interface EmbeddingsCommandDependencies {
   readonly withDatabase: EmbeddingsDatabaseRunner;
+  readonly withSetupDatabase?: <T>(dryRun: boolean, operation: (database: SqliteDatabase, backend?: VectorSearchBackend) => T | Promise<T>) => Promise<T>;
   readonly environment?: NodeJS.ProcessEnv;
   readonly optionalRuntimeChecker?: EmbeddingsOptionalRuntimeChecker;
   readonly optionalRuntimeInstaller?: () => Promise<void>;
@@ -168,7 +169,7 @@ async function installOptionalRuntime(): Promise<void> {
   const { command, args, cwd } = optionalRuntimeInstallInvocation();
   try {
     await new Promise<void>((resolve, reject) => {
-      const child = spawn(command, args, { stdio: 'inherit', ...(cwd === undefined ? {} : { cwd }) });
+      const child = spawn(command, args, { stdio: ['inherit', process.stderr, 'inherit'], ...(cwd === undefined ? {} : { cwd }) });
       child.once('error', reject);
       child.once('exit', (code, signal) => {
         if (code === 0) {
@@ -378,12 +379,12 @@ function defaultOutput(
   process.stdout.write(`${message}\n`);
 }
 
-export function registerEmbeddingsCommands(cli: Command, dependencies: EmbeddingsCommandDependencies): Command {
+/** Both public entry points share one configuration and embedding installation lifecycle. */
+export function registerSetupCommand(command: Command, dependencies: EmbeddingsCommandDependencies, operation: 'setup' | 'embeddings.setup' = 'setup'): Command {
   const output = dependencies.output ?? defaultOutput;
-  const embeddings = cli.command('embeddings').description('Manage semantic memory embeddings');
-
-  embeddings.command('setup')
-    .description('Install semantic search and configure OpenCode')
+  command
+    .description(operation === 'setup' ? 'Configure OpenCode and install local semantic search' : 'Compatibility alias for kiokuko-ai setup')
+    .option('--no-embeddings', 'Configure OpenCode without installing or changing embeddings')
     .option('--preset <name>', 'Embedding preset', 'local-small')
     .option('--command <path>', 'Kiokuko executable name or absolute path')
     .option('--dry-run', 'Plan setup without downloading or mutating anything')
@@ -395,6 +396,7 @@ export function registerEmbeddingsCommands(cli: Command, dependencies: Embedding
     .option('--json', 'Emit one JSON response')
     .action(async (options: {
       preset: string;
+      embeddings: boolean;
       command?: string;
       dryRun?: boolean;
       standardSkills: boolean;
@@ -406,28 +408,40 @@ export function registerEmbeddingsCommands(cli: Command, dependencies: Embedding
     }) => {
       const dryRun = options.dryRun === true;
       const confirmed = true;
+      const embeddingsEnabled = options.embeddings !== false;
+      if (options.preset !== LOCAL_SMALL_PRESET.id) throw new KiokukoError('VALIDATION_ERROR', 'Only the local-small embedding preset is supported');
+      const ennoOduno = options.ennoOduno === undefined ? undefined : parseEnnoSetupMode(options.ennoOduno);
       const skillDiscoveryMode = options.skillDiscovery === undefined
         ? undefined
         : parseSetupSkillDiscoveryMode(options.skillDiscovery);
-      const setupLock = dryRun
+      const setupLock = dryRun || !embeddingsEnabled
         ? undefined
         : await (dependencies.acquireSetupLock ?? acquireEmbeddingSetupLock)(dependencies.pathEnvironment);
       const executeSetup = async () => {
-        if (!dryRun) await ensureOptionalRuntime(dependencies);
+        if (!dryRun && embeddingsEnabled) {
+          if (!options.json) (dependencies.setupOutput ?? process.stdout).write('Preparing local semantic search. The first run may download the model; later runs reuse it.\n');
+          if (options.offline) await (dependencies.optionalRuntimeChecker ?? checkOptionalRuntime)();
+          else await ensureOptionalRuntime(dependencies);
+        }
         const setup = await runSetupFlow<Pick<SetupResult, 'client' | 'projectAgentFiles'>>({
+          optionalPrompts: operation === 'setup',
           ...(dependencies.pathEnvironment === undefined ? {} : { environment: dependencies.pathEnvironment }),
           ...(options.command === undefined ? {} : { command: options.command }),
           dryRun,
           standardSkills: options.standardSkills,
           ...(skillDiscoveryMode === undefined ? {} : { skillDiscoveryMode }),
-          ...(options.ennoOduno === undefined ? {} : { ennoOduno: parseEnnoSetupMode(options.ennoOduno) }),
+          ...(ennoOduno === undefined ? {} : { ennoOduno }),
           json: options.json === true,
           ...(dependencies.setupInput === undefined ? {} : { input: dependencies.setupInput }),
           ...(dependencies.setupOutput === undefined ? {} : { output: dependencies.setupOutput }),
         }, {
           ...(dependencies.setupOpenCode === undefined ? {} : { setupOpenCode: dependencies.setupOpenCode }),
         });
-        const embeddingData = await dependencies.withDatabase((database, backend) => runEmbeddingSetup(database, {
+        if (!embeddingsEnabled) return { setup, embeddingData: undefined };
+        const runDatabase = dependencies.withSetupDatabase === undefined
+          ? dependencies.withDatabase
+          : <T>(callback: (database: SqliteDatabase, backend?: VectorSearchBackend) => T | Promise<T>) => dependencies.withSetupDatabase!(dryRun, callback);
+        const embeddingData = await runDatabase((database, backend) => runEmbeddingSetup(database, {
           presetId: options.preset,
           confirmed,
           dryRun,
@@ -448,7 +462,10 @@ export function registerEmbeddingsCommands(cli: Command, dependencies: Embedding
         : await withEmbeddingSetupLock(setupLock, executeSetup);
       const health = summarizeProjectAgentRefresh(setup.projectAgentFiles);
       const data = {
+        ...(operation === 'setup' ? setup : {}),
         ...embeddingData,
+        ...(operation === 'setup' ? { projectAgentHealth: health } : {}),
+        embeddingsSetup: embeddingsEnabled ? dryRun ? 'planned' : 'completed' : 'skipped',
         ok: health.ok,
         projectSetup: {
           client: setup.client,
@@ -457,10 +474,18 @@ export function registerEmbeddingsCommands(cli: Command, dependencies: Embedding
         },
       };
       const summary = formatProjectAgentRefresh(setup.projectAgentFiles);
-      const message = `${data.semanticEnabled ? 'Semantic retrieval enabled.' : 'Embedding setup plan created.'}${health.ok ? '' : ' Setup incomplete.'}${summary ? `\n${summary}` : ''}`;
-      output(options.json, 'embeddings.setup', data, message);
+      const message = `${!embeddingsEnabled ? (dryRun ? 'Kiokuko setup plan created.' : 'Kiokuko configured for opencode. Restart OpenCode to apply the configuration.') : data.semanticEnabled ? 'Semantic retrieval enabled. Kiokuko configured for opencode. Restart OpenCode to apply the configuration.' : 'Kiokuko setup plan created, including local semantic search.'}${health.ok ? '' : ' Setup incomplete.'}${summary ? `\n${summary}` : ''}`;
+      output(options.json, operation, data, operation === 'setup' && !health.ok ? `Kiokuko setup incomplete for opencode.\n${summary}` : message);
       if (!health.ok) process.exitCode = 9;
     });
+
+  return command;
+}
+
+export function registerEmbeddingsCommands(cli: Command, dependencies: EmbeddingsCommandDependencies): Command {
+  const output = dependencies.output ?? defaultOutput;
+  const embeddings = cli.command('embeddings').description('Manage semantic memory embeddings');
+  registerSetupCommand(embeddings.command('setup'), dependencies, 'embeddings.setup');
 
   embeddings.command('status')
     .description('Show embedding configuration and coverage without contacting the provider')

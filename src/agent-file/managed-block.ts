@@ -133,7 +133,7 @@ export function readManagedBlockTemplateVersion(existing: string): number | unde
     .slice(markers.start, markers.end)
     .replaceAll('\r\n', '\n')
     .split('\n')
-    .filter((line) => line.includes('kiokuko-template-version'));
+    .filter((line) => /kiokuko(?:-dsh)?-template-version/u.test(line));
   if (lines.length === 0) {
     throw new KiokukoError('VALIDATION_ERROR', 'Managed block is missing its template-version declaration');
   }
@@ -146,4 +146,15 @@ export function readManagedBlockTemplateVersion(existing: string): number | unde
     throw new KiokukoError('VALIDATION_ERROR', 'Managed block has a malformed template-version declaration');
   }
   return version;
+}
+
+/** Recognize a separate product only inside one valid, unambiguous managed region. */
+export function hasDshManagedBlock(existing: string): boolean {
+  const region = readManagedBlockRegion(existing);
+  if (region === undefined) return false;
+  const declarations = region.content.replaceAll('\r\n', '\n').split('\n')
+    .filter(line => /kiokuko(?:-dsh)?-template-version/u.test(line));
+  if (declarations.length !== 1) return false;
+  const match = /^<!-- kiokuko-dsh-template-version: ([1-9][0-9]*) -->$/u.exec(declarations[0]!);
+  return match !== null && Number.isSafeInteger(Number(match[1]));
 }

@@ -28,23 +28,21 @@ npm install --global kiokuko-ai
 kiokuko-ai setup
 ```
 
-`setup`はローカルDBを初期化し、標準Skill、OpenCodeのMCP接続、npm pluginを設定します。
+`setup`はローカルDBを初期化し、標準Skill、OpenCodeのMCP接続、npm pluginを設定し、
+ローカルsemantic検索を有効にします。初回はモデルをダウンロードします。
 起動中のOpenCodeは、設定後に一度再起動してください。正確な設定規則は
 [導入ガイド](docs/getting-started.ja.md)を参照してください。
 
 ## 主な機能
 
-- **RAGメモリ**: 標準はlexical検索、任意でローカルsemantic検索。
+- **RAGメモリ**: lexical検索に加え、setupでローカルsemantic検索を有効化。
 - **Akinator**: 曖昧な依頼を作業前に具体化。
 - **役小角(enno-oduno)**: 複数手順の計画、確認、検証、回復。
 - **ローカルWeb UI**: 保存した記憶の確認と整理。
 - **参照専用Skill**: 外部Skillは検証して保存するが、自動実行しない。
 
-semantic検索を有効にする場合も、通常のclient設定フローを使います。
-
-```bash
-kiokuko-ai embeddings setup
-```
+追加のembeddings setupは不要です。モデルの準備を省く場合は
+`kiokuko-ai setup --no-embeddings`を指定してください。
 
 managed MCP blockと登録済みプロジェクトのinstructionsを更新します。unmanaged identityの置換は対話確認後だけ行い、
 非対話または`--dry-run --json`では変更せずfail closedします。詳細は

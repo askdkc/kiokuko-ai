@@ -1,6 +1,5 @@
-import { summarizeProjectAgentRefresh, formatProjectAgentRefresh } from './setup/project-agent-refresh.js';
 import { describeProjectAgentFinding } from './setup/project-agent-health.js';
-import { constants as fsConstants } from 'node:fs';
+import { constants as fsConstants, existsSync } from 'node:fs';
 import { open } from 'node:fs/promises';
 import { TextDecoder } from 'node:util';
 import { isProxy } from 'node:util/types';
@@ -20,27 +19,23 @@ import { promptRemoveMissingRepositoryLocations, runDoctor } from './commands/do
 import { writeExport } from './commands/export.js';
 import { importWorkspace } from './commands/import.js';
 import { openConnection } from './db/connection.js';
+import { migrateDatabase } from './db/migrate.js';
 import { errorEnvelope, successEnvelope } from './serialization/envelope.js';
 import { KiokukoError, exitCodeFor } from './errors.js';
 import { startWebServer } from './web/server.js';
 import { registerLedgerCommands } from './commands/ledger.js';
 import type { SqliteDatabase } from './db/adapter.js';
 import { answerAkinator, startAkinator } from './akinator/orchestrator.js';
-import {
-  parseEnnoSetupMode,
-  parseSetupSkillDiscoveryMode,
-  runSetupFlow,
-} from './commands/setup.js';
 import { runMcpServer } from './mcp/server.js';
 import { runCuratorCommand } from './commands/curator.js';
 import { globalizeCuratorCandidate } from './memory/curator.js';
-import type { PathEnvironment } from './config/paths.js';
+import { getGlobalDatabasePath, type PathEnvironment } from './config/paths.js';
 import { registerSkillsCommands, type SkillsCommandDependencies } from './commands/skills.js';
 import { registerEnnoCommand } from './commands/enno.js';
 import { PACKAGE_VERSION } from './package-version.js';
 import { parseStrictJson } from './setup/strict-json.js';
 import { validateRecordInput } from './serialization/validate.js';
-import { registerEmbeddingsCommands } from './commands/embeddings.js';
+import { registerEmbeddingsCommands, registerSetupCommand, type EmbeddingsCommandDependencies } from './commands/embeddings.js';
 import type { EmbeddingProvider, VectorSearchBackend } from './embedding/types.js';
 import { openEmbeddingDatabase } from './embedding/backend.js';
 import { parseEmbeddingConfig } from './embedding/config.js';
@@ -397,42 +392,7 @@ export function buildCli(dependencies: CliDependencies = {}): Command {
     humanOrJson(options.json, 'init', result, `Kiokuko database initialized (version ${result.currentVersion}).${backupNotice}`);
   });
 
-  cli.command('setup').description('Configure global Kiokuko memory and the OpenCode npm plugin, then refresh managed instructions in registered projects')
-    .option('--command <path>', 'Kiokuko executable name or absolute path')
-    .option('--dry-run', 'Validate and show planned changes without writing')
-    .option('--no-standard-skills', 'Skip installing bundled Kiokuko standard skills')
-    .option('--skill-discovery <mode>', 'External Skill discovery: off,official,community')
-    .option('--enno-oduno <mode>', 'Enno-Oduno per-request selection: ask,on,off')
-    .option('--json', 'Emit a JSON response')
-    .action(async (options: { command?: string; dryRun?: boolean; json?: boolean; standardSkills: boolean; skillDiscovery?: string; ennoOduno?: string }) => {
-      const optionSkillDiscoveryMode = options.skillDiscovery === undefined
-        ? undefined
-        : parseSetupSkillDiscoveryMode(options.skillDiscovery);
-      const setupEnvironment = dependencies.setupEnvironment ?? {};
-      const setupInput = dependencies.setupInput ?? process.stdin;
-      const setupOutput = dependencies.setupOutput ?? process.stdout;
-      const data = await runSetupFlow({
-        environment: setupEnvironment,
-        dryRun: options.dryRun === true,
-        standardSkills: options.standardSkills,
-        ...(options.command === undefined ? {} : { command: options.command }),
-        ...(optionSkillDiscoveryMode === undefined ? {} : { skillDiscoveryMode: optionSkillDiscoveryMode }),
-        ...(options.ennoOduno === undefined ? {} : { ennoOduno: parseEnnoSetupMode(options.ennoOduno) }),
-        json: options.json === true,
-        input: setupInput,
-        output: setupOutput,
-      });
-      const changed = data.files.filter((file) => file.action !== 'unchanged').length;
-      const health = summarizeProjectAgentRefresh(data.projectAgentFiles);
-      const projectSummary = formatProjectAgentRefresh(data.projectAgentFiles);
-      const message = options.dryRun
-        ? `Kiokuko setup plan for ${data.client}: ${changed} file${changed === 1 ? '' : 's'} would change.${health.ok ? '' : ' Setup incomplete.'}`
-        : health.ok
-          ? `Now you are ready to use Kiokuko! Kiokuko configured for ${data.client} (${changed} file${changed === 1 ? '' : 's'} changed). ${data.nextStep}`
-          : `Kiokuko setup incomplete for ${data.client}: ${health.failed} failed, ${health.skipped} skipped project instruction repairs.`;
-      humanOrJson(options.json, 'setup', { ...data, ok: health.ok, projectAgentHealth: health }, `${message}${projectSummary ? `\n${projectSummary}` : ''}`);
-      if (!health.ok) process.exitCode = 9;
-    });
+  const setupCommand = cli.command('setup');
 
   cli.command('mcp').description('Run the Kiokuko MCP server over stdio').action(async () => {
     await runMcpServer();
@@ -592,7 +552,7 @@ export function buildCli(dependencies: CliDependencies = {}): Command {
     const failureNotice = data.ok
       ? ''
       : ` Failed checks: ${Object.entries(data.checks).filter(([, check]) => !check.ok).map(([name]) => name).join(', ')}.\nrun kiokuko-ai doctor --json for detailed output`;
-    const agentDetails = data.checks.agentFiles.findings?.map(describeProjectAgentFinding).join('\n');
+    const agentDetails = [...(data.checks.agentFiles.findings ?? []), ...(data.checks.agentFiles.notices ?? [])].map(describeProjectAgentFinding).join('\n');
     humanOrJson(options.json, 'doctor', data, `${data.ok ? 'Kiokuko doctor: OK' : 'Kiokuko doctor: FAILED'}${cleanupNotice}${failureNotice}${agentDetails ? `\n${agentDetails}` : ''}`);
     if (!data.ok) process.exitCode = 8;
   });
@@ -600,8 +560,20 @@ export function buildCli(dependencies: CliDependencies = {}): Command {
   registerLedgerCommands(cli, { withDatabase });
   registerSkillsCommands(cli, dependencies.skills ?? { withDatabase });
   registerEnnoCommand(cli, { withDatabase });
-  registerEmbeddingsCommands(cli, {
+  const embeddingCommands: EmbeddingsCommandDependencies = {
     withDatabase: (operation) => withEmbeddingDatabase(dependencies, operation),
+    withSetupDatabase: async (dryRun, operation) => {
+      const databasePath = getGlobalDatabasePath(dependencies.setupEnvironment);
+      if (!dryRun) return withEmbeddingDatabase(dependencies, operation, { databasePath });
+      const existing = existsSync(databasePath);
+      const database = openConnection(existing ? databasePath : ':memory:', { readOnly: existing });
+      try {
+        if (!existing) migrateDatabase(database);
+        return await operation(database);
+      } finally {
+        database.close();
+      }
+    },
     ...(dependencies.embeddingEnvironment === undefined ? {} : { environment: dependencies.embeddingEnvironment }),
     ...(dependencies.embeddingProvider === undefined ? {} : { provider: dependencies.embeddingProvider }),
     ...(dependencies.embeddingBackend === undefined ? {} : { backend: dependencies.embeddingBackend }),
@@ -609,7 +581,9 @@ export function buildCli(dependencies: CliDependencies = {}): Command {
     ...(dependencies.setupInput === undefined ? {} : { setupInput: dependencies.setupInput }),
     ...(dependencies.setupOutput === undefined ? {} : { setupOutput: dependencies.setupOutput }),
     output: humanOrJson,
-  });
+  };
+  registerSetupCommand(setupCommand, embeddingCommands);
+  registerEmbeddingsCommands(cli, embeddingCommands);
   registerTraceCommands(cli, dependencies.trace ?? { withDatabase });
   registerSourceCommands(cli);
 

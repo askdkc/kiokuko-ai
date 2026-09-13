@@ -237,7 +237,7 @@ async function main() {
   const installedPackage = path.join(installedRoot, 'package.json');
   const packageJson = parseJson(await readFile(installedPackage, 'utf8'), 'installed_package');
   if (packageJson.name !== 'kiokuko-ai') throw new Error('installed package identity mismatch');
-  await requireSuccess(process.execPath, [cliScript, 'setup', '--skill-discovery', 'off', '--enno-oduno', 'on', '--json'], { cwd: project, env: environment, timeoutMs: 120_000, label: 'setup' });
+  await requireSuccess(process.execPath, [cliScript, 'setup', '--no-embeddings', '--skill-discovery', 'off', '--enno-oduno', 'on', '--json'], { cwd: project, env: environment, timeoutMs: 120_000, label: 'setup' });
   const configPath = path.join(config, 'opencode', 'opencode.jsonc');
   const openCodeConfig = parseJson(await readFile(configPath, 'utf8'), 'opencode_config');
   const pluginIndex = openCodeConfig.plugin.findIndex((entry) => Array.isArray(entry) && String(entry[0]).startsWith('kiokuko-ai@'));

@@ -25,7 +25,7 @@ const environment = { ...process.env, HOME: path.join(root, 'home'), XDG_CONFIG_
 for (const dir of [project, environment.HOME, environment.XDG_CONFIG_HOME, environment.XDG_DATA_HOME, environment.KIOKUKO_DATA_DIR]) await mkdir(dir, { recursive: true });
 await requireSuccess('git', ['init', '-q'], { cwd: project, env: environment });
 await writeFile(path.join(project, 'README.md'), 'Fixture work.\n');
-await requireSuccess(process.execPath, [cliScript, 'setup', '--enno-oduno', 'ask', '--skill-discovery', 'off', '--json'], { cwd: project, env: environment });
+await requireSuccess(process.execPath, [cliScript, 'setup', '--no-embeddings', '--enno-oduno', 'ask', '--skill-discovery', 'off', '--json'], { cwd: project, env: environment });
 const configPath = path.join(environment.XDG_CONFIG_HOME, 'opencode/opencode.jsonc');
 let config = parse(await readFile(configPath, 'utf8'));
 const index = config.plugin.findIndex(entry => Array.isArray(entry) && entry[0].startsWith('kiokuko-ai@'));
@@ -45,7 +45,7 @@ options.orchestration = { mode: 'ask', customAgents: { ...registration.orchestra
   ...Object.fromEntries(EXECUTION_ROLES.filter(role => role !== 'gokiWorker').map(role => [role, [`fixture-${role}`]])) } };
 // Test setup preserves the actual README custom definition and registrations.
 await writeFile(configPath, JSON.stringify(config, null, 2));
-await requireSuccess(process.execPath, [cliScript, 'setup', '--skill-discovery', 'off', '--json'], { cwd: project, env: environment });
+await requireSuccess(process.execPath, [cliScript, 'setup', '--no-embeddings', '--skill-discovery', 'off', '--json'], { cwd: project, env: environment });
 config = parse(await readFile(configPath, 'utf8'));
 assert.deepEqual(config.agent['my-orchestration-worker'], custom.agent['my-orchestration-worker']);
 assert.deepEqual(config.plugin[index][1].orchestration, options.orchestration);

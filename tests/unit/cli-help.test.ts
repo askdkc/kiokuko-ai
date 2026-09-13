@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -181,6 +181,8 @@ test('no-argument setup configures OpenCode automatically', async () => {
   try {
     await buildCli({ setupEnvironment: { platform: 'linux', env: { HOME: root, PATH: '', XDG_CONFIG_HOME: configRoot, XDG_DATA_HOME: dataRoot } } })
       .parseAsync(['node', 'kiokuko-ai', 'setup', '--dry-run', '--json']);
+    assert.equal(existsSync(dataRoot), false, 'dry-run must not initialize a persistent database');
+    assert.equal(existsSync(configRoot), false, 'dry-run must not write client configuration');
   } finally {
     process.stdout.write = originalWrite;
   }
@@ -293,6 +295,7 @@ test('interactive setup replaces a conflicting OpenCode MCP identity after accep
       'node',
       'kiokuko-ai',
       'setup',
+      '--no-embeddings',
       '--no-standard-skills',
     ]);
   } finally {
@@ -349,6 +352,7 @@ test('interactive setup preserves a conflicting OpenCode MCP identity when repla
     'node',
     'kiokuko-ai',
     'setup',
+    '--no-embeddings',
     '--skill-discovery',
     'official',
     '--no-standard-skills',

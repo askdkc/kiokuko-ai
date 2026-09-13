@@ -181,3 +181,21 @@ test('user alias and rc symlink are left intact and dry-run never prompts or ins
   }
  }finally{await rm(root,{recursive:true,force:true});}
 });
+
+
+test('repeated setup recognizes a working Orca CLI and existing managed alias without asking or writing', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'kiokuko-orca-repeat-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const rc = join(root, '.zshrc');
+  const original = `# User settings\n${orcaAliasBlock()}# More user settings\n`;
+  await writeFile(rc, original);
+  const { input, output, writes } = scriptedIO([]);
+  t.after(() => { input.destroy(); output.destroy(); });
+  const result = await enableOrcaReplayIntegration({
+    input, output, interactive: true, platform: 'darwin', environment: { HOME: root, SHELL: '/bin/zsh' },
+    checkInstalled: async () => {}, spawnInstall: async () => { assert.fail('must not reinstall'); },
+  });
+  assert.deepEqual(result, { accepted: true, installed: 'already_installed', alias: 'already_present' });
+  assert.equal(writes(), '');
+  assert.equal(await readFile(rc, 'utf8'), original);
+});

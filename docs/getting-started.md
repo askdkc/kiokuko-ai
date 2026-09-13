@@ -40,17 +40,28 @@ identities, extra MCP fields, or another unmanaged `kiokuko` identity are confli
 and are never silently overwritten. Interactive setup asks before replacing a
 conflict; JSON, non-interactive, and dry-run calls return `CONFLICT` without mutation.
 
+Setup refreshes only supported Kiokuko project instructions. Valid newer templates
+and DSH-owned blocks are reported as preserved, without rewriting their files or
+bindings. Malformed markers, unreadable paths, and identity mismatches remain errors.
+Repeated setup keeps the configured discovery mode and recognizes an already
+installed OrcaReplay integration with its managed alias.
+
 Restart OpenCode after setup. Use `kiokuko-ai doctor --json` to inspect runtime,
 database, and OpenCode MCP health; doctor is read-only.
 
-## Embeddings setup
+## Local semantic search
 
-`kiokuko-ai embeddings setup` installs the pinned local semantic runtime and runs the
-same client configuration flow as `kiokuko-ai setup`, including conflict confirmation,
-managed MCP replacement, and registered-project instruction refresh.
+`kiokuko-ai setup` configures OpenCode and installs, verifies, and activates the
+local semantic search model. The first run may download runtime packages and model
+weights; later runs reuse the verified installation. No second setup command is
+needed. Use `--no-embeddings` to skip model preparation without disabling an existing
+profile. `embeddings setup` remains a compatibility entry point for the same
+installation flow, without optional integration prompts.
+
+For an already installed runtime and verified local model:
 
 ```bash
-kiokuko-ai embeddings setup --preset local-small --offline
+kiokuko-ai setup --offline
 kiokuko-ai embeddings status --json
 ```
 

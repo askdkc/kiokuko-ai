@@ -1,7 +1,7 @@
 import { lstat } from 'node:fs/promises';
 import path from 'node:path';
 import { readRegularFile } from '../agent-file/atomic-write.js';
-import { readManagedBlockTemplateVersion } from '../agent-file/managed-block.js';
+import { hasDshManagedBlock, readManagedBlockTemplateVersion } from '../agent-file/managed-block.js';
 import { AGENT_TEMPLATE_VERSION } from '../agent-file/render.js';
 import { parseProjectConfigText } from '../config/project-config.js';
 import { KiokukoError } from '../errors.js';
@@ -11,7 +11,7 @@ export type ProjectAgentIssue =
   | 'missing_root' | 'unsafe_root' | 'inaccessible_root'
   | 'binding_missing' | 'binding_invalid' | 'binding_unreadable' | 'binding_mismatch'
   | 'agent_file_missing' | 'agent_file_unreadable'
-  | 'managed_block_missing' | 'managed_block_invalid' | 'outdated_template' | 'newer_template';
+  | 'other_product' | 'managed_block_missing' | 'managed_block_invalid' | 'outdated_template' | 'newer_template';
 
 export interface ProjectAgentFinding {
   repositoryRoot: string;
@@ -53,7 +53,6 @@ export async function inspectProjectAgentFile(location: RegisteredProjectLocatio
   }
   const agentFile = path.join(location.repositoryRoot, binding.agentFile);
   if (binding.repositoryId !== location.repositoryId || binding.workspace !== location.workspace) return finding('binding_mismatch', 'manual', agentFile);
-  if (binding.templateVersion > AGENT_TEMPLATE_VERSION) return finding('newer_template', 'manual', agentFile);
   let agent;
   try {
     agent = await readRegularFile(agentFile, { containmentRoot: location.repositoryRoot });
@@ -63,10 +62,13 @@ export async function inspectProjectAgentFile(location: RegisteredProjectLocatio
     return finding('agent_file_unreadable', 'manual', agentFile);
   }
   let version;
-  try { version = readManagedBlockTemplateVersion(agent.content); }
+  try {
+    if (hasDshManagedBlock(agent.content)) return finding('other_product', 'manual', agentFile);
+    version = readManagedBlockTemplateVersion(agent.content);
+  }
   catch (error) { if (!(error instanceof KiokukoError)) throw error; return finding('managed_block_invalid', 'manual', agentFile); }
   if (version === undefined) return finding('managed_block_missing', 'setup', agentFile);
-  if (version > AGENT_TEMPLATE_VERSION) return finding('newer_template', 'manual', agentFile);
+  if (version > AGENT_TEMPLATE_VERSION || binding.templateVersion > AGENT_TEMPLATE_VERSION) return finding('newer_template', 'manual', agentFile);
   if (version < AGENT_TEMPLATE_VERSION || binding.templateVersion < AGENT_TEMPLATE_VERSION) return finding('outdated_template', 'setup', agentFile);
   return { ok: true, agentFile };
 }
@@ -81,12 +83,18 @@ const DESCRIPTIONS: Record<ProjectAgentIssue, string> = {
   binding_mismatch: 'Project binding differs from the registered identity; reconcile it before retrying setup.',
   agent_file_missing: 'Agent file is missing; kiokuko-ai setup can recreate it.',
   agent_file_unreadable: 'Agent file cannot be read safely; check its path and permissions.',
+  other_product: 'Instructions are managed by kiokuko-dsh; kiokuko-ai leaves them unchanged.',
   managed_block_missing: 'Kiokuko managed block is missing; kiokuko-ai setup can append it while preserving human text.',
   managed_block_invalid: 'Kiokuko markers or template declaration are malformed; repair their boundaries manually before setup.',
   outdated_template: 'Project instructions are outdated; kiokuko-ai setup can refresh them.',
-  newer_template: 'Project instructions require a newer Kiokuko version; update the package before setup.',
+  newer_template: 'Newer project instructions are retained; this package will not downgrade them.',
 };
 
 export function describeProjectAgentFinding(finding: ProjectAgentFinding): string {
   return `${JSON.stringify(finding.repositoryRoot)}: ${finding.reason}. ${DESCRIPTIONS[finding.reason]}`;
+}
+
+/** Files outside this package's supported ownership/version are notices, not repair attempts. */
+export function preservesProjectAgentFinding(finding: ProjectAgentFinding): boolean {
+  return finding.reason === 'other_product' || finding.reason === 'newer_template';
 }

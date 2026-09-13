@@ -34,7 +34,7 @@ import { ensureGlobalWorkspace } from '../memory/workspaces.js';
 import { KiokukoError } from '../errors.js';
 import { isSkillDiscoveryMode, normalizeSkillDiscoveryMode, SKILL_DISCOVERY_ENV } from '../skills/config.js';
 import type { SkillDiscoveryMode } from '../skills/types.js';
-import { hasCanonicalOpenCodeMcpConfig, renderOpenCodeConfig } from '../setup/opencode-config.js';
+import { hasCanonicalOpenCodeMcpConfig, readManagedSkillDiscoveryMode, renderOpenCodeConfig } from '../setup/opencode-config.js';
 import { resolveManagedOpenCodeRuntime } from '../opencode/runtime-invocation.js';
 import { isSetupOpenCodeMcpIdentityConflict } from '../setup/mcp-conflict.js';
 import { renderGlobalInstructions } from '../setup/render.js';
@@ -207,6 +207,8 @@ export interface SetupFlowOptions {
   readonly json?: boolean;
   readonly input?: NodeJS.ReadableStream;
   readonly output?: NodeJS.WritableStream;
+  /** Embedding setup configures its dependencies without offering unrelated integrations. */
+  readonly optionalPrompts?: boolean;
 }
 
 export interface SetupFlowDependencies<T extends { client: 'opencode'; projectAgentFiles: ProjectAgentRefreshResult[] }> {
@@ -234,8 +236,15 @@ export async function runSetupFlow<T extends { client: 'opencode'; projectAgentF
     && (input as { isTTY?: boolean }).isTTY === true
     && (output as { isTTY?: boolean }).isTTY === true;
   let skillDiscoveryMode = requestedSkillDiscoveryMode;
-  if (interactive && requestedSkillDiscoveryMode === undefined) {
-    skillDiscoveryMode = await promptCommunitySkillDiscovery({ input, output });
+  if (interactive && options.optionalPrompts !== false && requestedSkillDiscoveryMode === undefined) {
+    const planning: SetupPlanningContext = { directories: new Map() };
+    const config = await openCodeConfigPath(planning, pathEnvironment);
+    const existing = (await readPlannedRegularFile(planning, config.path)).snapshot;
+    const runtime = options.command === undefined ? await resolveManagedOpenCodeRuntime(setupProcessEnvironment) : undefined;
+    if (readManagedSkillDiscoveryMode(existing?.content, runtime) === undefined) {
+      skillDiscoveryMode = await promptCommunitySkillDiscovery({ input, output });
+    }
+    // Leave the option unset so the locked writer preserves the latest stored choice.
   }
   const setupOptions: SetupOptions = {
     ...pathEnvironment,
@@ -265,7 +274,7 @@ export async function runSetupFlow<T extends { client: 'opencode'; projectAgentF
       replaceConflictingOpenCodeMcp = true;
     }
   }
-  if (interactive && options.dryRun !== true) {
+  if (interactive && options.optionalPrompts !== false && options.dryRun !== true) {
     await enableOrcaReplayIntegration({
       interactive:true,
       environment:setupProcessEnvironment,
