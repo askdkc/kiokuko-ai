@@ -70,6 +70,7 @@ MCP toolの呼び出しはclientとモデルが決めるため、モデルが毎
 - [基本概念](docs/concepts.ja.md)
 - [役小角(enno-oduno)](docs/enno-oduno.ja.md)
 - [Semantic retrieval](docs/semantic-retrieval.ja.md)
+- [Akinatorのプロフィール記憶：設定・既存履歴の取り込み・制限](docs/akinator-memory.ja.md)
 - [Security and trust](docs/security-and-trust.ja.md)
 - [CLI contract](docs/cli-contract.md)
 

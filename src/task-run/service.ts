@@ -1,3 +1,5 @@
+import { probeProfileMemory, type ProfileProbeContext } from '../akinator/memory-probe.js';
+import { projectProfileInTransaction, saveMemoryResolution } from '../akinator/profile-memory-store.js';
 import { randomUUID } from 'node:crypto';
 import type { SqliteDatabase } from '../db/adapter.js';
 import { withImmediateTransaction } from '../db/transaction.js';
@@ -16,7 +18,7 @@ import type {
 } from '../ledger/types.js';
 import { LedgerStore } from '../ledger/store.js';
 import { listLedgerEvents, listLedgerRuns, readLedgerRun } from '../ledger/query.js';
-import { AKINATOR_POLICY_VERSION, evaluateProfile, profileHash } from '../akinator/domain.js';
+import { AKINATOR_POLICY_VERSION, deriveProfile, evaluateProfile, profileHash } from '../akinator/domain.js';
 import { answerAkinatorInTransaction, startAkinatorInTransaction } from '../akinator/service.js';
 import {
   finalizeRunIntakeLink,
@@ -33,6 +35,7 @@ import { assertCapabilityCatalogBinding, bindCapabilityCatalog } from '../akinat
 const PROFILE_FIELDS = ['taskType', 'target', 'expected', 'constraints'] as const;
 
 export interface TaskRunServiceOptions {
+  readonly profileMemory?: ProfileProbeContext;
   readonly now?: () => string;
   readonly home?: string;
   readonly runIdFactory?: () => string;
@@ -157,10 +160,15 @@ export class TaskRunService {
           ...(input.parentRunId === undefined ? {} : { parentRunId: input.parentRunId }),
           ...(input.startedAt === undefined ? {} : { startedAt: input.startedAt }),
         }, now);
+        if (this.options.profileMemory && this.options.profileMemory.workspace !== input.workspace) conflict('Profile memory workspace mismatch');
+        const baseProfile = deriveProfile(task.query, task.profileHints);
+        const memory = this.options.profileMemory
+          ? probeProfileMemory(this.database, this.options.profileMemory, task.query, baseProfile)
+          : undefined;
         const result = startAkinatorInTransaction(this.database, {
           workspace: input.workspace,
           task: task.query,
-          profileHints: task.profileHints,
+          profileHints: memory?.profile ?? task.profileHints,
           now,
           idFactory: () => sessionId,
         });
@@ -170,7 +178,7 @@ export class TaskRunService {
           workspace: input.workspace,
           policyVersion: AKINATOR_POLICY_VERSION,
           profileSchemaVersion: 1,
-          profileSources: profileSources(task, result.session.profile),
+          profileSources: { ...profileSources(task, result.session.profile), ...(memory?.resolution.adopted ? { target: 'memory' as const } : {}) },
           initialProfileHash: null,
           recommendedTags: result.recommendedTags,
           linkedAt: now,
@@ -206,6 +214,8 @@ export class TaskRunService {
             finalizedAt: now,
           });
         }
+        if (memory) saveMemoryResolution(this.database, runId, memory.resolution, now);
+        projectProfileInTransaction(this.database, runId, now);
         // Intake questions enrich the task profile but no longer own the coding
         // gate. The run is active immediately and may receive memory/context
         // while Akinator remains advisory.
@@ -276,6 +286,7 @@ export class TaskRunService {
               finalizedAt: now,
             });
           }
+          projectProfileInTransaction(this.database, run.runId, now);
           return this.intakeResult(run.runId, finalRun.status, mutation.result);
         },
       );

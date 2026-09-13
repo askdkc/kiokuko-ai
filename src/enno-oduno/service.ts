@@ -5,7 +5,7 @@ import { KiokukoError } from '../errors.js';
 import { readExecutionRow } from '../execution/store.js';
 import { assertCapabilityCatalogBinding } from '../akinator/capability-binding.js';
 import { normalizeCapabilityCatalog } from '../akinator/capabilities.js';
-import { getAkinatorContextService } from '../akinator/service.js';
+import { getAkinatorStateService } from '../akinator/service.js';
 import type { AkinatorQuestion, AkinatorReasoning, TaskProfile } from '../akinator/types.js';
 import {
   claimTaskSkillDiscoveryAttempt,
@@ -740,7 +740,7 @@ async function readRunTaskContext(database: SqliteDatabase, snapshot: EnnoRunSna
     LIMIT 1
   `).get<{ repositoryId: string; sessionId: string }>(snapshot.runId, snapshot.workspace, snapshot.repositoryRoot);
   if (row === undefined) throw new KiokukoError('CONFLICT', 'Enno repository or intake binding changed');
-  const context = await getAkinatorContextService(database, {
+  const context = await getAkinatorStateService(database, {
     workspace: snapshot.workspace,
     sessionId: row.sessionId,
   });

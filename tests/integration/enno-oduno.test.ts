@@ -445,9 +445,21 @@ test('v5 migration preserves an active lease and recovers only its exact receipt
     const planned = await plannedExecution(database, root, 'legacy-lease', verifier(root, 'pass'));
     // Recreate the v5 representation: only the credential hash was persisted.
     database.exec(`ALTER TABLE enno_execution_leases DROP COLUMN lease_token;
-      DELETE FROM schema_migrations WHERE version = 6; PRAGMA user_version = 5;`);
+      DROP TRIGGER akinator_memory_source_deleted;
+      DROP TRIGGER akinator_profile_session_changed;
+      DROP TRIGGER akinator_profile_sources_changed;
+      DROP TRIGGER akinator_profile_insert;
+      DROP TRIGGER akinator_profile_update;
+      DROP TRIGGER akinator_profile_delete;
+      DROP TABLE akinator_memory_resolutions;
+      DROP TABLE akinator_profile_signals;
+      DROP TABLE akinator_profile_documents;
+      DROP TABLE akinator_profile_fts;
+      DROP TABLE akinator_profile_trigram;
+      DROP TABLE akinator_profile_backfill;
+      DELETE FROM schema_migrations WHERE version >= 6; PRAGMA user_version = 5;`);
     const before = database.prepare('SELECT * FROM enno_execution_leases WHERE run_id = ?').get(planned.identity.runId)!;
-    assert.deepEqual(migrateDatabase(database).applied, [6]);
+    assert.deepEqual(migrateDatabase(database).applied, [6, 7]);
     const after = database.prepare('SELECT * FROM enno_execution_leases WHERE run_id = ?').get(planned.identity.runId)!;
     assert.deepEqual({ ...after }, { ...before, lease_token: null });
     const continued = decideAdapterContinuation(database, 'opencode', { sessionId: planned.hostSessionId, cwd: root });

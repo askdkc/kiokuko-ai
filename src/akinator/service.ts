@@ -184,25 +184,34 @@ function queryText(session: AkinatorSessionView): string {
     .join(' ');
 }
 
-function taggedEntries(database: SqliteDatabase, workspace: string, tags: string[], limit = 12): EntryRecord[] {
+export function taggedEntries(database: SqliteDatabase, workspace: string, tags: string[], limit = 12): EntryRecord[] {
   if (tags.length === 0) return [];
-  const rows = database.prepare(`
-    SELECT e.id
-    FROM entries e
-    WHERE e.workspace = ?
-    ORDER BY e.updated_at DESC, e.id ASC
-  `).all<{ id: unknown }>(workspace);
-  const requestedTags = new Set(tags);
-  return rows.map((row) => {
-    if (typeof row.id !== 'string' || row.id.length === 0) {
-      throw new KiokukoError('INTEGRITY_ERROR', 'Stored entry candidate is invalid');
+  const result: EntryRecord[] = [];
+  let cursor: { id: string; updated_at: string } | undefined;
+  const placeholders = tags.map(() => '?').join(', ');
+  while (result.length < limit) {
+    const rows = database.prepare(`
+      SELECT DISTINCT e.id, e.updated_at
+      FROM entry_revision_tags AS t
+      JOIN entries AS e ON e.id = t.entry_id AND e.current_revision = t.revision
+      WHERE e.workspace = ? AND t.tag IN (${placeholders}) AND e.status <> 'superseded'
+        ${cursor ? 'AND (e.updated_at < ? OR (e.updated_at = ? AND e.id > ?))' : ''}
+      ORDER BY e.updated_at DESC, e.id ASC LIMIT ?
+    `).all<{ id: unknown; updated_at: unknown }>(workspace, ...tags,
+      ...(cursor ? [cursor.updated_at, cursor.updated_at, cursor.id] : []), 32);
+    if (rows.length === 0) break;
+    for (const row of rows) {
+      if (typeof row.id !== 'string' || !row.id || typeof row.updated_at !== 'string' || !row.updated_at) {
+        throw new KiokukoError('INTEGRITY_ERROR', 'Stored entry candidate is invalid');
+      }
+      cursor = { id: row.id, updated_at: row.updated_at };
+      const entry = readEntry(database, { workspace, entryId: row.id });
+      if (isRetrievableEntry(database, entry) && entry.status !== 'superseded'
+        && entry.tags.some(tag => tags.includes(tag))) result.push(entry);
+      if (result.length === limit) break;
     }
-    return readEntry(database, { workspace, entryId: row.id });
-  }).filter((entry) => {
-    if (!isRetrievableEntry(database, entry)) return false;
-    if (entry.status === 'superseded') return false;
-    return entry.tags.some((tag) => requestedTags.has(tag));
-  }).slice(0, limit);
+  }
+  return result;
 }
 
 function localEntries(database: SqliteDatabase, session: AkinatorSessionView, tags: string[]): EntryRecord[] {
@@ -211,7 +220,9 @@ function localEntries(database: SqliteDatabase, session: AkinatorSessionView, ta
   if (query.trim()) {
     for (const entry of searchEntries(database, { workspace: session.workspace, query, limit: 12 }).items) found.set(entry.id, entry);
   }
-  for (const entry of taggedEntries(database, session.workspace, tags)) found.set(entry.id, entry);
+  if (found.size < 12) {
+    for (const entry of taggedEntries(database, session.workspace, tags)) found.set(entry.id, entry);
+  }
   return [...found.values()].slice(0, 12);
 }
 
@@ -307,16 +318,18 @@ export async function answerAkinatorService(
   return withImmediateTransaction(database, () => answerAkinatorInTransaction(database, normalized).result);
 }
 
+/** Read only intake state; never search or expand memory entries. */
+export function getAkinatorStateService(database: SqliteDatabase, input: AkinatorContextInput): AkinatorResult {
+  const normalized = contextInput(input);
+  return resultForSession(readAkinatorSession(database, normalized));
+}
+
 export async function getAkinatorContextService(
   database: SqliteDatabase,
   input: AkinatorContextInput,
 ): Promise<AkinatorContext> {
-  const normalized = contextInput(input);
-  const session = readAkinatorSession(database, {
-    workspace: normalized.workspace,
-    sessionId: normalized.sessionId,
-  });
-  const result = resultForSession(session);
+  const result = getAkinatorStateService(database, input);
+  const session = result.session;
   if (result.status === 'needs_answer') {
     return {
       ...result,

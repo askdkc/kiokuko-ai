@@ -1,3 +1,7 @@
+import { readMemoryResolution } from './profile-memory-store.js';
+import { snapshotProfileHints } from './profile-hint-snapshot.js';
+import { captureProfileProbeContext, profileHintsForRun } from './memory-probe.js';
+import { runtimeProbeConfig, type ProfileMemoryHints } from './memory-probe-types.js';
 import { readTraceAdvisory } from '../trace/advisory.js';
 import { registerTraceStore, resolveTraceStoreLocation } from '../trace/store-location.js';
 import type { SqliteDatabase } from '../db/adapter.js';
@@ -15,7 +19,7 @@ import {
   resolveProjectWorkspaceReadOnly,
   type ResolvedProjectWorkspace,
 } from '../memory/workspaces.js';
-import { getAkinatorContextService } from './service.js';
+import { getAkinatorStateService } from './service.js';
 import {
   deriveMemoryUseSignal,
   deriveMemoryPolicy,
@@ -35,7 +39,7 @@ import {
   failTaskSkillDiscoveryAttempt,
   readTaskSkillDiscoveryAttempt,
 } from './skill-discovery-attempt.js';
-import type { AkinatorContext, AkinatorReasoning, TaskProfile } from './types.js';
+import type { AkinatorResult, AkinatorReasoning, TaskProfile } from './types.js';
 import { TaskRunService } from '../task-run/service.js';
 import { canonicalContentHash, type JsonObject } from '../serialization/validate.js';
 import {
@@ -110,11 +114,12 @@ export interface PreparedOpenCodeTask {
   project: ResolvedProjectWorkspace;
   executionContext: OpenCodeTaskExecutionContext;
   intake: {
-    status: AkinatorContext['status'];
+    memoryHints?: ProfileMemoryHints;
+    status: AkinatorResult['status'];
     sessionId: string;
     profile: TaskProfile;
-    question: AkinatorContext['question'];
-    missingFields: AkinatorContext['missingFields'];
+    question: AkinatorResult['question'];
+    missingFields: AkinatorResult['missingFields'];
     recommendedTags: string[];
     reasoning: AkinatorReasoning;
   };
@@ -151,7 +156,7 @@ export interface OpenCodeTraceAdvisoryContext {
 }
 
 export type StructuredWarning = CapabilityWarning | {
-  code: 'REPOSITORY_FINGERPRINT_UNAVAILABLE' | 'TRACE_CONTEXT_REJECTED';
+  code: 'REPOSITORY_FINGERPRINT_UNAVAILABLE' | 'TRACE_CONTEXT_REJECTED' | 'PROFILE_MEMORY_CONFIG_INVALID' | 'PROFILE_MEMORY_UNAVAILABLE';
   message: string;
 };
 
@@ -275,7 +280,7 @@ function assertTaskContextRequestBinding(metadata: JsonObject, maxContextChars: 
   }
 }
 
-function memoryCapabilityUnavailableForTask(context: AkinatorContext, capabilities: unknown): boolean {
+function memoryCapabilityUnavailableForTask(context: AkinatorResult, capabilities: unknown): boolean {
   return context.status === 'ready'
     && (context.session.profile.taskType === 'build' || context.session.profile.taskType === 'debug')
     && memoryReasoningCapabilityAvailability(capabilities) !== 'available';
@@ -286,7 +291,7 @@ type NonTerminalTaskRun = Omit<RunRecord, 'status'> & { status: 'intake' | 'acti
 function authoritativeTaskRun(
   database: SqliteDatabase,
   runId: string,
-  intakeStatus?: AkinatorContext['status'],
+  intakeStatus?: AkinatorResult['status'],
 ): NonTerminalTaskRun {
   const run = new LedgerStore(database).readRun(runId);
   if (run === undefined) throw new KiokukoError('NOT_FOUND', 'Task run was not found');
@@ -305,8 +310,8 @@ function authoritativeTaskRun(
 function currentOpenCodeTaskContext(
   database: SqliteDatabase,
   runId: string,
-  context: AkinatorContext,
-): AkinatorContext {
+  context: AkinatorResult,
+): AkinatorResult {
   const current = readContextBrokerRunState(database, runId);
   if (current.intakeSessionId !== context.session.id || current.status !== context.status) {
     throw new KiokukoError('INTEGRITY_ERROR', 'Task intake and authoritative broker state disagree');
@@ -411,7 +416,7 @@ function assertOpenCodeTaskSnapshot(
   database: SqliteDatabase,
   runId: string,
   expectedRun: NonTerminalTaskRun,
-  expectedContext: AkinatorContext,
+  expectedContext: AkinatorResult,
 ): void {
   const currentRun = authoritativeTaskRun(database, runId, expectedContext.status);
   const currentContext = currentOpenCodeTaskContext(database, runId, expectedContext);
@@ -493,7 +498,7 @@ function buildPreparedTaskBase(
   database: SqliteDatabase,
   project: ResolvedProjectWorkspace,
   executionContext: OpenCodeTaskExecutionContext,
-  context: AkinatorContext,
+  context: AkinatorResult,
   capabilities: unknown,
   run: { runId: string; status: 'intake' | 'active' },
   scopedContext: ScopedContextResult | null,
@@ -530,10 +535,16 @@ function buildPreparedTaskBase(
     WHERE run_id = ? AND kind = 'compaction_meditation'
     ORDER BY created_at DESC, job_id DESC LIMIT 1
   `).get<{ state: string }>(run.runId);
+  const memoryHints = profileHintsForRun(database, run.runId, context.session.profile);
+  const memoryWarning = readMemoryResolution(database, run.runId)?.warning;
+  const profileWarnings: StructuredWarning[] = [];
+  if (memoryWarning && !['off', 'shadow'].includes(runtimeProbeConfig().mode)) profileWarnings.push({ code: 'PROFILE_MEMORY_UNAVAILABLE', message: `Profile assistance is unavailable (${memoryWarning}); coding may continue without adoption.` });
+  if (runtimeProbeConfig().warning) profileWarnings.push({ code: 'PROFILE_MEMORY_CONFIG_INVALID', message: 'Profile memory configuration is invalid; assistance is disabled and coding may continue.' });
   return {
     project,
     executionContext,
     intake: {
+      ...(memoryHints ? { memoryHints } : {}),
       status: context.status,
       sessionId: context.session.id,
       profile: context.session.profile,
@@ -548,7 +559,7 @@ function buildPreparedTaskBase(
     context: scopedContext,
     ...(traceContext === undefined ? {} : { traceContext }),
     memoryPolicy: deriveMemoryPolicy(context.session.profile, memoryUse, capabilities, deliveryObservation),
-    warnings: [...capabilityResolution.warnings, ...additionalWarnings],
+    warnings: [...capabilityResolution.warnings, ...additionalWarnings, ...profileWarnings],
     nextAction: 'proceed',
     contextRevision: 0,
     continuationPolicy: { codingAllowed: true, blockingReason: null },
@@ -576,7 +587,7 @@ interface FinalizeOpenCodeTaskInput {
   project: ResolvedProjectWorkspace;
   executionContext: OpenCodeTaskExecutionContext;
   manifestSnapshot: ReturnType<typeof captureProjectManifestSnapshot>;
-  context: AkinatorContext;
+  context: AkinatorResult;
   runId: string;
   capabilities: unknown;
   maxContextChars: number;
@@ -590,7 +601,7 @@ interface PreparedTaskContextQuery {
   readonly fingerprint: ProjectFingerprint;
   readonly warnings: readonly StructuredWarning[];
   readonly selectionWorkspaces: readonly string[];
-  readonly queryFor: (context: AkinatorContext) => {
+  readonly queryFor: (context: AkinatorResult) => {
     project: ResolvedProjectWorkspace;
     fingerprint: ReturnType<typeof resolveProjectFingerprint>;
     task: string;
@@ -633,7 +644,7 @@ async function searchRuntime(
 
 function prepareTaskContextQuery(
   input: FinalizeOpenCodeTaskInput,
-  context: AkinatorContext,
+  context: AkinatorResult,
 ): PreparedTaskContextQuery {
   let fingerprint: ProjectFingerprint;
   let warnings: readonly StructuredWarning[] = [];
@@ -657,7 +668,7 @@ function prepareTaskContextQuery(
     }];
   }
   const selectionWorkspaces = [input.project.workspace, GLOBAL_WORKSPACE];
-  const queryFor = (current: AkinatorContext) => ({
+  const queryFor = (current: AkinatorResult) => ({
     project: input.project,
     fingerprint,
     task: current.session.task,
@@ -697,7 +708,7 @@ async function previewMemoryBeforeDiscovery(
   input: FinalizeOpenCodeTaskInput,
   prepared: PreparedTaskContextQuery,
   run: NonTerminalTaskRun,
-  context: AkinatorContext,
+  context: AkinatorResult,
 ): Promise<MemoryPreviewResult> {
   const query = prepared.queryFor(context);
   const runtime = await searchRuntime(input, query);
@@ -729,7 +740,7 @@ interface SkillDiscoveryResolutionInput {
   readonly input: FinalizeOpenCodeTaskInput;
   readonly prepared: PreparedTaskContextQuery;
   readonly run: NonTerminalTaskRun;
-  readonly context: AkinatorContext;
+  readonly context: AkinatorResult;
   readonly preDiscoveryMemoryState: string | null;
   readonly replayedAttempt: ReturnType<typeof readTaskSkillDiscoveryAttempt>;
 }
@@ -778,7 +789,7 @@ async function resolveSkillDiscovery(
 }
 
 interface FinalTaskContextResult {
-  readonly context: AkinatorContext;
+  readonly context: AkinatorResult;
   readonly run: NonTerminalTaskRun;
   readonly scopedContext: ScopedContextResult | null;
   readonly memoryUse: MemoryUseSignal;
@@ -787,7 +798,7 @@ interface FinalTaskContextResult {
 interface FinalTaskContextInput {
   readonly input: FinalizeOpenCodeTaskInput;
   readonly prepared: PreparedTaskContextQuery;
-  readonly context: AkinatorContext;
+  readonly context: AkinatorResult;
   readonly missingMemoryCapability: boolean;
 }
 
@@ -894,7 +905,7 @@ function withPreparedEnno(
   prepared: Omit<PreparedOpenCodeTask, 'ennoOduno'>,
 ): PreparedOpenCodeTask {
   saveExecutionPreparation(database, prepared.run.runId, {
-    project: prepared.project, intake: prepared.intake, run: prepared.run, skillDiscovery: prepared.skillDiscovery,
+    project: prepared.project, intake: snapshotProfileHints({ intake: prepared.intake as unknown as JsonObject }).intake, run: prepared.run, skillDiscovery: prepared.skillDiscovery,
   });
   const result: PreparedOpenCodeTask = {
     ...prepared,
@@ -958,7 +969,7 @@ export async function prepareOpenCodeTask(database: SqliteDatabase, input: Prepa
   // requestId is the logical request identity. The task-run receipt binds every
   // input, so reusing an ID with changed input conflicts. The opaque ID is hashed.
   const runKey = `mcp-task-prepare-${canonicalContentHash({ version: 1, requestId })}`;
-  const taskRuns = new TaskRunService(database);
+  const taskRuns = new TaskRunService(database, { profileMemory: captureProfileProbeContext(project, input.task) });
   const opened = taskRuns.createRun({
     requestId: runKey,
     workspace: project.workspace,
@@ -976,7 +987,7 @@ export async function prepareOpenCodeTask(database: SqliteDatabase, input: Prepa
   });
   initializeExecution(database, opened.runId, executionCatalog);
   authoritativeTaskRun(database, opened.runId);
-  const context = await getAkinatorContextService(database, {
+  const context = await getAkinatorStateService(database, {
     workspace: project.workspace,
     sessionId: opened.intakeSessionId,
   });
@@ -1037,7 +1048,7 @@ export async function answerOpenCodeTask(database: SqliteDatabase, input: Answer
     },
     { assertBeforeAnswer: () => assertRegisteredProjectLocation(database, project) },
   );
-  const context = await getAkinatorContextService(database, {
+  const context = await getAkinatorStateService(database, {
     workspace: project.workspace,
     sessionId: answered.intakeSessionId,
   });

@@ -1,3 +1,4 @@
+import { parseMemoryResolution } from '../akinator/memory-probe-types.js';
 import { createHash } from 'node:crypto';
 import type { SqliteDatabase, SqliteRow } from '../db/adapter.js';
 import { isSqliteCorruptionError } from '../db/sqlite-retry.js';
@@ -335,7 +336,12 @@ function inspectIntakes(database: SqliteDatabase, workspace: string | undefined,
     if (typeof row.policy_version !== 'string' || row.policy_version.length === 0) findings.add('storedValues', 'invalid_text', 'run_intakes', runId);
     if (integer(row.profile_schema_version) === undefined || (row.profile_schema_version as number) < 1) findings.add('storedValues', 'invalid_profile_schema_version', 'run_intakes', runId);
     if (!validTimestamp(row.linked_at)) findings.add('storedValues', 'invalid_timestamp', 'run_intakes', runId);
-    parseJson(row.profile_sources_json, ['runIntakes', 'storedValues'], 'run_intakes.profile_sources_json', runId, findings, 'object');
+    const sources = parseJson(row.profile_sources_json, ['runIntakes', 'storedValues'], 'run_intakes.profile_sources_json', runId, findings, 'object');
+    if (sources && typeof sources === 'object' && Object.entries(sources).some(([field, value]) =>
+      !['taskType', 'target', 'expected', 'constraints'].includes(field)
+      || !['inferred', 'client_supplied', 'user_answer', 'memory'].includes(String(value)))) {
+      findings.add('runIntakes', 'invalid_profile_source', 'run_intakes', runId);
+    }
     parseJson(row.recommended_tags_json, ['runIntakes', 'storedValues'], 'run_intakes.recommended_tags_json', runId, findings, 'array');
     if (row.initial_profile_hash !== null && (typeof row.initial_profile_hash !== 'string' || !HASH.test(row.initial_profile_hash))) findings.add('runIntakes', 'invalid_hash_shape', 'run_intakes', runId);
     scanRow(row, 'run_intakes', runId, findings);
@@ -517,6 +523,26 @@ function inspectTombstones(database: SqliteDatabase, workspace: string | undefin
   return rows.length;
 }
 
+function inspectProfileResolutions(database: SqliteDatabase, workspace: string | undefined, findings: FindingCollector): void {
+  const scope = workspace === undefined ? '' : ' WHERE r.workspace = ?';
+  const rows = database.prepare(`SELECT m.*, r.workspace FROM akinator_memory_resolutions AS m
+    LEFT JOIN ledger_runs AS r ON r.run_id = m.run_id${scope}`).all<Row>(...(workspace === undefined ? [] : [workspace]));
+  for (const row of rows) {
+    try {
+      const resolution = parseMemoryResolution(JSON.parse(String(row.resolution_json)));
+      if (resolution.candidates.some(ref => ref.workspace !== row.workspace)) {
+        findings.add('references', 'profile_memory_workspace_mismatch', 'akinator_memory_resolutions', row.run_id);
+      }
+      if (!validTimestamp(row.created_at)) findings.add('storedValues', 'invalid_timestamp', 'akinator_memory_resolutions', row.run_id);
+      if (row.workspace === null) findings.add('references', 'orphan_profile_memory', 'akinator_memory_resolutions', row.run_id);
+    } catch (error) {
+      if (!(error instanceof SyntaxError) && !(error instanceof KiokukoError)) throw error;
+      findings.add('storedValues', 'invalid_profile_memory', 'akinator_memory_resolutions', row.run_id);
+    }
+    scanRow(row, 'akinator_memory_resolutions', row.run_id, findings);
+  }
+}
+
 export function inspectLedger(database: SqliteDatabase, options: { workspace?: string } = {}): LedgerIntegrityReport {
   if (options.workspace !== undefined && (typeof options.workspace !== 'string' || options.workspace.length === 0)) errorValidation('workspace must be a non-empty string');
   try {
@@ -531,6 +557,7 @@ export function inspectLedger(database: SqliteDatabase, options: { workspace?: s
     const runs = inspectRuns(runRows, findings);
     inspectEvents(eventRows, runs, findings);
     inspectIntakes(database, workspace, runs, findings);
+    if (hasTable(database, 'akinator_memory_resolutions')) inspectProfileResolutions(database, workspace, findings);
     inspectReferences(database, workspace, findings);
     inspectContext(database, workspace, runs, findings);
     if (nudgeDeliveriesRequired && !nudgeDeliveriesAvailable) {
@@ -642,6 +669,7 @@ function runGraphCount(database: SqliteDatabase, runId: string): number {
   let total = 1;
   for (const table of ['run_intakes', 'intake_feedback', 'ledger_events', 'ledger_evidence', 'context_deliveries', 'nudge_deliveries', 'context_feedback', 'run_feedback', 'ledger_memory_links']) total += rowCount(database, `SELECT COUNT(*) AS count FROM ${table} WHERE run_id = ?`, runId);
   total += rowCount(database, 'SELECT COUNT(*) AS count FROM context_delivery_entries AS e JOIN context_deliveries AS d ON d.delivery_id = e.delivery_id WHERE d.run_id = ?', runId);
+  if (hasTable(database, 'akinator_memory_resolutions')) total += rowCount(database, 'SELECT COUNT(*) AS count FROM akinator_memory_resolutions WHERE run_id = ?', runId);
   const session = database.prepare('SELECT session_id FROM run_intakes WHERE run_id = ?').get<{ session_id: string }>(runId);
   if (session) { total += rowCount(database, 'SELECT COUNT(*) AS count FROM akinator_answers WHERE session_id = ?', session.session_id); total += rowCount(database, 'SELECT COUNT(*) AS count FROM akinator_sessions WHERE id = ?', session.session_id); }
   return total;

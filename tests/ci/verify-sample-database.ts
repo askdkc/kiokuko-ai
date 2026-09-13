@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile, spawn, type ChildProcessByStdio } from 'node:child_process';
-import { chmod, copyFile, mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { Readable } from 'node:stream';
@@ -9,6 +9,7 @@ import { getGlobalDatabasePath } from '../../src/config/paths.js';
 import { openConnection } from '../../src/db/connection.js';
 import { inspectMigrationSnapshot } from '../../src/db/migrate.js';
 import {
+  createSampleDatabase,
   SAMPLE_EXTERNAL_SKILL_DOCUMENT_COUNT,
   SAMPLE_EXTERNAL_SKILL_ID,
   SAMPLE_EXTERNAL_SKILL_WORKSPACE,
@@ -28,7 +29,6 @@ import {
 const execFileAsync = promisify(execFile);
 const repositoryRoot = path.resolve(import.meta.dirname, '../..');
 const cliPath = path.join(repositoryRoot, 'dist/bin/kiokuko.js');
-const sampleDatabasePath = path.join(repositoryRoot, 'tests/sampledb/kiokuko-ai.sqlite');
 
 interface CliEnvelope {
   version: number;
@@ -85,7 +85,7 @@ async function runCliJson(args: string[], operation: string, environment: NodeJS
   return parseCliEnvelope(result.stdout, operation);
 }
 
-async function assertCurrentFixture(): Promise<void> {
+async function assertCurrentFixture(sampleDatabasePath: string): Promise<void> {
   assert.ok(
     CURRENT_SCHEMA_VERSION > 0,
     'The sample database must use the current single-migration schema',
@@ -345,13 +345,12 @@ async function verifyWeb(environment: NodeJS.ProcessEnv): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  await assertCurrentFixture();
   const temporaryRoot = await mkdtemp(path.join(tmpdir(), 'kiokuko-sampledb-ci-'));
   try {
     const isolated = await isolatedEnvironment(temporaryRoot);
     await mkdir(path.dirname(isolated.databasePath), { recursive: true });
-    await copyFile(sampleDatabasePath, isolated.databasePath);
-    await chmod(isolated.databasePath, 0o600);
+    await createSampleDatabase(isolated.databasePath);
+    await assertCurrentFixture(isolated.databasePath);
     await verifySetup(isolated.env, isolated.databasePath);
     verifyCurrentMigrationHistory(isolated.databasePath);
     await verifyDoctor(isolated.env);

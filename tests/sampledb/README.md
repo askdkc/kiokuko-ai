@@ -1,21 +1,24 @@
 # Kiokuko sample database
 
-`kiokuko-ai.sqlite` is a deterministic, synthetic CI fixture. It contains:
+The fixture source is `tests/fixtures/sample-database.ts`. It generates a
+deterministic SQLite database containing synthetic project memory (including
+Unicode and multiline text), global memory, and an external-skill snapshot.
+Generated databases are not committed.
 
-- project-scoped memory entries, including Unicode and multiline text;
-- global memory entries;
-- one imported external-skill snapshot and its entry mappings.
-
-The fixture is generated from all current migrations through
-`006_stable_execution_leases.sql` (`PRAGMA user_version = 6`). CI copies it into an isolated
-application-data directory, verifies that setup applies no migration, then checks
-the data through `kiokuko-ai doctor` and a real `kiokuko-ai web` process.
-
-Regenerate it after intentionally changing the fixture or its baseline:
+Run the CLI and Web API checks against a freshly generated temporary database:
 
 ```sh
-npm run sampledb:generate
+npm run test:sampledb
 ```
 
-Do not run `kiokuko-ai setup` or `kiokuko-ai web` directly against the committed
-fixture. Use `npm run test:sampledb`, which works on a temporary copy.
+The test uses all current migrations, verifies that setup applies no additional
+migration, checks doctor and a real Web process, and removes its temporary files.
+The integration suite also compares two independent generations byte for byte.
+
+To keep a database for manual inspection, supply an explicit destination:
+
+```sh
+npm run sampledb:generate -- /tmp/kiokuko-sample.sqlite
+```
+
+Remove that file when finished. There is no default repository output path.
