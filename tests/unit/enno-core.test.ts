@@ -21,6 +21,7 @@ import {
   orderedUniqueSkillNames,
   unavailableRequiredSkills,
 } from '../../src/enno-oduno/skills.js';
+import { STANDARD_COMPLETION_SKILL_NAME, STANDARD_FUNCTION_SKILL_NAME, STANDARD_SOUL_SKILL_NAME } from '../../src/setup/standard-skills.js';
 import { parseEnnoContract, parseIdealSubmission, parsePlanSubmission } from '../../src/enno-oduno/schemas.js';
 import { sanitizePlanSubmission } from '../../src/enno-oduno/sanitize.js';
 import type { EnnoRequestHandoff } from '../../src/enno-oduno/types.js';
@@ -124,12 +125,15 @@ test('role scripts reject revision conflicts and generate only the role owning t
       objective: 'Fix add',
       units: [{
         id: 'fix-add', objective: 'Fix add', scope: ['src/add.js'], dependencies: [],
-        routes: ['code'], skillNames: ['kiokuko-single-purpose-functions'], acceptanceCriteria: ['Tests pass'], focusedVerifiers: [],
+        routes: ['code'], skillNames: [STANDARD_COMPLETION_SKILL_NAME, STANDARD_FUNCTION_SKILL_NAME], acceptanceCriteria: ['Tests pass'], focusedVerifiers: [],
       }],
     },
     skillSet: {
       entries: [{
-        name: 'kiokuko-single-purpose-functions', purposes: ['implementation'], required: true,
+        name: STANDARD_COMPLETION_SKILL_NAME, purposes: ['planning', 'implementation', 'testing', 'review'], required: true,
+        availability: 'local', referenceId: null,
+      }, {
+        name: STANDARD_FUNCTION_SKILL_NAME, purposes: ['implementation'], required: true,
         availability: 'local', referenceId: null,
       }],
       intakeDiscovery: { attempted: false, mode: 'off', requirements: [], queries: [], cacheHits: 0, candidates: 0, selected: [], failures: [] },
@@ -167,8 +171,9 @@ test('role scripts reject revision conflicts and generate only the role owning t
   assert.equal(directive.harness.continuation, 'session_idle_plugin');
   assert.match(directive.objective, /^Orchestrate the approved WorkUnit:/u);
   assert.deepEqual(directive.requiredSkills, [
-    'kiokuko-soul',
-    'kiokuko-single-purpose-functions',
+    STANDARD_SOUL_SKILL_NAME,
+    STANDARD_COMPLETION_SKILL_NAME,
+    STANDARD_FUNCTION_SKILL_NAME,
   ]);
   assert.equal((directive.reportSchema.required as string[]).includes('leaseToken'), true);
   const leasedDirective = generateRoleDirective('goki', { ...input, clientSessionId: 'opencode-session' });
@@ -203,9 +208,10 @@ test('role scripts reject revision conflicts and generate only the role owning t
   });
   assert.match(review.objective, /enno_verify_prepare.*Final Review advisory fanout/u);
   assert.deepEqual(review.requiredSkills, [
-    'kiokuko-soul',
+    STANDARD_SOUL_SKILL_NAME,
     'kiokuko-enno-oduno',
-    'kiokuko-single-purpose-functions',
+    STANDARD_COMPLETION_SKILL_NAME,
+    STANDARD_FUNCTION_SKILL_NAME,
   ]);
   assert.ok(review.harness.instructions.some((instruction) => /Read and apply kiokuko-soul first, then kiokuko-enno-oduno/u.test(instruction)));
   assert.deepEqual(review.reportSchema.required, ['runId', 'expectedRevision', 'idempotencyKey']);
@@ -321,20 +327,50 @@ test('Zenki directive binds Akinator, repository, local capability, and referenc
   assert.match(directive.objective, /kiokuko-ui-design-soul/u);
   assert.match(directive.objective, /external-react-reference/u);
   assert.match(directive.objective, /reference-only/u);
+  assert.match(directive.objective, /At the start of any coding work, before writing or changing code, read and apply one-shot-software-completion; use its compact contract and only the references selected for the current risk\./u);
   assert.match(directive.objective, /compact kiokuko-single-purpose-functions index/iu);
   assert.match(directive.objective, /one cohesive externally observable function or use-case contract/iu);
   assert.match(directive.objective, /focused runnable test target/iu);
   assert.match(directive.objective, /without meaningless micro-functions/iu);
   assert.match(directive.objective, /one to three versioned expertRefs/iu);
   assert.deepEqual(directive.requiredSkills, [
-    'kiokuko-soul',
-    'kiokuko-single-purpose-functions',
+    STANDARD_SOUL_SKILL_NAME,
+    STANDARD_FUNCTION_SKILL_NAME,
   ]);
   assert.ok(directive.harness.instructions.some((instruction) => /read and apply kiokuko-soul first/iu.test(instruction)));
   assert.ok(directive.stopConditions.some((condition) => /one cohesive function or use-case contract/iu.test(condition)));
   assert.equal(directive.handoff?.sourceRole, 'enno-oduno');
   assert.equal(directive.harness.kind, 'opencode');
   assert.equal(directive.harness.continuation, 'session_idle_plugin');
+});
+
+test('non-code Zenki planning does not seed the completion Skill', () => {
+  const discovery = { attempted: false, mode: 'off', requirements: [], queries: [], cacheHits: 0, candidates: 0, selected: [], failures: [] };
+  const directive = generateRoleDirective('zenki', {
+    runId: 'review-planning', taskType: 'review', status: 'zenki_planning', contractRevision: 1,
+    contract: {
+      revision: 1, scope: ['docs/README.md'], exclusions: [], acceptanceCriteria: [],
+      workPlan: { objective: 'Review the documentation', units: [] },
+      skillSet: { entries: [], intakeDiscovery: discovery, zenkiDiscovery: discovery },
+      finalVerifiers: [], maxAttempts: 8,
+      provenance: {
+        scope: 'inferred', exclusions: 'inferred', acceptanceCriteria: 'inferred', workPlan: 'inferred',
+        skillSet: 'inferred', finalVerifiers: 'inferred', maxAttempts: 'inferred',
+      },
+    },
+    handoff: requestHandoff('review'),
+    workUnits: [],
+    akinatorProfile: { taskType: 'review', target: 'documentation', expected: 'Review findings', constraints: 'Do not edit files' },
+    repositoryFingerprint: { languages: [], frameworks: [], databases: [], runtimes: [], tools: [] },
+    capabilityCatalog: [],
+    discoveredSkills: [],
+  });
+
+  assert.deepEqual(directive.requiredSkills, [
+    STANDARD_SOUL_SKILL_NAME,
+    STANDARD_FUNCTION_SKILL_NAME,
+  ]);
+  assert.equal(directive.requiredSkills.includes(STANDARD_COMPLETION_SKILL_NAME), false);
 });
 
 test('work plans reject multi-unit dependency cycles', () => {
@@ -678,11 +714,22 @@ test('mandatory SOUL assignment is deterministic and does not duplicate requirem
     includesUiWork: true,
   });
   assert.deepEqual(requirements.map((item) => item.name), [
-    'kiokuko-soul',
-    'kiokuko-single-purpose-functions',
+    STANDARD_SOUL_SKILL_NAME,
+    STANDARD_COMPLETION_SKILL_NAME,
+    STANDARD_FUNCTION_SKILL_NAME,
     'kiokuko-ui-design-soul',
   ]);
   assert.equal(requirements[0]?.required, true);
+  assert.deepEqual(requirements.find((item) => item.name === STANDARD_COMPLETION_SKILL_NAME), {
+    name: STANDARD_COMPLETION_SKILL_NAME,
+    purposes: ['planning', 'implementation', 'testing', 'review'],
+    required: true,
+  });
+  assert.deepEqual(completeRequiredSkillList({
+    requested: [],
+    includesCodeChanges: false,
+    includesUiWork: false,
+  }).map((item) => item.name), [STANDARD_SOUL_SKILL_NAME]);
   assert.deepEqual(orderedUniqueSkillNames(
     ['kiokuko-soul', 'kiokuko-single-purpose-functions'],
     ['kiokuko_soul', 'external-review'],
@@ -714,6 +761,21 @@ test('a WorkUnit cannot smuggle an undeclared Skill into the role directive', ()
       workPlan: 'explicit_user', skillSet: 'explicit_user', finalVerifiers: 'explicit_user', maxAttempts: 'explicit_user',
     },
   }), /Enno input is invalid/iu);
+  assert.doesNotThrow(() => parsePlanSubmission({
+    runId: 'run', workspace: 'workspace', orchestrationId: 'session', expectedRevision: 1, idempotencyKey: 'standard-skill',
+    scope: ['src/a.ts'], exclusions: [], acceptanceCriteria: [{ id: 'done', description: 'Done' }],
+    workPlan: { objective: 'Build', units: [{
+      id: 'build', objective: 'Build', scope: ['src/a.ts'], dependencies: [], routes: ['code'], skillNames: [STANDARD_COMPLETION_SKILL_NAME],
+      acceptanceCriteria: ['Done'], focusedVerifiers: [],
+    }] },
+    skillRequirements: [], finalVerifiers: [{
+      id: 'test', kind: 'test', executable: process.execPath, args: [], cwd: '.', timeoutMs: 1000,
+    }], maxAttempts: 8,
+    provenance: {
+      scope: 'explicit_user', exclusions: 'explicit_user', acceptanceCriteria: 'explicit_user',
+      workPlan: 'explicit_user', skillSet: 'explicit_user', finalVerifiers: 'explicit_user', maxAttempts: 'explicit_user',
+    },
+  }));
 });
 
 test('verifier uses shell false semantics, bounds output, and rejects repository escapes', async () => {

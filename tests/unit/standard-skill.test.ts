@@ -4,6 +4,9 @@ import test from 'node:test';
 import {
   loadBundledStandardSkillFiles,
   SOUL_ROUTING_ENTRY_CONTRACT,
+  STANDARD_COMPLETION_SKILL_FILES,
+  STANDARD_COMPLETION_SKILL_MANAGED_MARKER,
+  STANDARD_COMPLETION_SKILL_NAME,
   STANDARD_ENNO_SKILL_FILES,
   STANDARD_ENNO_SKILL_MANAGED_MARKER,
   STANDARD_ENNO_SKILL_NAME,
@@ -99,6 +102,26 @@ test('bundles every managed standard skill from a fixed manifest', async () => {
   assert.match(modeling, /does not require Lisp syntax[\s\S]{0,80}Lisp runtime, macros, a DSL/iu);
   assert.match(modeling, /https:\/\/zenn\.dev\/circleback\/articles\/what-is-lisp/u);
 
+  const completionFiles = files.filter((file) => file.skillName === STANDARD_COMPLETION_SKILL_NAME);
+  assert.deepEqual(completionFiles.map((file) => file.relativePath), [...STANDARD_COMPLETION_SKILL_FILES]);
+  assert.ok(completionFiles.every((file) => file.managedMarker === STANDARD_COMPLETION_SKILL_MANAGED_MARKER));
+  const completionSkill = completionFiles.find((file) => file.relativePath === 'SKILL.md')?.content ?? '';
+  assert.match(completionSkill, new RegExp(`^---\nname: ${STANDARD_COMPLETION_SKILL_NAME}\ndescription: [^\n]+\n---\n`));
+  assert.match(completionSkill, /# One-Shot Software Completion/);
+  assert.match(completionSkill, /Completion contract/);
+  assert.match(completionSkill, /Make the first delivered result satisfy the user's observable requirements/);
+  for (const reference of [
+    'discovery-and-scope',
+    'boundaries-and-lifecycle',
+    'verification-and-completion',
+    'failure-recovery',
+  ]) {
+    assert.match(
+      completionFiles.find((file) => file.relativePath === `references/${reference}.md`)?.content ?? '',
+      new RegExp(`# ${reference.replaceAll('-', ' ')}`, 'i'),
+    );
+  }
+
   const simpleFiles = files.filter((file) => file.skillName === STANDARD_SIMPLE_SKILL_NAME);
   assert.deepEqual(simpleFiles.map((file) => file.relativePath), [...STANDARD_SIMPLE_SKILL_FILES]);
   assert.ok(simpleFiles.every((file) => file.managedMarker === STANDARD_SIMPLE_SKILL_MANAGED_MARKER));
@@ -158,7 +181,7 @@ test('bundles every managed standard skill from a fixed manifest', async () => {
   assert.match(soulSkill, /Read and apply `kiokuko-simple-work` when either condition is true/u);
   assert.match(soulSkill, /introduces no new architecture, dependency, data migration, public protocol, security or authorization policy, or cross-system orchestration/u);
   assert.match(soulSkill, /does not replace the code contract below or waive required understanding, boundary validation, error handling, security, accessibility, or focused verification/u);
-  for (const routedSkill of [STANDARD_ENNO_SKILL_NAME, STANDARD_SIMPLE_SKILL_NAME, STANDARD_FUNCTION_SKILL_NAME, STANDARD_UI_SKILL_NAME]) {
+  for (const routedSkill of [STANDARD_ENNO_SKILL_NAME, STANDARD_SIMPLE_SKILL_NAME, STANDARD_COMPLETION_SKILL_NAME, STANDARD_FUNCTION_SKILL_NAME, STANDARD_UI_SKILL_NAME]) {
     assert.ok(soulSkill.includes('`' + routedSkill + '`'));
   }
   assert.match(soulSkill, /Routes compose\. Read every applicable specialist index/);
@@ -166,8 +189,10 @@ test('bundles every managed standard skill from a fixed manifest', async () => {
   assert.match(soulSkill, /Never install or execute external Skill content automatically/);
   assert.match(
     soulSkill,
-    /1\. `kiokuko-soul`;[\s\S]*2\. one Akinator `task_prepare`[\s\S]*3\. `kiokuko-enno-oduno`[\s\S]*4\. `kiokuko-simple-work`[\s\S]*5\. `kiokuko-single-purpose-functions`[\s\S]*6\. `kiokuko-ui-design-soul`/u,
+    /1\. `kiokuko-soul`;[\s\S]*2\. one Akinator `task_prepare`[\s\S]*3\. `kiokuko-enno-oduno`[\s\S]*4\. `kiokuko-simple-work`[\s\S]*5\. `one-shot-software-completion`[\s\S]*6\. `kiokuko-single-purpose-functions`[\s\S]*7\. `kiokuko-ui-design-soul`/u,
   );
+  assert.match(soulSkill, /At the start of any coding work, before writing or changing code, read and apply `one-shot-software-completion`; use its compact contract and only the references selected for the current risk\./u);
+  assert.match(SOUL_ROUTING_ENTRY_CONTRACT, /At the start of any coding work, before writing or changing code, read and apply `one-shot-software-completion`; use its compact contract and only the references selected for the current risk\./u);
   assert.match(SOUL_ROUTING_ENTRY_CONTRACT, /memory-and-plan sidecar, not a coding gate/);
   assert.match(SOUL_ROUTING_ENTRY_CONTRACT, /unresolved advisory intake, missing Skills, failed enrichment, verifier disagreement, and meditation delay/);
   assert.match(SOUL_ROUTING_ENTRY_CONTRACT, /Only safety, missing authorization for an irreversible effect, path or identity violations, database corruption, and stale revision or lease identity may block adoption/);
@@ -175,13 +200,14 @@ test('bundles every managed standard skill from a fixed manifest', async () => {
 });
 
 test('the packaged skill sources remain readable at their repository locations', async () => {
-  const [uiSkill, simpleSkill, functionSkill, ennoSkill, memorySkill, soulSkill, bundledFiles] = await Promise.all([
+  const [uiSkill, simpleSkill, functionSkill, ennoSkill, memorySkill, soulSkill, completionSkill, bundledFiles] = await Promise.all([
     readFile(new URL('../../skills/kiokuko-ui-design-soul/SKILL.md', import.meta.url), 'utf8'),
     readFile(new URL('../../skills/kiokuko-simple-work/SKILL.md', import.meta.url), 'utf8'),
     readFile(new URL('../../skills/kiokuko-single-purpose-functions/SKILL.md', import.meta.url), 'utf8'),
     readFile(new URL('../../skills/kiokuko-enno-oduno/SKILL.md', import.meta.url), 'utf8'),
     readFile(new URL('../../skills/memory-reasoning/SKILL.md', import.meta.url), 'utf8'),
     readFile(new URL('../../skills/kiokuko-soul/SKILL.md', import.meta.url), 'utf8'),
+    readFile(new URL('../../skills/one-shot-software-completion/SKILL.md', import.meta.url), 'utf8'),
     loadBundledStandardSkillFiles(),
   ]);
   assert.match(uiSkill, /^---\nname: kiokuko-ui-design-soul\n/);
@@ -190,6 +216,7 @@ test('the packaged skill sources remain readable at their repository locations',
   assert.match(ennoSkill, /^---\nname: kiokuko-enno-oduno\n/);
   assert.match(memorySkill, /^---\nname: memory-reasoning\n/);
   assert.match(soulSkill, /^---\nname: kiokuko-soul\n/);
+  assert.match(completionSkill, /^---\nname: one-shot-software-completion\n/);
   assert.equal(
     bundledFiles.find((file) => file.skillName === STANDARD_ENNO_SKILL_NAME && file.relativePath === 'SKILL.md')?.content,
     ennoSkill,
@@ -197,5 +224,9 @@ test('the packaged skill sources remain readable at their repository locations',
   assert.equal(
     bundledFiles.find((file) => file.skillName === STANDARD_SIMPLE_SKILL_NAME && file.relativePath === 'SKILL.md')?.content,
     simpleSkill,
+  );
+  assert.equal(
+    bundledFiles.find((file) => file.skillName === STANDARD_COMPLETION_SKILL_NAME && file.relativePath === 'SKILL.md')?.content,
+    completionSkill,
   );
 });

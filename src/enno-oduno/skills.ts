@@ -1,6 +1,7 @@
 import type { SqliteDatabase, SqliteRow } from '../db/adapter.js';
 import { normalizeCapabilityCatalog } from '../akinator/capabilities.js';
 import {
+  STANDARD_COMPLETION_SKILL_NAME,
   STANDARD_FUNCTION_SKILL_NAME,
   STANDARD_SOUL_SKILL_NAME,
   STANDARD_UI_SKILL_NAME,
@@ -54,6 +55,13 @@ export function completeRequiredSkillList(input: {
   };
   byName.set(normalize(soul.name), soul);
   if (input.includesCodeChanges) {
+    const completion: RequestedSkill = {
+      name: STANDARD_COMPLETION_SKILL_NAME,
+      purposes: ['planning', 'implementation', 'testing', 'review'],
+      required: true,
+    };
+    const completionKey = normalize(completion.name);
+    byName.set(completionKey, mergedRequirement(byName.get(completionKey), completion));
     const required: RequestedSkill = {
       name: STANDARD_FUNCTION_SKILL_NAME,
       purposes: ['implementation', 'testing', 'review'],

@@ -103,6 +103,8 @@ This route minimizes the solution; it does not replace the code contract below o
 
 ### Code work
 
+At the start of any coding work, before writing or changing code, read and apply `one-shot-software-completion`; use its compact contract and only the references selected for the current risk.
+
 Read and apply the `kiokuko-single-purpose-functions` index before writing, modifying, debugging, refactoring, or reviewing code, and before decomposing a code-changing WorkPlan. Select one to three `code.*` expert fragments for each cohesive function or WorkUnit.
 
 ### Interactive UI work
@@ -119,8 +121,9 @@ Use this order:
 2. one Akinator `task_prepare`, followed by grounded `task_answer` calls when useful;
 3. `kiokuko-enno-oduno` as soon as the returned state makes Enno-Oduno control applicable, including during unresolved intake;
 4. `kiokuko-simple-work` when the finalized intake satisfies the simple-code activation boundary;
-5. `kiokuko-single-purpose-functions` for code planning or code work;
-6. `kiokuko-ui-design-soul` for interactive UI work.
+5. `one-shot-software-completion` at the start of coding work and before writing or changing code;
+6. `kiokuko-single-purpose-functions` for code planning or code work;
+7. `kiokuko-ui-design-soul` for interactive UI work.
 
 The current revision-bound directive may narrow which routes the active role performs. Do not let a later route cross a role boundary or expand an approved WorkUnit.
 

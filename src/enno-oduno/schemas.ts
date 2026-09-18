@@ -4,6 +4,7 @@ import { KiokukoError } from '../errors.js';
 import {
   STANDARD_FUNCTION_EXPERT_IDS,
   STANDARD_FUNCTION_SKILL_NAME,
+  STANDARD_COMPLETION_SKILL_NAME,
   STANDARD_SOUL_SKILL_NAME,
   STANDARD_UI_EXPERT_IDS,
   STANDARD_UI_SKILL_NAME,
@@ -548,6 +549,7 @@ export const planSubmissionSchema = z.object({
   const requirements = new Set(submission.skillRequirements.map((requirement) => requirement.name.normalize('NFKC').toLowerCase()));
   const standardSkills = new Set([
     STANDARD_SOUL_SKILL_NAME,
+    STANDARD_COMPLETION_SKILL_NAME,
     STANDARD_FUNCTION_SKILL_NAME,
     STANDARD_UI_SKILL_NAME,
   ]);

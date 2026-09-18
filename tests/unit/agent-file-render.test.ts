@@ -30,7 +30,8 @@ test('renders the non-blocking memory-first lifecycle without legacy gateway com
     cliCommand: 'kiokuko-ai',
   });
 
-  assert.match(rendered, /<!-- kiokuko-template-version: 24 -->/);
+  assert.match(rendered, /<!-- kiokuko-template-version: 25 -->/);
+  assert.match(rendered, /At the start of any coding work, before writing or changing code, read and apply `one-shot-software-completion`; use its compact contract and only the references selected for the current risk\./u);
   assert.match(rendered, /memory-and-plan sidecar, not a coding gate/);
   assert.match(rendered, /unresolved advisory intake, missing Skills, failed enrichment, verifier disagreement, and meditation delay/);
   assert.match(rendered, /Only safety, missing authorization for an irreversible effect, path or identity violations, database corruption, and stale revision or lease identity may block adoption/);

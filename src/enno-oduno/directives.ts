@@ -2,6 +2,7 @@ import { KiokukoError } from '../errors.js';
 import type { AkinatorQuestion } from '../akinator/types.js';
 import { buildUserFacingConfirmation } from './confirmation.js';
 import {
+  STANDARD_COMPLETION_SKILL_NAME,
   STANDARD_ENNO_SKILL_NAME,
   STANDARD_FUNCTION_SKILL_NAME,
   STANDARD_SOUL_SKILL_NAME,
@@ -101,7 +102,7 @@ function executionReportSchema(snapshot: EnnoRunSnapshot): Record<string, unknow
 
 const CONFIRMATION_OBJECTIVE = `Return every item in userFacingConfirmation to the user in the user's language. Translate headings only; preserve paths, executable names, arguments, limits, and every listed item. Do not expose raw directive JSON, internal field names, WorkUnit IDs, expert IDs, or verifier IDs. Wait for explicit approve, revise, or cancel before calling enno_answer.`;
 
-const ZENKI_SINGLE_PURPOSE_PLANNING_CONTRACT = `After ${STANDARD_SOUL_SKILL_NAME} routes the work, read the compact ${STANDARD_FUNCTION_SKILL_NAME} index before decomposing the WorkPlan. Shape every code-changing WorkUnit around one cohesive externally observable function or use-case contract with one responsibility and one reason to change. State its success, expected failures, effect profile, and focused runnable test target. Select one to three versioned expertRefs for its actual risks; a UI unit needs at least one code expert and one UI expert. Compose those units without meaningless micro-functions, unrelated responsibilities, or loading every expert fragment by default.`;
+const ZENKI_SINGLE_PURPOSE_PLANNING_CONTRACT = `At the start of any coding work, before writing or changing code, read and apply ${STANDARD_COMPLETION_SKILL_NAME}; use its compact contract and only the references selected for the current risk. After ${STANDARD_SOUL_SKILL_NAME} routes the work, read the compact ${STANDARD_FUNCTION_SKILL_NAME} index before decomposing the WorkPlan. Every code-changing WorkUnit must include ${STANDARD_COMPLETION_SKILL_NAME} before ${STANDARD_FUNCTION_SKILL_NAME}. Shape every code-changing WorkUnit around one cohesive externally observable function or use-case contract with one responsibility and one reason to change. State its success, expected failures, effect profile, and focused runnable test target. Select one to three versioned expertRefs for its actual risks; a UI unit needs at least one code expert and one UI expert. Compose those units without meaningless micro-functions, unrelated responsibilities, or loading every expert fragment by default.`;
 
 function boundedObjective(value: string): string {
   return value.slice(0, 16_384);

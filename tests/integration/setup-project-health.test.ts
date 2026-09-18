@@ -179,7 +179,7 @@ test('future versions and DSH declarations cannot bypass malformed marker or ide
   await writeFile(bindingPath, JSON.stringify({ ...binding, templateVersion: AGENT_TEMPLATE_VERSION + 1 }));
   const cases = [
     `${BEGIN_MARKER}\n<!-- kiokuko-template-version: 99999 -->\n`,
-    `${BEGIN_MARKER}\n<!-- kiokuko-template-version: 24 -->\n<!-- kiokuko-dsh-template-version: 1 -->\n${END_MARKER}`,
+    `${BEGIN_MARKER}\n<!-- kiokuko-template-version: ${AGENT_TEMPLATE_VERSION} -->\n<!-- kiokuko-dsh-template-version: 1 -->\n${END_MARKER}`,
   ];
   for (const content of cases) {
     await writeFile(path.join(project, 'AGENTS.md'), content);
