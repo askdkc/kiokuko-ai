@@ -31,6 +31,22 @@ entry point with the same installation lifecycle.
 Unmanaged MCP identities require interactive confirmation before replacement;
 non-interactive or `--dry-run --json` runs fail closed without changing them.
 
+Interactive setup also lists active ledger runs whose advisory intake is still
+unfinished and asks `Delete these unfinished ledger runs? [Y/n]`. Confirmation
+deletes each selected run graph in one transaction, scrubs its persisted task
+request response, and leaves content-free purge tombstones. Curated memory is
+preserved, and setup does not create a backup automatically. The candidate
+snapshot is checked again inside the cleanup transaction; changed candidates
+are shown again instead of being deleted under stale confirmation. If another
+process already removed every confirmed candidate, setup reports the cleanup as
+`resolved` without showing an empty confirmation prompt.
+
+Declining the prompt leaves the runs intact and continues setup. Non-interactive,
+`--json`, and `--dry-run` invocations never perform this destructive cleanup.
+`data.ledgerCleanup` reports the status, candidate count, deleted run and row
+counts, and scrubbed receipt count. An active run with unfinished advisory
+intake is valid ledger state and does not by itself make `doctor` fail.
+
 `boolean@3.2.0` is an upstream transitive dependency of the Transformers.js
 runtime. It is not a Kiokuko dependency and is not present in the lightweight
 install. On Linux, the first automatic dependency installation uses sudo

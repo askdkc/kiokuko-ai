@@ -9,6 +9,7 @@ import { openConnection } from '../../src/db/connection.js';
 import { migrateDatabase } from '../../src/db/migrate.js';
 import { KiokukoError } from '../../src/errors.js';
 import { executeTaskRequest, executeTaskRequestInTransaction } from '../../src/task-run/idempotency.js';
+import { LedgerStore } from '../../src/ledger/store.js';
 
 const repositoryRoot = path.resolve(import.meta.dirname, '../..');
 const migrationsDirectory = path.join(repositoryRoot, 'migrations');
@@ -154,6 +155,74 @@ test('the same key is independent across internal scopes', async () => {
     assert.deepEqual(second, { calls: 2 });
     assert.deepEqual(replay, first);
     assert.equal(calls, 2);
+  } finally {
+    database.close();
+  }
+});
+
+test('a purged receipt does not block a different key in the same scope', async () => {
+  const database = await setup();
+  try {
+    executeTaskRequest(
+      database,
+      { scope: 'purge-scope', key: 'purged-key', request: { value: 1 }, createdAt },
+      () => ({ result: 'purged' }),
+    );
+    database.prepare(`
+      UPDATE task_request_receipts
+         SET response_json = 'null', run_id = NULL, purged_at = ?
+       WHERE scope = 'purge-scope'
+    `).run('2026-08-20T00:00:01.000Z');
+
+    const result = executeTaskRequest(
+      database,
+      { scope: 'purge-scope', key: 'new-key', request: { value: 2 }, createdAt },
+      () => ({ result: 'new' }),
+    );
+
+    assert.deepEqual(result, { result: 'new' });
+    assert.equal(database.prepare('SELECT COUNT(*) AS count FROM task_request_receipts').get<{ count: number }>()?.count, 2);
+  } finally {
+    database.close();
+  }
+});
+
+test('deleting a bound run tombstones its task receipt', async () => {
+  const database = await setup();
+  try {
+    new LedgerStore(database, { now: () => createdAt }).createRun({
+      runId: 'deleted-run',
+      workspace: 'workspace-a',
+      protocolVersion: '1',
+      client: { kind: 'opencode', version: '1.0.0' },
+      captureProfile: 'minimal',
+      coverage: { run: 'unavailable', tool: 'unavailable', command: 'unavailable', file: 'unavailable', approval: 'unavailable' },
+      task: { title: 'Task', query: 'Run tests', profileHints: { taskType: 'build', target: null, expected: null, constraints: null } },
+      metadata: {},
+      startedAt: createdAt,
+    });
+    const input = {
+      scope: 'opencode.task.create',
+      key: 'deleted-run-key',
+      request: { task: 'delete' },
+      createdAt,
+    };
+    executeTaskRequest(database, input, () => ({ runId: 'deleted-run' }));
+
+    database.prepare('DELETE FROM ledger_runs WHERE run_id = ?').run('deleted-run');
+
+    const receipt = database.prepare(`
+      SELECT run_id, response_json, purged_at
+        FROM task_request_receipts
+       WHERE scope = 'opencode.task.create'
+    `).get<{ run_id: string | null; response_json: string; purged_at: string | null }>();
+    assert.equal(receipt?.run_id, null);
+    assert.equal(receipt?.response_json, 'null');
+    assert.match(receipt?.purged_at ?? '', /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u);
+    assert.throws(
+      () => executeTaskRequest(database, input, () => ({ runId: 'replacement' })),
+      /purged/iu,
+    );
   } finally {
     database.close();
   }

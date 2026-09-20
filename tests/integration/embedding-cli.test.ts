@@ -241,11 +241,13 @@ test('embedding setup confirms and replaces a conflicting client MCP identity', 
       {
         dryRun: true,
         standardSkills: true,
+        unfinishedRunCleanup: { action: 'skip', reason: 'not_requested' },
         replaceConflictingOpenCodeMcp: false,
       },
       {
         dryRun: true,
         standardSkills: true,
+        unfinishedRunCleanup: { action: 'skip', reason: 'not_requested' },
         replaceConflictingOpenCodeMcp: true,
       },
     ]);

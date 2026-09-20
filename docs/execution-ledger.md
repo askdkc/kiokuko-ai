@@ -47,7 +47,7 @@ the evidence stale before `enno_finish` can commit.
 
 1. A run belongs to one workspace for its lifetime.
 2. One run links to one intake session, and one intake session links to one run; their workspaces must match.
-3. `intake → active` is valid only after the linked session is `ready` or `exhausted`.
+3. A run may become `active` while its linked intake remains advisory; finalized-profile projections still require a `ready` or `exhausted` session and a finalized intake link.
 4. A run's coverage declaration is preserved rather than inferred upward.
 5. `event_id` is globally unique; events also have unique `(run_id, sequence)` and unique `(run_id, source_event_id)` when present. Exact replay may identify an event by its explicit `eventId` or its run-scoped source identity; a different sanitized body conflicts.
 6. A batch receives contiguous local sequence numbers in one `BEGIN IMMEDIATE` transaction or writes nothing.
@@ -87,3 +87,7 @@ Nudge policy version `nudges.v1` shows one logical occurrence at most once per r
 ## Archive, backup, purge
 
 Existing memory export remains memory-only. Ledger export/import uses a separate deterministic manifest/checksum and includes nudge delivery history. Full SQLite backup contains memory, ledger, nudge deliveries, and feedback. Purge removes bounded content under explicit confirmation while preserving only a content-free tombstone and any promoted memory that has its own lifecycle.
+Run purge also replaces linked task-request responses with content-free receipt
+tombstones. A later retry of that idempotency key fails rather than returning a
+deleted run or silently creating a replacement. Interactive setup can apply this
+purge to explicitly confirmed active runs whose advisory intake is unfinished.

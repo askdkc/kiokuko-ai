@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { parse } from 'jsonc-parser';
 import { object, orchestrationOptionsSchema } from '../execution/catalog.js';
@@ -55,6 +56,11 @@ import {
 } from '../repository/binding.js';
 import { withManagedFileLock } from '../managed-files/coordinator.js';
 import type { ManagedMutationGuard } from '../managed-files/types.js';
+import {
+  planUnfinishedLedgerRunCleanup,
+  purgeUnfinishedLedgerRuns,
+  type UnfinishedLedgerRunPlan,
+} from '../ledger/maintenance.js';
 function readSetupExecutionMode(content: string | undefined): EnnoSetupMode {
   const plugins = object(parse(content ?? '{}')).plugin as unknown[];
   const entry = plugins.find(value => Array.isArray(value) && String(value[0]).startsWith('kiokuko-ai@')) as unknown[] | undefined;
@@ -104,6 +110,21 @@ export interface SetupOptions extends PathEnvironment {
   skillDiscoveryMode?: SkillDiscoveryMode;
   replaceConflictingOpenCodeMcp?: boolean;
   ennoOduno?: EnnoSetupMode;
+  unfinishedRunCleanup?: SetupUnfinishedRunCleanup;
+}
+
+export type SetupUnfinishedRunCleanup =
+  | { action: 'prompt' }
+  | { action: 'skip'; reason: 'declined' | 'non_interactive' | 'not_requested' }
+  | { action: 'resolved'; candidateCount: number }
+  | { action: 'confirm'; expectedDigest: string; candidateCount: number; batchId: string; createdAt: string };
+
+export interface SetupLedgerCleanupResult {
+  status: 'not_checked' | 'not_needed' | 'deleted' | 'resolved' | 'declined' | 'skipped';
+  candidateCount: number;
+  deletedRuns: number;
+  deletedCount: number;
+  scrubbedReceipts: number;
 }
 
 export interface SetupCommandDependencies {
@@ -128,6 +149,7 @@ export interface SetupResult {
   ennoOduno: EnnoSetupMode;
   dryRun: boolean;
   nextStep: string;
+  ledgerCleanup: SetupLedgerCleanupResult;
 }
 
 export interface SetupPromptOptions {
@@ -197,6 +219,47 @@ export async function promptReplaceConflictingMcp(
   }
 }
 
+const MAX_SETUP_LEDGER_CANDIDATES = 20;
+
+async function askUnfinishedLedgerRunCleanup(
+  prompt: SetupQuestion,
+  output: NodeJS.WritableStream,
+  plan: UnfinishedLedgerRunPlan,
+): Promise<boolean> {
+  output.write(`Setup found ${plan.candidateCount} active ledger run${plan.candidateCount === 1 ? '' : 's'} with unfinished intake.\n`);
+  for (const candidate of plan.candidates.slice(0, MAX_SETUP_LEDGER_CANDIDATES)) {
+    output.write(`  - ${candidate.workspace}: ${candidate.runId} (started ${candidate.startedAt})\n`);
+  }
+  if (plan.candidateCount > MAX_SETUP_LEDGER_CANDIDATES) {
+    output.write(`  ... and ${plan.candidateCount - MAX_SETUP_LEDGER_CANDIDATES} more\n`);
+  }
+  output.write('Deleting them removes their run history, intake answers, context, and request responses.\n');
+  output.write('Curated memory is preserved. No backup is created automatically.\n');
+  const answer = (await prompt.question('Delete these unfinished ledger runs? [Y/n] ')).trim();
+  return answer.length === 0 || /^(?:y|yes|はい)$/iu.test(answer);
+}
+
+/** Ask before deleting active runs whose advisory intake is unfinished. */
+export async function promptUnfinishedLedgerRunCleanup(
+  plan: UnfinishedLedgerRunPlan,
+  options: SetupPromptOptions = {},
+): Promise<boolean> {
+  const input = options.input ?? stdin;
+  const output = options.output ?? stdout;
+  const prompt = createInterface({ input, output });
+  try {
+    return await askUnfinishedLedgerRunCleanup(prompt, output, plan);
+  } finally {
+    prompt.close();
+  }
+}
+
+class SetupUnfinishedLedgerRunCleanupRequired extends KiokukoError {
+  constructor(readonly plan: UnfinishedLedgerRunPlan, readonly appliedMigrations: number[]) {
+    super('CONFLICT', 'Setup found active ledger runs with unfinished intake', { candidateCount: plan.candidateCount });
+  }
+}
+
 export interface SetupFlowOptions {
   readonly environment?: PathEnvironment;
   readonly command?: string;
@@ -253,10 +316,16 @@ export async function runSetupFlow<T extends { client: 'opencode'; projectAgentF
     ...(options.command === undefined ? {} : { command: options.command }),
     ...(skillDiscoveryMode === undefined ? {} : { skillDiscoveryMode }),
     ...(options.ennoOduno === undefined ? {} : { ennoOduno: options.ennoOduno }),
+    unfinishedRunCleanup: options.dryRun === true
+      ? { action: 'skip', reason: 'not_requested' }
+      : interactive
+        ? { action: 'prompt' }
+        : { action: 'skip', reason: 'non_interactive' },
   };
   const runSetup = dependencyOverrides.setupOpenCode
     ?? (setupOpenCode as unknown as (options: SetupOptions) => Promise<T>);
   let replaceConflictingOpenCodeMcp = false;
+  const appliedMigrations = new Set<number>();
   let result: T;
   for (;;) {
     try {
@@ -266,6 +335,23 @@ export async function runSetupFlow<T extends { client: 'opencode'; projectAgentF
       });
       break;
     } catch (error) {
+      if (interactive && error instanceof SetupUnfinishedLedgerRunCleanupRequired) {
+        for (const version of error.appliedMigrations) appliedMigrations.add(version);
+        if (error.plan.candidateCount === 0) {
+          setupOptions.unfinishedRunCleanup = {
+            action: 'resolved',
+            candidateCount: setupOptions.unfinishedRunCleanup?.action === 'confirm'
+              ? setupOptions.unfinishedRunCleanup.candidateCount
+              : 0,
+          };
+          continue;
+        }
+        const confirmed = await promptUnfinishedLedgerRunCleanup(error.plan, { input, output });
+        setupOptions.unfinishedRunCleanup = confirmed
+          ? { action: 'confirm', expectedDigest: error.plan.digest, candidateCount: error.plan.candidateCount, batchId: randomUUID(), createdAt: new Date().toISOString() }
+          : { action: 'skip', reason: 'declined' };
+        continue;
+      }
       if (!interactive
         || !isSetupOpenCodeMcpIdentityConflict(error)
         || replaceConflictingOpenCodeMcp) throw error;
@@ -273,6 +359,12 @@ export async function runSetupFlow<T extends { client: 'opencode'; projectAgentF
       if (!replace) throw error;
       replaceConflictingOpenCodeMcp = true;
     }
+  }
+  if ('appliedMigrations' in result && Array.isArray(result.appliedMigrations)) {
+    for (const version of result.appliedMigrations) {
+      if (typeof version === 'number') appliedMigrations.add(version);
+    }
+    (result as T & { appliedMigrations: number[] }).appliedMigrations = [...appliedMigrations].sort((left, right) => left - right);
   }
   if (interactive && options.optionalPrompts !== false && options.dryRun !== true) {
     await enableOrcaReplayIntegration({
@@ -749,6 +841,17 @@ async function setupOpenCodeUnlocked(
     ennoOduno: options.ennoOduno ?? readSetupExecutionMode(mcpFile.content),
     dryRun: options.dryRun ?? false,
     nextStep: setupNextStep(standardSkills),
+    ledgerCleanup: {
+      status: options.dryRun
+        ? 'not_checked'
+        : options.unfinishedRunCleanup?.action === 'resolved' ? 'resolved' : 'not_needed',
+      candidateCount: options.unfinishedRunCleanup?.action === 'resolved'
+        ? options.unfinishedRunCleanup.candidateCount
+        : 0,
+      deletedRuns: 0,
+      deletedCount: 0,
+      scrubbedReceipts: 0,
+    },
   };
   if (options.dryRun) {
     const registeredProjectLocations = readDryRunProjectLocations(
@@ -769,6 +872,55 @@ async function setupOpenCodeUnlocked(
   let workspaceInitializationFailed = false;
   let workspaceInitializationError: unknown;
   try {
+    const cleanupPlan = planUnfinishedLedgerRunCleanup(database);
+    const cleanup = options.unfinishedRunCleanup ?? { action: 'skip', reason: 'not_requested' as const };
+    if (cleanupPlan.candidateCount === 0 && cleanup.action === 'confirm') {
+      result.ledgerCleanup = {
+        status: 'resolved',
+        candidateCount: cleanup.candidateCount,
+        deletedRuns: 0,
+        deletedCount: 0,
+        scrubbedReceipts: 0,
+      };
+    }
+    if (cleanupPlan.candidateCount > 0 && (cleanup.action === 'prompt' || cleanup.action === 'resolved')) {
+      throw new SetupUnfinishedLedgerRunCleanupRequired(cleanupPlan, result.appliedMigrations);
+    }
+    if (cleanupPlan.candidateCount > 0 && cleanup.action === 'confirm') {
+      try {
+        const cleaned = purgeUnfinishedLedgerRuns(database, {
+          expectedDigest: cleanup.expectedDigest,
+          actor: 'kiokuko-ai setup',
+          createdAt: cleanup.createdAt,
+          batchId: cleanup.batchId,
+          confirmed: true,
+        });
+        result.ledgerCleanup = {
+          status: 'deleted',
+          candidateCount: cleaned.candidateCount,
+          deletedRuns: cleaned.deletedRuns,
+          deletedCount: cleaned.deletedCount,
+          scrubbedReceipts: cleaned.scrubbedReceipts,
+        };
+      } catch (error) {
+        if (error instanceof KiokukoError && error.code === 'CONFLICT'
+          && error.message === 'Unfinished ledger run cleanup candidates changed') {
+          throw new SetupUnfinishedLedgerRunCleanupRequired(
+            planUnfinishedLedgerRunCleanup(database),
+            result.appliedMigrations,
+          );
+        }
+        throw error;
+      }
+    } else if (cleanupPlan.candidateCount > 0) {
+      result.ledgerCleanup = {
+        status: cleanup.action === 'skip' && cleanup.reason === 'declined' ? 'declined' : 'skipped',
+        candidateCount: cleanupPlan.candidateCount,
+        deletedRuns: 0,
+        deletedCount: 0,
+        scrubbedReceipts: 0,
+      };
+    }
     const missingProjectLocations = findMissingRepositoryLocations(database);
     removeMissingRepositoryLocations(database, missingProjectLocations);
     dependencies.ensureGlobalWorkspace(database);

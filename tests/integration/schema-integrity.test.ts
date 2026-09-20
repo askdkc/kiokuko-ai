@@ -263,11 +263,15 @@ test('idempotency schema has composite uniqueness, bounded hash checks, and no r
   try {
     migrateDatabase(database, migrationsDirectory);
     const columns = database.prepare('PRAGMA table_info(task_request_receipts)').all<{ name: string; pk: number }>();
-    assert.deepEqual(columns.map(({ name }) => name), ['scope', 'key_hash', 'request_hash', 'response_json', 'created_at']);
-    assert.deepEqual(columns.map(({ pk }) => pk), [1, 2, 0, 0, 0]);
+    assert.deepEqual(columns.map(({ name }) => name), ['scope', 'key_hash', 'request_hash', 'response_json', 'created_at', 'run_id', 'purged_at']);
+    assert.deepEqual(columns.map(({ pk }) => pk), [1, 2, 0, 0, 0, 0, 0]);
     assert.deepEqual(
       database.prepare('PRAGMA index_info(idx_task_request_receipts_created_at)').all<{ name: string }>().map(({ name }) => name),
       ['created_at'],
+    );
+    assert.deepEqual(
+      database.prepare('PRAGMA index_info(idx_task_request_receipts_run_id)').all<{ name: string }>().map(({ name }) => name),
+      ['run_id'],
     );
     const hash = 'a'.repeat(64);
     const requestHash = 'b'.repeat(64);

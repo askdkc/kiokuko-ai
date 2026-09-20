@@ -142,6 +142,17 @@ type StoredIdempotencyRow = {
   request_hash: unknown;
   response_json: unknown;
   created_at: unknown;
+  run_id: unknown;
+  purged_at: unknown;
+};
+
+type ValidStoredIdempotencyRow = StoredIdempotencyRow & {
+  scope: string;
+  key_hash: string;
+  request_hash: string;
+  response_json: string;
+  created_at: string;
+  purged_at: string | null;
 };
 
 function invalidStoredRecord(): never {
@@ -152,7 +163,10 @@ function isSha256(value: unknown): value is string {
   return typeof value === 'string' && /^[0-9a-f]{64}$/u.test(value);
 }
 
-function storedResponse(row: StoredIdempotencyRow, expectedScope: string): JsonValue {
+function validateStoredRecord(
+  row: StoredIdempotencyRow,
+  expectedScope: string,
+): asserts row is ValidStoredIdempotencyRow {
   if (
     row.scope !== expectedScope
     || !isSha256(row.key_hash)
@@ -161,6 +175,16 @@ function storedResponse(row: StoredIdempotencyRow, expectedScope: string): JsonV
     || !isCanonicalTimestamp(row.created_at)
   ) {
     invalidStoredRecord();
+  }
+  if (row.purged_at !== null) {
+    if (!isCanonicalTimestamp(row.purged_at) || row.run_id !== null || row.response_json !== 'null') invalidStoredRecord();
+  }
+}
+
+function storedResponse(row: StoredIdempotencyRow, expectedScope: string): JsonValue {
+  validateStoredRecord(row, expectedScope);
+  if (row.purged_at !== null) {
+    throw new KiokukoError('CONFLICT', 'Idempotent task request was purged');
   }
   let parsed: unknown;
   try {
@@ -172,14 +196,22 @@ function storedResponse(row: StoredIdempotencyRow, expectedScope: string): JsonV
   return parsed as JsonValue;
 }
 
+function hasTaskReceiptRunBinding(database: SqliteDatabase): boolean {
+  const columns = database.prepare('PRAGMA table_info(task_request_receipts)').all<{ name: unknown }>();
+  return columns.some(({ name }) => name === 'run_id')
+    && columns.some(({ name }) => name === 'purged_at');
+}
+
 function findStoredRecord(
   database: SqliteDatabase,
   validated: ValidatedInput,
 ): { requestHash: string; response: JsonValue } | undefined {
-  const select = `
-    SELECT scope, key_hash, request_hash, response_json, created_at
-    FROM task_request_receipts
-  `;
+  const select = hasTaskReceiptRunBinding(database)
+    ? `SELECT scope, key_hash, request_hash, response_json, created_at, run_id, purged_at
+         FROM task_request_receipts`
+    : `SELECT scope, key_hash, request_hash, response_json, created_at,
+              NULL AS run_id, NULL AS purged_at
+         FROM task_request_receipts`;
   const direct = database.prepare(`${select} WHERE scope = ? AND key_hash = ?`).get<StoredIdempotencyRow>(
     validated.scope,
     validated.keyHash,
@@ -190,8 +222,9 @@ function findStoredRecord(
   }
 
   for (const row of database.prepare(`${select} WHERE scope = ?`).all<StoredIdempotencyRow>(validated.scope)) {
-    const response = storedResponse(row, validated.scope);
+    validateStoredRecord(row, validated.scope);
     if (row.key_hash === validated.keyHash) {
+      const response = storedResponse(row, validated.scope);
       return { requestHash: row.request_hash as string, response };
     }
   }
@@ -223,16 +256,26 @@ function executeValidated<T>(
   } catch {
     throw new KiokukoError('VALIDATION_ERROR', RESPONSE_VALIDATION_MESSAGE);
   }
-  database.prepare(`
-    INSERT INTO task_request_receipts (scope, key_hash, request_hash, response_json, created_at)
-    VALUES (?, ?, ?, ?, ?)
-  `).run(
-    validated.scope,
-    validated.keyHash,
-    validated.requestHash,
-    responseJson,
-    validated.createdAt,
-  );
+  const taskRunScope = validated.scope === 'opencode.task.create'
+    || validated.scope === 'opencode.task.answer';
+  const runId = taskRunScope && isPlainObject(responseValue) && typeof responseValue.runId === 'string'
+    ? responseValue.runId
+    : null;
+  if (hasTaskReceiptRunBinding(database)) {
+    database.prepare(`
+      INSERT INTO task_request_receipts (scope, key_hash, request_hash, response_json, created_at, run_id, purged_at)
+      VALUES (?, ?, ?, ?, ?, ?, NULL)
+    `).run(
+      validated.scope, validated.keyHash, validated.requestHash, responseJson, validated.createdAt, runId,
+    );
+  } else {
+    database.prepare(`
+      INSERT INTO task_request_receipts (scope, key_hash, request_hash, response_json, created_at)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(
+      validated.scope, validated.keyHash, validated.requestHash, responseJson, validated.createdAt,
+    );
+  }
   return JSON.parse(responseJson) as T;
 }
 

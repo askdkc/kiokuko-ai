@@ -8,11 +8,14 @@ import { openConnection } from '../../src/db/connection.js';
 import { migrateDatabase } from '../../src/db/migrate.js';
 import {
   inspectLedger,
+  planUnfinishedLedgerRunCleanup,
   purgeLedgerTarget,
+  purgeUnfinishedLedgerRuns,
   LEDGER_CHECK_NAMES,
   type LedgerIntegrityReport,
 } from '../../src/ledger/maintenance.js';
 import { recordNudgeDeliveryInTransaction } from '../../src/context/nudge-store.js';
+import { executeTaskRequest } from '../../src/task-run/idempotency.js';
 
 const migrations = path.resolve(import.meta.dirname, '../../migrations');
 
@@ -577,6 +580,184 @@ test('purge propagates an unexpected trigger failure without reclassifying its t
         return true;
       },
     );
+    assert.equal(database.prepare('SELECT COUNT(*) AS count FROM ledger_runs').get<{ count: number }>()?.count, 1);
+    assert.equal(database.prepare('SELECT COUNT(*) AS count FROM ledger_purge_audit').get<{ count: number }>()?.count, 0);
+  } finally {
+    database.close();
+  }
+});
+
+test('accepts an active run while its advisory intake remains unfinished', async () => {
+  const database = await setup();
+  try {
+    const { LedgerStore } = await import('../../src/ledger/store.js');
+    const store = new LedgerStore(database, { now: () => '2026-08-20T00:00:00.000Z' });
+    store.createRun(runInput());
+    database.prepare(`
+      INSERT INTO akinator_sessions (id, workspace, task_text, profile_json, status, question_count, created_at, updated_at)
+      VALUES ('session-unfinished', 'workspace-a', 'Task', '{"taskType":"build","target":null,"expected":null,"constraints":null}', 'active', 0, ?, ?)
+    `).run('2026-08-20T00:00:00.000Z', '2026-08-20T00:00:00.000Z');
+    database.prepare(`
+      INSERT INTO run_intakes (run_id, session_id, policy_version, profile_schema_version, profile_sources_json, recommended_tags_json, linked_at)
+      VALUES ('run-1', 'session-unfinished', 'v1', 1, '{"taskType":"inferred"}', '[]', ?)
+    `).run('2026-08-20T00:00:00.000Z');
+    store.appendBatch('run-1', {
+      events: [{ eventId: 'event-unfinished', eventType: 'run.started', actor: 'agent', payload: { advisoryIntake: true } }],
+    });
+    store.updateRunStatus('run-1', 'active');
+
+    const report = inspectLedger(database, { workspace: 'workspace-a' });
+
+    assert.equal(report.ok, true);
+    assert.equal(report.checks.runIntakes.findingCount, 0);
+  } finally {
+    database.close();
+  }
+});
+
+test('confirmed unfinished-run cleanup purges the run graph and scrubs its request receipt', async () => {
+  const database = await setup();
+  try {
+    const { LedgerStore } = await import('../../src/ledger/store.js');
+    const store = new LedgerStore(database, { now: () => '2026-08-20T00:00:00.000Z' });
+    store.createRun(runInput());
+    database.prepare(`
+      INSERT INTO akinator_sessions (id, workspace, task_text, profile_json, status, question_count, created_at, updated_at)
+      VALUES ('session-cleanup', 'workspace-a', 'Task', '{"taskType":"build","target":null,"expected":null,"constraints":null}', 'active', 0, ?, ?)
+    `).run('2026-08-20T00:00:00.000Z', '2026-08-20T00:00:00.000Z');
+    database.prepare(`
+      INSERT INTO run_intakes (run_id, session_id, policy_version, profile_schema_version, profile_sources_json, recommended_tags_json, linked_at)
+      VALUES ('run-1', 'session-cleanup', 'v1', 1, '{"taskType":"inferred"}', '[]', ?)
+    `).run('2026-08-20T00:00:00.000Z');
+    store.updateRunStatus('run-1', 'active');
+    let receiptCalls = 0;
+    const receiptInput = { scope: 'opencode.task.create', key: 'cleanup-request', request: { task: 'cleanup' }, createdAt: '2026-08-20T00:00:00.000Z' };
+    executeTaskRequest(database, receiptInput, () => {
+      receiptCalls += 1;
+      return { runId: 'run-1', status: 'active' };
+    });
+    database.prepare(`
+      INSERT INTO task_memory_operations (run_id, request_id, digest, result_json)
+      VALUES ('run-1', 'memory-operation', 'digest', '{}')
+    `).run();
+    database.prepare(`
+      INSERT INTO repositories (
+        repository_id, workspace, display_name, binding_schema_version,
+        agent_template_version, created_at, last_used_at
+      ) VALUES ('repository-cleanup', 'workspace-a', 'Repository', 1, 1, ?, ?)
+    `).run('2026-08-20T00:00:00.000Z', '2026-08-20T00:00:00.000Z');
+    database.prepare(`
+      INSERT INTO akinator_profile_documents (
+        run_id, session_id, workspace, repository_id, profile_hash, sources_hash,
+        task_text, target_text, projected_at, projection_version
+      ) VALUES ('run-1', 'session-cleanup', 'workspace-a', 'repository-cleanup',
+        'profile-hash', 'sources-hash', 'Task', 'Target', ?, 1)
+    `).run('2026-08-20T00:00:00.000Z');
+    database.prepare(`
+      INSERT INTO akinator_profile_signals (document_id, workspace, repository_id, value)
+      SELECT id, workspace, repository_id, value
+        FROM akinator_profile_documents
+        CROSS JOIN (SELECT 'signal-a' AS value UNION ALL SELECT 'signal-b')
+       WHERE run_id = 'run-1'
+    `).run();
+    const plan = planUnfinishedLedgerRunCleanup(database);
+
+    assert.equal(plan.candidateCount, 1);
+    assert.throws(() => purgeUnfinishedLedgerRuns(database, {
+      expectedDigest: plan.digest,
+      actor: 'test',
+      createdAt: '2026-08-20T00:00:01.000Z',
+      batchId: 'cleanup-batch',
+    }), /confirmation/iu);
+
+    const cleaned = purgeUnfinishedLedgerRuns(database, {
+      expectedDigest: plan.digest,
+      actor: 'test',
+      createdAt: '2026-08-20T00:00:01.000Z',
+      batchId: 'cleanup-batch',
+      confirmed: true,
+    });
+
+    assert.equal(cleaned.deletedRuns, 1);
+    assert.equal(cleaned.deletedCount, 7);
+    assert.equal(cleaned.scrubbedReceipts, 1);
+    assert.equal(database.prepare('SELECT COUNT(*) AS count FROM ledger_runs').get<{ count: number }>()?.count, 0);
+    assert.equal(database.prepare('SELECT COUNT(*) AS count FROM akinator_sessions').get<{ count: number }>()?.count, 0);
+    assert.deepEqual({ ...database.prepare('SELECT run_id, response_json, purged_at FROM task_request_receipts').get() }, {
+      run_id: null,
+      response_json: 'null',
+      purged_at: '2026-08-20T00:00:01.000Z',
+    });
+    assert.throws(() => executeTaskRequest(database, receiptInput, () => {
+      receiptCalls += 1;
+      return { runId: 'replacement' };
+    }), /purged/iu);
+    assert.equal(receiptCalls, 1);
+    assert.equal(inspectLedger(database).ok, true);
+  } finally {
+    database.close();
+  }
+});
+
+test('unfinished-run cleanup rejects a new child relationship after confirmation planning', async () => {
+  const database = await setup();
+  try {
+    const { LedgerStore } = await import('../../src/ledger/store.js');
+    const store = new LedgerStore(database, { now: () => '2026-08-20T00:00:00.000Z' });
+    store.createRun(runInput());
+    database.prepare(`
+      INSERT INTO akinator_sessions (id, workspace, task_text, profile_json, status, question_count, created_at, updated_at)
+      VALUES ('session-parent', 'workspace-a', 'Task', '{"taskType":"build","target":null,"expected":null,"constraints":null}', 'active', 0, ?, ?)
+    `).run('2026-08-20T00:00:00.000Z', '2026-08-20T00:00:00.000Z');
+    database.prepare(`
+      INSERT INTO run_intakes (run_id, session_id, policy_version, profile_schema_version, profile_sources_json, recommended_tags_json, linked_at)
+      VALUES ('run-1', 'session-parent', 'v1', 1, '{"taskType":"inferred"}', '[]', ?)
+    `).run('2026-08-20T00:00:00.000Z');
+    store.updateRunStatus('run-1', 'active');
+    const plan = planUnfinishedLedgerRunCleanup(database);
+    store.createRun({ ...runInput('child-run'), parentRunId: 'run-1' });
+
+    assert.throws(() => purgeUnfinishedLedgerRuns(database, {
+      expectedDigest: plan.digest,
+      actor: 'test',
+      createdAt: '2026-08-20T00:00:02.000Z',
+      batchId: 'child-stale-batch',
+      confirmed: true,
+    }), /candidates changed/iu);
+    assert.equal(database.prepare('SELECT parent_run_id FROM ledger_runs WHERE run_id = ?').get<{ parent_run_id: string }>('child-run')?.parent_run_id, 'run-1');
+  } finally {
+    database.close();
+  }
+});
+
+test('unfinished-run cleanup rejects a stale run-graph digest without deleting anything', async () => {
+  const database = await setup();
+  try {
+    const { LedgerStore } = await import('../../src/ledger/store.js');
+    const store = new LedgerStore(database, { now: () => '2026-08-20T00:00:00.000Z' });
+    store.createRun(runInput());
+    database.prepare(`
+      INSERT INTO akinator_sessions (id, workspace, task_text, profile_json, status, question_count, created_at, updated_at)
+      VALUES ('session-stale', 'workspace-a', 'Task', '{"taskType":"build","target":null,"expected":null,"constraints":null}', 'active', 0, ?, ?)
+    `).run('2026-08-20T00:00:00.000Z', '2026-08-20T00:00:00.000Z');
+    database.prepare(`
+      INSERT INTO run_intakes (run_id, session_id, policy_version, profile_schema_version, profile_sources_json, recommended_tags_json, linked_at)
+      VALUES ('run-1', 'session-stale', 'v1', 1, '{"taskType":"inferred"}', '[]', ?)
+    `).run('2026-08-20T00:00:00.000Z');
+    store.updateRunStatus('run-1', 'active');
+    const plan = planUnfinishedLedgerRunCleanup(database);
+    database.prepare(`
+      INSERT INTO task_memory_operations (run_id, request_id, digest, result_json)
+      VALUES ('run-1', 'late-memory-operation', 'digest', '{}')
+    `).run();
+
+    assert.throws(() => purgeUnfinishedLedgerRuns(database, {
+      expectedDigest: plan.digest,
+      actor: 'test',
+      createdAt: '2026-08-20T00:00:02.000Z',
+      batchId: 'stale-batch',
+      confirmed: true,
+    }), /candidates changed/iu);
     assert.equal(database.prepare('SELECT COUNT(*) AS count FROM ledger_runs').get<{ count: number }>()?.count, 1);
     assert.equal(database.prepare('SELECT COUNT(*) AS count FROM ledger_purge_audit').get<{ count: number }>()?.count, 0);
   } finally {

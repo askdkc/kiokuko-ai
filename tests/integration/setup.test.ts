@@ -1,12 +1,18 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, writeFile, access } from 'node:fs/promises';
+import { access, copyFile, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { parse } from 'jsonc-parser';
+import { PassThrough, Writable } from 'node:stream';
 import test from 'node:test';
-import { setupOpenCode } from '../../src/commands/setup.js';
+import { runSetupFlow, setupOpenCode } from '../../src/commands/setup.js';
 import { KIOKUKO_OPENCODE_PLUGIN_PACKAGE } from '../../src/setup/opencode-config.js';
 import { PACKAGE_VERSION } from '../../src/package-version.js';
+import { initializeDatabase } from '../../src/commands/init.js';
+import { openConnection } from '../../src/db/connection.js';
+import { loadMigrationSnapshot, migrateDatabase } from '../../src/db/migrate.js';
+import { LedgerStore } from '../../src/ledger/store.js';
+import { planUnfinishedLedgerRunCleanup, purgeUnfinishedLedgerRuns } from '../../src/ledger/maintenance.js';
 
 async function temporaryEnvironment(prefix: string) {
   const root = await mkdtemp(path.join(tmpdir(), `kiokuko-setup-${prefix}-`));
@@ -102,4 +108,229 @@ test('setup respects explicit config directory and file overrides and preserves 
   await assert.rejects(access(explicit));
   await setupOpenCode({ env: changedEnv, databasePath: fixture.databasePath, standardSkills: false, command: 'kiokuko-ai' });
   assert.ok(parse(await readFile(explicit, 'utf8')).agent);
+});
+
+test('interactive setup deletes unfinished ledger runs after default confirmation', async () => {
+  const temporary = await temporaryEnvironment('unfinished-ledger-cleanup');
+  await initializeDatabase({ databasePath: temporary.databasePath });
+  const database = openConnection(temporary.databasePath);
+  try {
+    const store = new LedgerStore(database, { now: () => '2026-08-20T00:00:00.000Z' });
+    store.createRun({
+      runId: 'run-unfinished',
+      workspace: 'workspace-a',
+      protocolVersion: '1',
+      client: { kind: 'opencode', version: '1.0.0' },
+      captureProfile: 'minimal',
+      coverage: { run: 'unavailable', tool: 'unavailable', command: 'unavailable', file: 'unavailable', approval: 'unavailable' },
+      task: { title: 'Task', query: 'Run tests', profileHints: { taskType: 'build', target: null, expected: null, constraints: null } },
+      metadata: {},
+      startedAt: '2026-08-20T00:00:00.000Z',
+    });
+    database.prepare(`
+      INSERT INTO akinator_sessions (id, workspace, task_text, profile_json, status, question_count, created_at, updated_at)
+      VALUES ('session-unfinished', 'workspace-a', 'Task', '{"taskType":"build","target":null,"expected":null,"constraints":null}', 'active', 0, ?, ?)
+    `).run('2026-08-20T00:00:00.000Z', '2026-08-20T00:00:00.000Z');
+    database.prepare(`
+      INSERT INTO run_intakes (run_id, session_id, policy_version, profile_schema_version, profile_sources_json, recommended_tags_json, linked_at)
+      VALUES ('run-unfinished', 'session-unfinished', 'v1', 1, '{"taskType":"inferred"}', '[]', ?)
+    `).run('2026-08-20T00:00:00.000Z');
+    store.updateRunStatus('run-unfinished', 'active');
+  } finally {
+    database.close();
+  }
+  const skipped = await setupOpenCode({
+    databasePath: temporary.databasePath,
+    platform: 'linux',
+    env: temporary.env,
+    command: 'kiokuko-ai',
+    standardSkills: false,
+  });
+  assert.equal(skipped.ledgerCleanup.status, 'skipped');
+  assert.equal(skipped.ledgerCleanup.candidateCount, 1);
+
+  const input = new PassThrough() as PassThrough & { isTTY?: boolean };
+  input.isTTY = true;
+  let promptText = '';
+  const output = new Writable({
+    write(chunk, _encoding, callback) {
+      const text = chunk.toString();
+      promptText += text;
+      if (text.includes('Delete these unfinished ledger runs?')) {
+        setImmediate(() => {
+          input.write('\n');
+          input.end();
+        });
+      }
+      callback();
+    },
+  }) as Writable & { isTTY?: boolean };
+  output.isTTY = true;
+
+  const result = await runSetupFlow({
+    environment: { platform: 'linux', env: temporary.env },
+    command: 'kiokuko-ai',
+    standardSkills: false,
+    skillDiscoveryMode: 'official',
+    optionalPrompts: false,
+    input,
+    output,
+  });
+
+  assert.equal(result.ledgerCleanup.status, 'deleted');
+  assert.equal(result.ledgerCleanup.deletedRuns, 1);
+  assert.match(promptText, /run-unfinished/u);
+  const reopened = openConnection(temporary.databasePath);
+  try {
+    assert.equal(reopened.prepare('SELECT COUNT(*) AS count FROM ledger_runs').get<{ count: number }>()?.count, 0);
+    assert.equal(reopened.prepare('SELECT COUNT(*) AS count FROM ledger_purge_audit').get<{ count: number }>()?.count, 1);
+  } finally {
+    reopened.close();
+  }
+});
+
+test('interactive setup reports confirmed cleanup already resolved by another process', async () => {
+  const temporary = await temporaryEnvironment('concurrent-ledger-cleanup');
+  await initializeDatabase({ databasePath: temporary.databasePath });
+  const database = openConnection(temporary.databasePath);
+  try {
+    const store = new LedgerStore(database, { now: () => '2026-08-20T00:00:00.000Z' });
+    store.createRun({
+      runId: 'run-concurrent',
+      workspace: 'workspace-a',
+      protocolVersion: '1',
+      client: { kind: 'opencode', version: '1.0.0' },
+      captureProfile: 'minimal',
+      coverage: { run: 'unavailable', tool: 'unavailable', command: 'unavailable', file: 'unavailable', approval: 'unavailable' },
+      task: { title: 'Task', query: 'Run tests', profileHints: { taskType: 'build', target: null, expected: null, constraints: null } },
+      metadata: {},
+      startedAt: '2026-08-20T00:00:00.000Z',
+    });
+    database.prepare(`
+      INSERT INTO akinator_sessions (id, workspace, task_text, profile_json, status, question_count, created_at, updated_at)
+      VALUES ('session-concurrent', 'workspace-a', 'Task', '{"taskType":"build","target":null,"expected":null,"constraints":null}', 'active', 0, ?, ?)
+    `).run('2026-08-20T00:00:00.000Z', '2026-08-20T00:00:00.000Z');
+    database.prepare(`
+      INSERT INTO run_intakes (run_id, session_id, policy_version, profile_schema_version, profile_sources_json, recommended_tags_json, linked_at)
+      VALUES ('run-concurrent', 'session-concurrent', 'v1', 1, '{"taskType":"inferred"}', '[]', ?)
+    `).run('2026-08-20T00:00:00.000Z');
+    store.updateRunStatus('run-concurrent', 'active');
+  } finally {
+    database.close();
+  }
+
+  const input = new PassThrough() as PassThrough & { isTTY?: boolean };
+  input.isTTY = true;
+  let promptCount = 0;
+  const output = new Writable({
+    write(chunk, _encoding, callback) {
+      if (chunk.toString().includes('Delete these unfinished ledger runs?') && promptCount === 0) {
+        promptCount += 1;
+        const concurrent = openConnection(temporary.databasePath);
+        try {
+          const plan = planUnfinishedLedgerRunCleanup(concurrent);
+          purgeUnfinishedLedgerRuns(concurrent, {
+            expectedDigest: plan.digest,
+            actor: 'concurrent-test',
+            createdAt: '2026-08-20T00:00:01.000Z',
+            batchId: 'concurrent-batch',
+            confirmed: true,
+          });
+        } finally {
+          concurrent.close();
+        }
+        setImmediate(() => {
+          input.write('\n');
+          input.end();
+        });
+      }
+      callback();
+    },
+  }) as Writable & { isTTY?: boolean };
+  output.isTTY = true;
+
+  const result = await runSetupFlow({
+    environment: { platform: 'linux', env: temporary.env },
+    command: 'kiokuko-ai',
+    standardSkills: false,
+    skillDiscoveryMode: 'official',
+    optionalPrompts: false,
+    input,
+    output,
+  });
+
+  assert.equal(promptCount, 1);
+  assert.deepEqual(result.ledgerCleanup, {
+    status: 'resolved',
+    candidateCount: 1,
+    deletedRuns: 0,
+    deletedCount: 0,
+    scrubbedReceipts: 0,
+  });
+});
+
+test('interactive cleanup retry preserves migrations applied by the first setup attempt', async () => {
+  const temporary = await temporaryEnvironment('cleanup-migration-report');
+  const partialMigrations = path.join(path.dirname(temporary.config), 'migrations');
+  await mkdir(partialMigrations);
+  const snapshot = loadMigrationSnapshot();
+  for (const migration of snapshot.migrations.slice(0, 8)) {
+    await copyFile(path.resolve(import.meta.dirname, '../../migrations', migration.name), path.join(partialMigrations, migration.name));
+  }
+  await mkdir(path.dirname(temporary.databasePath), { recursive: true });
+  const database = openConnection(temporary.databasePath);
+  try {
+    migrateDatabase(database, partialMigrations);
+    const store = new LedgerStore(database, { now: () => '2026-08-20T00:00:00.000Z' });
+    store.createRun({
+      runId: 'run-upgrade',
+      workspace: 'workspace-a',
+      protocolVersion: '1',
+      client: { kind: 'opencode', version: '1.0.0' },
+      captureProfile: 'minimal',
+      coverage: { run: 'unavailable', tool: 'unavailable', command: 'unavailable', file: 'unavailable', approval: 'unavailable' },
+      task: { title: 'Task', query: 'Run tests', profileHints: { taskType: 'build', target: null, expected: null, constraints: null } },
+      metadata: {},
+      startedAt: '2026-08-20T00:00:00.000Z',
+    });
+    database.prepare(`
+      INSERT INTO akinator_sessions (id, workspace, task_text, profile_json, status, question_count, created_at, updated_at)
+      VALUES ('session-upgrade', 'workspace-a', 'Task', '{"taskType":"build","target":null,"expected":null,"constraints":null}', 'active', 0, ?, ?)
+    `).run('2026-08-20T00:00:00.000Z', '2026-08-20T00:00:00.000Z');
+    database.prepare(`
+      INSERT INTO run_intakes (run_id, session_id, policy_version, profile_schema_version, profile_sources_json, recommended_tags_json, linked_at)
+      VALUES ('run-upgrade', 'session-upgrade', 'v1', 1, '{"taskType":"inferred"}', '[]', ?)
+    `).run('2026-08-20T00:00:00.000Z');
+    store.updateRunStatus('run-upgrade', 'active');
+  } finally {
+    database.close();
+  }
+
+  const input = new PassThrough() as PassThrough & { isTTY?: boolean };
+  input.isTTY = true;
+  const output = new Writable({
+    write(chunk, _encoding, callback) {
+      if (chunk.toString().includes('Delete these unfinished ledger runs?')) {
+        setImmediate(() => {
+          input.write('n\n');
+          input.end();
+        });
+      }
+      callback();
+    },
+  }) as Writable & { isTTY?: boolean };
+  output.isTTY = true;
+
+  const result = await runSetupFlow({
+    environment: { platform: 'linux', env: temporary.env },
+    command: 'kiokuko-ai',
+    standardSkills: false,
+    skillDiscoveryMode: 'official',
+    optionalPrompts: false,
+    input,
+    output,
+  });
+
+  assert.deepEqual(result.appliedMigrations, [9]);
+  assert.equal(result.ledgerCleanup.status, 'declined');
 });

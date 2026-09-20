@@ -331,7 +331,6 @@ function inspectIntakes(database: SqliteDatabase, workspace: string | undefined,
     if (row.finalized_at !== null && !validTimestamp(row.finalized_at)) findings.add('runIntakes', 'invalid_finalized_at', 'run_intakes', runId);
     if (row.session_status === 'active' && row.finalized_at !== null) findings.add('runIntakes', 'active_session_finalized', 'run_intakes', runId);
     if (['ready', 'exhausted'].includes(str(row.session_status) ?? '') && row.finalized_at === null) findings.add('runIntakes', 'missing_finalization', 'run_intakes', runId);
-    if (row.run_status === 'active' && !['ready', 'exhausted'].includes(str(row.session_status) ?? '')) findings.add('runIntakes', 'active_before_intake_finalization', 'run_intakes', runId);
     if (row.run_status === 'intake' && ['ready', 'exhausted'].includes(str(row.session_status) ?? '')) findings.add('runIntakes', 'run_not_activated_after_finalization', 'run_intakes', runId);
     if (typeof row.policy_version !== 'string' || row.policy_version.length === 0) findings.add('storedValues', 'invalid_text', 'run_intakes', runId);
     if (integer(row.profile_schema_version) === undefined || (row.profile_schema_version as number) < 1) findings.add('storedValues', 'invalid_profile_schema_version', 'run_intakes', runId);
@@ -591,6 +590,66 @@ export const PURGE_BACKUP_WARNING = 'Backups may retain purged content and must 
 export interface LedgerPurgeTombstone { purgeId: string; runId: string | null; eventId: string | null; deliveryId: string | null; entryId: string | null; targetType: PurgeTargetType; targetId: string; actor: string; reason: string | null; createdAt: string; }
 export interface PurgeResult { purgeId: string; targetType: PurgeTargetType; targetId: string; deletedCount: number; replayed: boolean; tombstone: LedgerPurgeTombstone; backupWarning: typeof PURGE_BACKUP_WARNING; }
 
+export interface UnfinishedLedgerRunCandidate {
+  runId: string;
+  workspace: string;
+  sessionId: string;
+  startedAt: string;
+  runUpdatedAt: string;
+  sessionUpdatedAt: string;
+  lastSequence: number;
+}
+
+export interface UnfinishedLedgerRunPlan {
+  candidates: UnfinishedLedgerRunCandidate[];
+  candidateCount: number;
+  digest: string;
+}
+
+export interface UnfinishedLedgerRunCleanupResult {
+  candidateCount: number;
+  deletedRuns: number;
+  deletedCount: number;
+  scrubbedReceipts: number;
+  digest: string;
+}
+
+function unfinishedRunCandidate(row: Row): UnfinishedLedgerRunCandidate {
+  const runId = str(row.run_id);
+  const workspace = str(row.workspace);
+  const sessionId = str(row.session_id);
+  const startedAt = str(row.started_at);
+  const runUpdatedAt = str(row.run_updated_at);
+  const sessionUpdatedAt = str(row.session_updated_at);
+  const lastSequence = integer(row.last_sequence);
+  if (!runId || !workspace || !sessionId || !startedAt || !runUpdatedAt || !sessionUpdatedAt
+    || !validTimestamp(startedAt) || !validTimestamp(runUpdatedAt)
+    || !validTimestamp(sessionUpdatedAt) || lastSequence === undefined || lastSequence < 0) {
+    throw new KiokukoError('INTEGRITY_ERROR', 'Unfinished ledger run candidate is invalid');
+  }
+  return { runId, workspace, sessionId, startedAt, runUpdatedAt, sessionUpdatedAt, lastSequence };
+}
+
+export function planUnfinishedLedgerRunCleanup(database: SqliteDatabase): UnfinishedLedgerRunPlan {
+  const candidates = database.prepare(`
+    SELECT r.run_id, r.workspace, i.session_id, r.started_at,
+           r.updated_at AS run_updated_at, s.updated_at AS session_updated_at,
+           r.last_sequence
+      FROM ledger_runs AS r
+      JOIN run_intakes AS i ON i.run_id = r.run_id
+      JOIN akinator_sessions AS s ON s.id = i.session_id
+     WHERE r.status = 'active'
+       AND s.status = 'active'
+       AND i.finalized_at IS NULL
+     ORDER BY r.workspace ASC, r.run_id ASC
+  `).all<Row>().map(unfinishedRunCandidate);
+  const graph = candidates.map(({ runId }) => ({ runId, ...runGraphSnapshot(database, runId) }));
+  const digest = createHash('sha256')
+    .update(canonicalJson({ candidates, graph }), 'utf8')
+    .digest('hex');
+  return { candidates, candidateCount: candidates.length, digest };
+}
+
 type ValidatedPurge = { workspace: string; targetType: PurgeTargetType; targetId: string; actor: string; reason: string | null; createdAt: string; purgeId: string; };
 const PURGE_FIELDS = new Set(['workspace', 'targetType', 'targetId', 'actor', 'reason', 'createdAt', 'purgeId', 'confirmed']);
 const PURGE_TYPES = new Set(PURGE_TARGET_TYPES);
@@ -665,14 +724,85 @@ function insertPurgeTombstone(database: SqliteDatabase, input: ValidatedPurge, r
   if (!saved) throw new KiokukoError('INTEGRITY_ERROR', 'Ledger purge tombstone could not be read back');
   return tombstone(saved);
 }
-function runGraphCount(database: SqliteDatabase, runId: string): number {
-  let total = 1;
-  for (const table of ['run_intakes', 'intake_feedback', 'ledger_events', 'ledger_evidence', 'context_deliveries', 'nudge_deliveries', 'context_feedback', 'run_feedback', 'ledger_memory_links']) total += rowCount(database, `SELECT COUNT(*) AS count FROM ${table} WHERE run_id = ?`, runId);
-  total += rowCount(database, 'SELECT COUNT(*) AS count FROM context_delivery_entries AS e JOIN context_deliveries AS d ON d.delivery_id = e.delivery_id WHERE d.run_id = ?', runId);
-  if (hasTable(database, 'akinator_memory_resolutions')) total += rowCount(database, 'SELECT COUNT(*) AS count FROM akinator_memory_resolutions WHERE run_id = ?', runId);
+function quotedIdentifier(value: string): string {
+  return `"${value.replaceAll('"', '""')}"`;
+}
+
+const RUN_ROWS_RETAINED_ON_DELETE = new Set([
+  'compaction_cycles',
+  'ledger_purge_audit',
+  'task_request_receipts',
+]);
+
+function appendSnapshotRows(hash: ReturnType<typeof createHash>, name: string, rows: Row[]): void {
+  hash.update(name, 'utf8');
+  hash.update('\0', 'utf8');
+  hash.update(canonicalJson(rows.map((row) => ({ ...row }))), 'utf8');
+  hash.update('\0', 'utf8');
+}
+
+function runGraphSnapshot(database: SqliteDatabase, runId: string): { graphDigest: string; deletedRowCount: number } {
+  const hash = createHash('sha256');
+  let deletedRowCount = 0;
+  const tables = database.prepare(`
+    SELECT name
+      FROM sqlite_schema
+     WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
+     ORDER BY name ASC
+  `).all<{ name: unknown }>()
+    .map(({ name }) => str(name))
+    .filter((name): name is string => name !== undefined)
+    .filter((name) => database.prepare(`PRAGMA table_info(${quotedIdentifier(name)})`).all<{ name: unknown }>()
+      .some((column) => column.name === 'run_id'));
+  for (const table of tables) {
+    const identifier = quotedIdentifier(table);
+    const rows = database.prepare(`SELECT rowid AS __rowid, * FROM ${identifier} WHERE run_id = ? ORDER BY rowid ASC`).all<Row>(runId);
+    appendSnapshotRows(hash, table, rows);
+    if (!RUN_ROWS_RETAINED_ON_DELETE.has(table)) deletedRowCount += rows.length;
+  }
+
   const session = database.prepare('SELECT session_id FROM run_intakes WHERE run_id = ?').get<{ session_id: string }>(runId);
-  if (session) { total += rowCount(database, 'SELECT COUNT(*) AS count FROM akinator_answers WHERE session_id = ?', session.session_id); total += rowCount(database, 'SELECT COUNT(*) AS count FROM akinator_sessions WHERE id = ?', session.session_id); }
-  return total;
+  const sessionRows = session === undefined
+    ? []
+    : database.prepare('SELECT rowid AS __rowid, * FROM akinator_sessions WHERE id = ? ORDER BY rowid ASC').all<Row>(session.session_id);
+  const answerRows = session === undefined
+    ? []
+    : database.prepare('SELECT rowid AS __rowid, * FROM akinator_answers WHERE session_id = ? ORDER BY rowid ASC').all<Row>(session.session_id);
+  const deliveryRows = database.prepare(`
+    SELECT e.rowid AS __rowid, e.*
+      FROM context_delivery_entries AS e
+      JOIN context_deliveries AS d ON d.delivery_id = e.delivery_id
+     WHERE d.run_id = ?
+     ORDER BY e.rowid ASC
+  `).all<Row>(runId);
+  const advisoryRows = database.prepare(`
+    SELECT c.rowid AS __rowid, c.*
+      FROM enno_advisory_contributions AS c
+      JOIN enno_advisory_rounds AS r ON r.round_id = c.round_id
+     WHERE r.run_id = ?
+     ORDER BY c.rowid ASC
+  `).all<Row>(runId);
+  const profileSignalRows = database.prepare(`
+    SELECT s.rowid AS __rowid, s.*
+      FROM akinator_profile_signals AS s
+      JOIN akinator_profile_documents AS d ON d.id = s.document_id
+     WHERE d.run_id = ?
+     ORDER BY s.rowid ASC
+  `).all<Row>(runId);
+  const childRunRows = database.prepare(`
+    SELECT rowid AS __rowid, run_id, parent_run_id, updated_at
+      FROM ledger_runs
+     WHERE parent_run_id = ?
+     ORDER BY rowid ASC
+  `).all<Row>(runId);
+  for (const [name, rows] of [['akinator_sessions', sessionRows], ['akinator_answers', answerRows],
+    ['context_delivery_entries', deliveryRows], ['enno_advisory_contributions', advisoryRows],
+    ['akinator_profile_signals', profileSignalRows]] as const) {
+    appendSnapshotRows(hash, name, rows);
+    deletedRowCount += rows.length;
+  }
+  appendSnapshotRows(hash, 'ledger_runs.parent_run_id', childRunRows);
+  return { graphDigest: hash.digest('hex'), deletedRowCount };
 }
 function executePurge(database: SqliteDatabase, input: ValidatedPurge, row: Row): { value: LedgerPurgeTombstone; count: number } {
   if (input.targetType === 'event') throw new KiokukoError('CONFLICT', EVENT_PURGE_CONFLICT);
@@ -680,8 +810,13 @@ function executePurge(database: SqliteDatabase, input: ValidatedPurge, row: Row)
   let deleted = 1;
   switch (input.targetType) {
     case 'run': {
-      deleted = runGraphCount(database, input.targetId);
+      deleted = runGraphSnapshot(database, input.targetId).deletedRowCount;
       const session = database.prepare('SELECT session_id FROM run_intakes WHERE run_id = ?').get<{ session_id: string }>(input.targetId);
+      database.prepare(`
+        UPDATE task_request_receipts
+           SET response_json = 'null', run_id = NULL, purged_at = ?
+         WHERE run_id = ?
+      `).run(input.createdAt, input.targetId);
       database.prepare('DELETE FROM ledger_runs WHERE run_id = ?').run(input.targetId);
       if (session) { database.prepare('DELETE FROM akinator_answers WHERE session_id = ?').run(session.session_id); if (!database.prepare('SELECT 1 AS present FROM run_intakes WHERE session_id = ?').get<{ present: number }>(session.session_id)) database.prepare('DELETE FROM akinator_sessions WHERE id = ?').run(session.session_id); }
       break;
@@ -715,3 +850,46 @@ function purgeInTransaction(database: SqliteDatabase, input: ValidatedPurge): Pu
   return purgeResult(result.value, result.count, false);
 }
 export function purgeLedgerTarget(database: SqliteDatabase, input: unknown): PurgeResult { const value = normalizePurge(input); return withImmediateTransaction(database, () => purgeInTransaction(database, value)); }
+
+const UNFINISHED_CLEANUP_FIELDS = new Set(['expectedDigest', 'actor', 'createdAt', 'batchId', 'confirmed']);
+
+export function purgeUnfinishedLedgerRuns(database: SqliteDatabase, raw: unknown): UnfinishedLedgerRunCleanupResult {
+  if (!isObject(raw) || Object.keys(raw).some((key) => !UNFINISHED_CLEANUP_FIELDS.has(key)) || raw.confirmed !== true) {
+    errorValidation('Explicit unfinished run cleanup confirmation is required');
+  }
+  if (typeof raw.expectedDigest !== 'string' || !HASH.test(raw.expectedDigest)) errorValidation('expectedDigest must be a SHA-256 digest');
+  const actor = boundedPurgeText(raw.actor, 'actor');
+  const batchId = boundedPurgeText(raw.batchId, 'batchId');
+  if (!validTimestamp(raw.createdAt)) errorValidation('createdAt must be an ISO-8601 UTC timestamp');
+  const createdAt = raw.createdAt as string;
+  return withImmediateTransaction(database, () => {
+    const plan = planUnfinishedLedgerRunCleanup(database);
+    if (plan.digest !== raw.expectedDigest) {
+      throw new KiokukoError('CONFLICT', 'Unfinished ledger run cleanup candidates changed');
+    }
+    let deletedCount = 0;
+    let scrubbedReceipts = 0;
+    for (const candidate of plan.candidates) {
+      scrubbedReceipts += rowCount(database, 'SELECT COUNT(*) AS count FROM task_request_receipts WHERE run_id = ?', candidate.runId);
+      const input: ValidatedPurge = {
+        workspace: candidate.workspace,
+        targetType: 'run',
+        targetId: candidate.runId,
+        actor,
+        reason: 'setup unfinished intake cleanup',
+        createdAt,
+        purgeId: createHash('sha256').update(`${batchId}:${candidate.runId}`, 'utf8').digest('hex'),
+      };
+      const row = target(database, input);
+      if (!row) throw new KiokukoError('CONFLICT', 'Unfinished ledger run cleanup target changed');
+      deletedCount += executePurge(database, input, row).count;
+    }
+    return {
+      candidateCount: plan.candidateCount,
+      deletedRuns: plan.candidateCount,
+      deletedCount,
+      scrubbedReceipts,
+      digest: plan.digest,
+    };
+  });
+}

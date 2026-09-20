@@ -11,6 +11,7 @@ import {
   parseSetupSkillDiscoveryMode,
   promptCommunitySkillDiscovery,
   promptReplaceConflictingMcp,
+  promptUnfinishedLedgerRunCleanup,
   promptSetupConfiguration,
 } from '../../src/commands/setup.js';
 
@@ -240,6 +241,37 @@ test('client conflict prompt defaults to yes and accepts explicit negative answe
       false,
     );
   }
+
+});
+test('unfinished ledger cleanup prompt defaults to yes and accepts explicit refusal', async () => {
+  const plan = {
+    candidateCount: 1,
+    digest: 'a'.repeat(64),
+    candidates: [{
+      runId: 'run-unfinished',
+      workspace: 'project:test',
+      sessionId: 'session-unfinished',
+      startedAt: '2026-08-20T00:00:00.000Z',
+      runUpdatedAt: '2026-08-20T00:00:00.000Z',
+      sessionUpdatedAt: '2026-08-20T00:00:00.000Z',
+      lastSequence: 1,
+    }],
+  };
+  let outputText = '';
+  const output = new Writable({
+    write(chunk, _encoding, callback) {
+      outputText += chunk.toString();
+      callback();
+    },
+  });
+
+  assert.equal(await promptUnfinishedLedgerRunCleanup(plan, { input: Readable.from(['\n']), output }), true);
+  assert.match(outputText, /project:test: run-unfinished/u);
+  assert.match(outputText, /No backup is created automatically/u);
+  assert.match(outputText, /Delete these unfinished ledger runs\? \[Y\/n\]/u);
+
+  const declinedOutput = new Writable({ write(_chunk, _encoding, callback) { callback(); } });
+  assert.equal(await promptUnfinishedLedgerRunCleanup(plan, { input: Readable.from(['n\n']), output: declinedOutput }), false);
 });
 
 test('interactive setup replaces a conflicting OpenCode MCP identity after accepting the default confirmation', async () => {
