@@ -49,32 +49,34 @@ export function recordTaskContextRevision(database: SqliteDatabase, input: {
   context: JsonObject;
   now?: string;
 }): TaskContextRevision {
-  return withImmediateTransaction(database, () => {
-    const now = input.now ?? new Date().toISOString();
-    const snapshot = snapshotProfileHints(input.context);
-    const selectionStateHash = canonicalContentHash(snapshot);
-    const existing = database.prepare(`
-      SELECT run_id, context_revision, selection_state_hash, context_json, created_at
-      FROM task_context_revisions
-      WHERE run_id = ? AND selection_state_hash = ?
-    `).get<RevisionRow>(input.runId, selectionStateHash);
-    if (existing !== undefined) return parseRevision(existing);
-    const next = database.prepare(`
-      SELECT COALESCE(MAX(context_revision), 0) + 1 AS revision
-      FROM task_context_revisions WHERE run_id = ?
-    `).get<{ revision: number }>(input.runId)?.revision ?? 1;
-    database.prepare(`
-      INSERT INTO task_context_revisions (
-        run_id, context_revision, selection_state_hash, context_json, created_at
-      ) VALUES (?, ?, ?, ?, ?)
-    `).run(input.runId, next, selectionStateHash, canonicalJson(snapshot), now);
-    const stored = database.prepare(`
-      SELECT run_id, context_revision, selection_state_hash, context_json, created_at
-      FROM task_context_revisions WHERE run_id = ? AND context_revision = ?
-    `).get<RevisionRow>(input.runId, next);
-    if (stored === undefined) throw new KiokukoError('INTEGRITY_ERROR', 'Task context revision could not be read back');
-    return parseRevision(stored);
-  });
+  return withImmediateTransaction(database, () => recordTaskContextRevisionInTransaction(database, input));
+}
+
+export function recordTaskContextRevisionInTransaction(database: SqliteDatabase, input: { runId: string; context: JsonObject; now?: string }): TaskContextRevision {
+  const now = input.now ?? new Date().toISOString();
+  const snapshot = snapshotProfileHints(input.context);
+  const selectionStateHash = canonicalContentHash(snapshot);
+  const existing = database.prepare(`
+    SELECT run_id, context_revision, selection_state_hash, context_json, created_at
+    FROM task_context_revisions
+    WHERE run_id = ? AND selection_state_hash = ?
+  `).get<RevisionRow>(input.runId, selectionStateHash);
+  if (existing !== undefined) return parseRevision(existing);
+  const next = database.prepare(`
+    SELECT COALESCE(MAX(context_revision), 0) + 1 AS revision
+    FROM task_context_revisions WHERE run_id = ?
+  `).get<{ revision: number }>(input.runId)?.revision ?? 1;
+  database.prepare(`
+    INSERT INTO task_context_revisions (
+      run_id, context_revision, selection_state_hash, context_json, created_at
+    ) VALUES (?, ?, ?, ?, ?)
+  `).run(input.runId, next, selectionStateHash, canonicalJson(snapshot), now);
+  const stored = database.prepare(`
+    SELECT run_id, context_revision, selection_state_hash, context_json, created_at
+    FROM task_context_revisions WHERE run_id = ? AND context_revision = ?
+  `).get<RevisionRow>(input.runId, next);
+  if (stored === undefined) throw new KiokukoError('INTEGRITY_ERROR', 'Task context revision could not be read back');
+  return parseRevision(stored);
 }
 
 export function readTaskContextRevisions(database: SqliteDatabase, input: {

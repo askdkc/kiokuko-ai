@@ -13,7 +13,7 @@ const ACTIVE_ENNO_STATUSES = new Set([
   'oduno_meditation',
 ]);
 
-const ENNO_STATE_TOOL = /(?:^|_)(?:task_prepare|task_answer|task_execution_select|task_context_read|memory_checkpoint|enno_[a-z_]+)$/u;
+const ENNO_STATE_TOOL = /(?:^|_)(?:task_prepare|task_answer|task_execution_select|task_context_read|task_context_refresh|task_memory_review|task_memory_evidence|task_memory_verify|memory_checkpoint|enno_[a-z_]+)$/u;
 const PHASE_ORDER = ['intake', 'oduno_ideal', 'zenki_planning', 'needs_confirmation',
   'goki_executing', 'enno_verifying', 'oduno_meditation'];
 

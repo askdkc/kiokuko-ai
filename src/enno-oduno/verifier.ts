@@ -14,6 +14,7 @@ const DESCENDANT_SETTLE_MS = 500;
 
 export interface VerifierDependencies {
   spawn?: typeof spawn;
+  signal?: AbortSignal;
   now?: () => number;
   descendantSettleMs?: number;
 }
@@ -86,6 +87,7 @@ export async function runVerifier(
   repositoryRoot: string,
   dependencies: VerifierDependencies = {},
 ): Promise<VerifierRunResult> {
+  dependencies.signal?.throwIfAborted();
   const verifier = parseVerifierSpec(rawVerifier);
   const canonicalRoot = canonicalDirectory(repositoryRoot);
   const canonicalCwd = canonicalDirectory(path.isAbsolute(verifier.cwd)
@@ -142,6 +144,7 @@ export async function runVerifier(
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      dependencies.signal?.removeEventListener('abort', abort);
       if (killTimer !== undefined) clearTimeout(killTimer);
       resolve(value);
     };
@@ -161,6 +164,10 @@ export async function runVerifier(
       forceKillAttempted = true;
       tryKill('SIGKILL');
     };
+    const abort = (): void => {
+      timedOut = true;
+      forceKill();
+    };
     const timer = setTimeout(() => {
       timedOut = true;
       if (!tryKill('SIGTERM')) forceKill();
@@ -170,6 +177,8 @@ export async function runVerifier(
       }
     }, normalized.timeoutMs);
     timer.unref();
+    dependencies.signal?.addEventListener('abort', abort, { once: true });
+    if (dependencies.signal?.aborted) abort();
     child.on('error', () => {
       if (timedOut) {
         // A failed termination request is not completion; force the child down and wait for close.

@@ -1,3 +1,4 @@
+import { memoryApplicationStatus, type MemoryApplicationStatus } from '../context/memory-application.js';
 import type { SqliteDatabase } from '../db/adapter.js';
 import { KiokukoError } from '../errors.js';
 import { withImmediateTransaction } from '../db/transaction.js';
@@ -161,7 +162,7 @@ export type ScopedCheckpointInput = ScopedCheckpointStandaloneInput | ScopedChec
 export interface ScopedCheckpointResult {
   project: ResolvedProjectWorkspace | null;
   entries: Array<Pick<EntryRecord, 'id' | 'workspace' | 'kind' | 'status' | 'title' | 'revision'>>;
-  run?: { runId: string; status: string; feedbackCount: number; evidenceCount: number; reasoningPaths: number; qualifiedReasoningPaths: number };
+  run?: { runId: string; status: string; feedbackCount: number; evidenceCount: number; reasoningPaths: number; qualifiedReasoningPaths: number; memoryApplication: MemoryApplicationStatus | null };
 }
 
 const CHECKPOINT_MEMORY_FIELDS = new Set([
@@ -573,6 +574,16 @@ export async function checkpointScopedMemory(database: SqliteDatabase, input: Sc
     if (run !== undefined && transactionRun !== undefined && transactionRun.workspace !== run.workspace) {
       throw new KiokukoError('NOT_FOUND', 'Checkpoint run was not found');
     }
+    const memoryApplication = transactionRun && project
+      ? memoryApplicationStatus(database, transactionRun.runId, project.repositoryRoot) : null;
+    const unsuccessful = evidence.tests.some(test => test.outcome !== 'passed')
+      || evidence.commands.some(command => command.outcome !== 'passed' || (command.exitCode !== undefined && command.exitCode !== 0));
+    if (outcome === 'completed' && evidence.verification?.outcome === 'fresh'
+      && (memoryApplication?.complete === false || unsuccessful)) {
+      throw new KiokukoError('CONFLICT', 'Fresh verification requires current memory decisions and successful required checks', {
+        memoryApplication, unsuccessful,
+      });
+    }
     ensureGlobalWorkspace(database, now);
     const store = transactionRun === undefined ? undefined : new LedgerStore(database, { workspace: transactionRun.workspace });
     const evidenceEvents = [
@@ -619,7 +630,7 @@ export async function checkpointScopedMemory(database: SqliteDatabase, input: Sc
         entries: saved,
         outcome,
         verification: {
-          fresh: evidence.verification?.outcome === 'fresh',
+          fresh: evidence.verification?.outcome === 'fresh' && memoryApplication?.complete !== false && !unsuccessful,
           passedTests: evidence.tests.filter((test) => test.outcome === 'passed').length,
           passedCommands: evidence.commands.filter((command) => command.outcome === 'passed').length,
           evidenceCount: evidenceRows.length,
@@ -636,6 +647,7 @@ export async function checkpointScopedMemory(database: SqliteDatabase, input: Sc
           evidenceCount: evidenceRows.length,
           reasoningPaths: paths.recorded,
           qualifiedReasoningPaths: paths.qualified,
+          memoryApplication,
         },
       };
     }

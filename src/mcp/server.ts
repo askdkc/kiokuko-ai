@@ -1,3 +1,5 @@
+import { contextRefreshSchema, refreshTaskContext } from '../context/refresh.js';
+import { memoryReviewSchema, memoryEvidenceSchema, memoryVerifySchema, verifyTaskMemory, reviewTaskMemory, recordMemoryEvidence, memoryApplicationStatus, memoryApplicationProject } from '../context/memory-application.js';
 import { executionCatalogSchema, EXECUTION_SELECTION_INSTRUCTIONS } from '../execution/catalog.js';
 import { executionSelectSchema, executionView, ExecutionUnavailableError } from '../execution/store.js';
 import { selectOpenCodeTaskExecution } from '../akinator/opencode-task.js';
@@ -525,6 +527,41 @@ export function createKiokukoMcpServer(dependencies: McpServerDependencies = {})
     maxContextChars,
     ...(embeddingRuntime === undefined ? {} : { embeddingRuntime }),
   }))))));
+
+  server.registerTool('task_context_refresh', {
+    title: 'Refresh memory for new paths or errors in the same task',
+    description: 'Refresh scoped memory within the existing run using new changed paths or error signatures. Preserve the original capability catalog and use the current context revision. Does not repeat task_prepare or open another run.',
+    inputSchema: contextRefreshSchema,
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  }, async (input) => withPublicToolError(() => withDatabase(dependencies, async database => toolResult(await refreshTaskContext(database, input)))));
+
+  server.registerTool('task_memory_review', {
+    title: 'Record a memory application decision',
+    description: 'Review selected delivered memory against current evidence. Adoption requires an invariant, counterexample and verification method; rejection requires a basis. These are model reports, not automatic verification. Use exact run, delivery and entry revisions; record execution references with task_memory_evidence.',
+    inputSchema: memoryReviewSchema,
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  }, async (input) => withPublicToolError(() => withDatabase(dependencies, async database => toolResult(await reviewTaskMemory(database, input)))));
+  server.registerTool('task_memory_verify', {
+    title: 'Execute a memory regression verifier',
+    description: 'Run an explicit bounded verifier in this repository using the existing host verifier. Record its observed exit status and repository state; command output is not persisted. Timeout, cancellation, concurrent mutation and unknown attempts cannot count as passed. Exact retries never repeat an uncertain process.',
+    inputSchema: memoryVerifySchema,
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
+  }, async (input, extra) => withPublicToolError(() => withDatabase(dependencies, async database => toolResult(await verifyTaskMemory(database, input, { signal: extra.signal })))));
+  server.registerTool('task_memory_evidence', {
+    title: 'Record reported memory regression verification',
+    description: 'Record a model-reported execution result against the current dependency files. Include every relevant source, test and configuration path. This does not execute the command or prove it was run; it never claims client observation. Changed dependencies invalidate the report.',
+    inputSchema: memoryEvidenceSchema,
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  }, async (input) => withPublicToolError(() => withDatabase(dependencies, async database => toolResult(await recordMemoryEvidence(database, input)))));
+  server.registerTool('task_memory_status', {
+    title: 'Inspect memory application and verification gaps',
+    description: 'Read pending decisions, stale revisions and missing or unsuccessful verification without exposing memory bodies or execution logs. Ordinary work remains allowed; unresolved gaps cannot support a fresh verification claim.',
+    inputSchema: { runId, cwd: absoluteCwdSchema },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  }, async ({ runId: id, cwd }) => withPublicToolError(() => withDatabase(dependencies, async database => {
+    const project = await memoryApplicationProject(database, cwd, id);
+    return toolResult(memoryApplicationStatus(database, id, project.repositoryRoot));
+  })));
 
   server.registerTool('task_context_read', {
     title: 'Read non-blocking Kiokuko context enrichment',

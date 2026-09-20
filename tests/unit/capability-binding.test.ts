@@ -13,7 +13,7 @@ test('capability catalog binding hashes the normalized descriptor set without de
     { kind: 'skill', name: 'memory-reasoning', description: 'Verify remembered claims' },
   ];
   const reordered = [...first].reverse();
-  assert.equal(capabilityCatalogDigest(first), 'dcadb89b1e8f1f31f0c6fb76bf6e49e2c95f21f0d32e5ba6418ad784a30958a9');
+  assert.notEqual(capabilityCatalogDigest(first), 'dcadb89b1e8f1f31f0c6fb76bf6e49e2c95f21f0d32e5ba6418ad784a30958a9');
   assert.equal(capabilityCatalogDigest(first), capabilityCatalogDigest(reordered));
   assert.equal(capabilityCatalogDigest(first), capabilityCatalogDigest([...first, first[0], first[1]]));
   assert.notEqual(capabilityCatalogDigest(undefined), capabilityCatalogDigest([]));
@@ -69,4 +69,12 @@ test('capability catalog binding accepts only the catalog bound at run open', ()
     () => bindCapabilityCatalog(metadata, catalog),
     (error: unknown) => error instanceof Error && 'code' in error && error.code === 'VALIDATION_ERROR',
   );
+});
+
+test('rejects a previous normalization version instead of silently reusing its run', () => {
+  const catalog = [{ kind: 'skill', name: 'kiokuko-soul' }];
+  const bound = bindCapabilityCatalog({}, catalog);
+  assert.throws(() => assertCapabilityCatalogBinding({ ...bound,
+    kiokukoCapabilityCatalogBinding: { version: 1, digest: capabilityCatalogDigest(catalog) },
+  }, catalog), { code: 'INTEGRITY_ERROR' });
 });

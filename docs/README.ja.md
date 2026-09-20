@@ -6,6 +6,7 @@
 - [基本概念](concepts.ja.md) — RAG、記憶のライフサイクル、Project/Ecosystem/Global、Akinator。
 - [役小角(enno-oduno)](enno-oduno.ja.md) — Agent Loop、確認、回復、継続、検証、Advisory Round。
 - [Semantic retrieval](semantic-retrieval.ja.md) — embedding runtime、運用、offline、fallback。
+- [記憶の適用と検証](memory-application.ja.md) — 採否の記録、回帰検証、同一タスクでの再検索、保証範囲。
 - [Security and trust](security-and-trust.ja.md) — secret拒否、記憶の境界、External Skills、公開エラー。
 - [CLI contract](cli-contract.md) — 安定したコマンドとレスポンス。
 

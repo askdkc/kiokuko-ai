@@ -202,6 +202,7 @@ test('counts multibyte title, summary, and body preview exactly and gives each b
     };
 
     const exact = await queryScopedContext(database, { ...query, characterBudget: fullCost });
+    assert.equal(exact.retrieval?.status, 'delivered');
     assert.equal(exact.items[0]?.title, title);
     assert.equal(exact.items[0]?.summary, summary);
     assert.equal(exact.items[0]?.bodyPreview, body);
@@ -234,6 +235,26 @@ test('counts multibyte title, summary, and body preview exactly and gives each b
   } finally {
     database.close();
   }
+});
+
+test('empty retrieval diagnostics distinguish absent entries, no match, excluded scope and exhausted budget', async () => {
+  const { database, project, runId } = await fixture();
+  const query = { project, runId, task: 'Use budget sentinel context',
+    taskProfile: { taskType: 'build' as const, target: 'budget sentinel', expected: 'bounded context', constraints: null } };
+  try {
+    assert.equal((await queryScopedContext(database, query)).retrieval?.status, 'no_primary_scope_entries');
+    assert.equal((await queryScopedContext(database, query)).retrieval?.status, 'historical_empty');
+    recordEntry(database, { workspace: project.workspace, kind: 'reference', title: 'zzqxxv', body: 'zzqxxv' });
+    assert.equal((await queryScopedContext(database, query)).retrieval?.status, 'no_match');
+    recordEntry(database, { workspace: 'global', kind: 'reference', title: 'budget sentinel', body: 'budget sentinel', scope: {} });
+    assert.equal((await queryScopedContext(database, query)).retrieval?.status, 'out_of_scope');
+    recordEntry(database, { workspace: project.workspace, kind: 'reference', title: 'budget sentinel', body: 'budget sentinel' });
+    await assert.rejects(queryScopedContext(database, { ...query, characterBudget: 1 }), {
+      code: 'VALIDATION_ERROR', message: 'Scoped context character budget cannot fit candidate metadata',
+    });
+    database.exec('DROP TABLE entries_fts');
+    await assert.rejects(queryScopedContext(database, { ...query, task: 'different budget sentinel lookup' }));
+  } finally { database.close(); }
 });
 
 test('fails explicitly when the ordinary context selection corpus exceeds its bounded policy', async () => {

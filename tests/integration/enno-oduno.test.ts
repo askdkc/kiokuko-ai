@@ -1,6 +1,7 @@
+import { CURRENT_MIGRATION_SNAPSHOT, migrationVersionsAfter } from '../fixtures/current-migrations.js';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn as nodeSpawn } from 'node:child_process';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile, mkdir, copyFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -86,12 +87,20 @@ function executionCredentials(response: { executionLease?: {
   };
 }
 
-async function fixture() {
+async function fixture(historicalThrough?: number) {
   const root = await mkdtemp(path.join(tmpdir(), 'kiokuko-enno-repo-'));
   execFileSync('git', ['init', '-q', root]);
   const databaseDirectory = await mkdtemp(path.join(tmpdir(), 'kiokuko-enno-db-'));
   const databasePath = path.join(databaseDirectory, 'kiokuko-ai.sqlite');
-  await initializeDatabase({ databasePath });
+  let migrationsDirectory: string | undefined;
+  if (historicalThrough !== undefined) {
+    migrationsDirectory = path.join(databaseDirectory, 'historical-migrations');
+    await mkdir(migrationsDirectory);
+    for (const migration of CURRENT_MIGRATION_SNAPSHOT.migrations.filter(m => m.version <= historicalThrough)) {
+      await copyFile(path.resolve('migrations', migration.name), path.join(migrationsDirectory, migration.name));
+    }
+  }
+  await initializeDatabase({ databasePath, ...(migrationsDirectory ? { migrationsDirectory } : {}) });
   return { root, databasePath, database: openConnection(databasePath) };
 }
 
@@ -441,7 +450,8 @@ test('the same OpenCode terminal is an exact replay and does not consume another
 });
 
 test('v5 migration preserves an active lease and recovers only its exact receipt credential', async () => {
-  const { root, database } = await fixture();
+  // Freeze the historical fixture before applying the current migration set.
+  const { root, database } = await fixture(7);
   try {
     const planned = await plannedExecution(database, root, 'legacy-lease', verifier(root, 'pass'));
     // Recreate the v5 representation: only the credential hash was persisted.
@@ -460,7 +470,7 @@ test('v5 migration preserves an active lease and recovers only its exact receipt
       DROP TABLE akinator_profile_backfill;
       DELETE FROM schema_migrations WHERE version >= 6; PRAGMA user_version = 5;`);
     const before = database.prepare('SELECT * FROM enno_execution_leases WHERE run_id = ?').get(planned.identity.runId)!;
-    assert.deepEqual(migrateDatabase(database).applied, [6, 7]);
+    assert.deepEqual(migrateDatabase(database).applied, migrationVersionsAfter(5));
     const after = database.prepare('SELECT * FROM enno_execution_leases WHERE run_id = ?').get(planned.identity.runId)!;
     assert.deepEqual({ ...after }, { ...before, lease_token: null });
     const continued = decideAdapterContinuation(database, 'opencode', { sessionId: planned.hostSessionId, cwd: root });

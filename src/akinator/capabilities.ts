@@ -13,7 +13,9 @@ export type CapabilityKind = (typeof CAPABILITY_KINDS)[number];
 export const MAX_CAPABILITY_DESCRIPTION_CHARS = 2_000;
 export const MAX_RAW_CAPABILITY_DESCRIPTION_CHARS = 64_000;
 export const MAX_CAPABILITY_NAME_CHARS = 300;
-export const MAX_CAPABILITY_ITEMS = 200;
+export const CAPABILITY_NORMALIZATION_VERSION = 2 as const;
+// Bound even malformed/name-only input; descriptions never consume identity space.
+export const MAX_CAPABILITY_ITEMS = 16_000;
 export const MAX_RAW_CAPABILITY_CATALOG_CODE_POINTS = 512_000;
 
 export interface CapabilityDescriptor {
@@ -121,14 +123,15 @@ export function deriveMemoryUseSignal(input: {
 }
 
 export function memoryReasoningRequired(
-  profile: Pick<TaskProfile, 'taskType'>,
+  profile: Pick<TaskProfile, 'taskType'> & Partial<TaskProfile>,
   memoryUse: MemoryUseSignal,
 ): boolean {
-  return memoryUse === 'actionable' && (profile.taskType === 'build' || profile.taskType === 'debug');
+  return memoryUse === 'actionable' && (profile.taskType === 'build' || profile.taskType === 'debug'
+    || EXPLICIT_CODING_INTENT.test([profile.target, profile.expected, profile.constraints].filter(Boolean).join(' ')));
 }
 
 export function deriveMemoryPolicy(
-  profile: Pick<TaskProfile, 'taskType'>,
+  profile: Pick<TaskProfile, 'taskType'> & Partial<TaskProfile>,
   memoryUse: MemoryUseSignal,
   capabilities: unknown,
   delivery?: MemoryDeliveryObservation,
@@ -248,66 +251,55 @@ export function normalizeCapabilityCatalog(input: unknown): NormalizedCapability
   }
 
   const diagnostics: CapabilityCatalogDiagnostics = {
-    received: input.length,
-    accepted: 0,
-    truncated: 0,
+    received: input.length, accepted: 0, truncated: 0,
     dropped: Math.max(0, input.length - MAX_CAPABILITY_ITEMS),
   };
   const skills: CapabilityDescriptor[] = [];
   const tools: CapabilityDescriptor[] = [];
-  const processCount = Math.min(input.length, MAX_CAPABILITY_ITEMS);
+  const accepted: Array<{ descriptor: CapabilityDescriptor; description: string | undefined }> = [];
   let remaining = MAX_RAW_CAPABILITY_CATALOG_CODE_POINTS;
-  let budgetExceeded = false;
-  const accept = (descriptor: CapabilityDescriptor, truncated: boolean): void => {
-    diagnostics.accepted += 1;
-    if (truncated) diagnostics.truncated += 1;
-    (descriptor.kind === 'skill' ? skills : tools).push(descriptor);
-  };
+  let budgetExceeded = input.length > MAX_CAPABILITY_ITEMS;
+  const processCount = Math.min(input.length, MAX_CAPABILITY_ITEMS);
+  // Reserve every valid identity before spending any budget on descriptions.
   for (let index = 0; index < processCount; index += 1) {
-    const item = input[index];
+    const property = Object.getOwnPropertyDescriptor(input, String(index));
+    const item: unknown = property && 'value' in property ? property.value : undefined;
     const header = validateCapabilityHeader(item);
-    if (header === null) {
+    if (header === null || !isPlainRecord(item)
+      || (item.description !== undefined && typeof item.description !== 'string')) {
       diagnostics.dropped += 1;
       continue;
     }
-    const nameCost = boundedCodePointLength(header.name, remaining);
-    if (nameCost > remaining) {
+    const cost = boundedCodePointLength(header.name, MAX_CAPABILITY_NAME_CHARS) + header.kind.length + 32;
+    if (cost > remaining) {
       diagnostics.dropped += processCount - index;
       budgetExceeded = true;
       break;
     }
-    remaining -= nameCost;
-    const descriptor: CapabilityDescriptor = { ...header };
-    if (!isPlainRecord(item) || item.description === undefined) {
-      accept(descriptor, false);
-      continue;
-    }
-    if (typeof item.description !== 'string') {
-      diagnostics.dropped += 1;
-      continue;
-    }
-    const scanLimit = Math.min(remaining, MAX_RAW_CAPABILITY_DESCRIPTION_CHARS);
-    const descriptionCost = boundedCodePointLength(item.description, scanLimit);
-    if (descriptionCost > scanLimit) {
-      accept(descriptor, true);
-      if (remaining <= MAX_RAW_CAPABILITY_DESCRIPTION_CHARS) {
-        diagnostics.dropped += processCount - index - 1;
-        budgetExceeded = true;
-        break;
-      }
-      remaining -= descriptionCost;
-      continue;
-    }
-    remaining -= descriptionCost;
-    const compacted = compactCapabilityDescription(item.description);
-    if (compacted.description.length > 0) descriptor.description = compacted.description;
-    accept(descriptor, compacted.truncated || (item.description.length > 0 && compacted.description.length === 0));
+    remaining -= cost;
+    const descriptor = { ...header };
+    accepted.push({ descriptor, description: item.description as string | undefined });
+    (header.kind === 'skill' ? skills : tools).push(descriptor);
+    diagnostics.accepted += 1;
   }
-  const availability: CapabilityCatalogAvailability = input.length === 0
-    ? 'known-empty'
-    : diagnostics.dropped > 0 || budgetExceeded
-      ? 'unknown'
-      : 'known-nonempty';
+  // Canonical order makes the retained descriptions independent of input order.
+  for (const item of accepted.sort((a, b) => compareCanonicalStrings(
+    `${a.descriptor.kind}:${a.descriptor.name}`, `${b.descriptor.kind}:${b.descriptor.name}`,
+  ))) {
+    if (item.description === undefined) continue;
+    const scanLimit = Math.min(remaining, MAX_RAW_CAPABILITY_DESCRIPTION_CHARS);
+    const cost = boundedCodePointLength(item.description, scanLimit);
+    remaining -= Math.min(cost, remaining);
+    if (cost > scanLimit) {
+      diagnostics.truncated += 1;
+      continue;
+    }
+    const compacted = compactCapabilityDescription(item.description);
+    if (compacted.description) item.descriptor.description = compacted.description;
+    if (compacted.truncated || (item.description.length > 0 && !compacted.description)) diagnostics.truncated += 1;
+  }
+  const availability: CapabilityCatalogAvailability = input.length === 0 ? 'known-empty'
+    : diagnostics.dropped > 0 ? 'unknown' : 'known-nonempty';
   return { availability, skills, tools, diagnostics, budgetExceeded };
 }
 

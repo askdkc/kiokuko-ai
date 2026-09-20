@@ -12,7 +12,7 @@ import {
   type ProjectFingerprint,
 } from '../repository/project-fingerprint.js';
 import { satisfiesFrameworkVersion } from '../repository/framework-version.js';
-import { isRetrievableEntry, type HybridSearchRuntime } from './hybrid-retrieval.js';
+import { isRetrievableEntry, retrievableWorkspaceEntryCount, type HybridSearchRuntime } from './hybrid-retrieval.js';
 import { isExternalSkillReference } from '../skills/store.js';
 import { compareCanonicalStrings } from '../serialization/validate.js';
 
@@ -408,7 +408,7 @@ function globalLaneCandidates(
   query: string,
   limit: number,
   runtime: HybridSearchRuntime,
-): { candidates: RankedEntry[]; truncated: boolean } {
+): { candidates: RankedEntry[]; truncated: boolean; excluded: number } {
   const ranked = rankedEntryHits(database, { workspace: GLOBAL_WORKSPACE, query, limit: 1_000 }, runtime);
   const eligible = ranked.hits.flatMap((hit) => {
     const entry = readEntry(database, { workspace: GLOBAL_WORKSPACE, entryId: hit.entryId });
@@ -420,6 +420,7 @@ function globalLaneCandidates(
   });
   return {
     candidates: eligible.slice(0, limit),
+    excluded: ranked.hits.length - eligible.length,
     truncated: ranked.truncated || eligible.length > limit,
   };
 }
@@ -562,9 +563,15 @@ export async function retrieveFederatedMemory(
   };
 }
 
+export interface FederatedSearchObservation {
+  primaryScopeEntries: number;
+  scopeExcludedMatches: number;
+  selectedMatches: number;
+}
+
 export async function federatedEntries(
   database: SqliteDatabase,
-  input: { project: ResolvedProjectWorkspace; query: string; limit: number; fingerprint?: ProjectFingerprint },
+  input: { project: ResolvedProjectWorkspace; query: string; limit: number; fingerprint?: ProjectFingerprint; observe?: (observation: FederatedSearchObservation) => void },
   runtime: HybridSearchRuntime = {},
 ): Promise<FederatedEntry[]> {
   const ranked = (workspace: string): RankedRecallHit[] => rankedEntryHits(database, { workspace, query: input.query, limit: Math.min(input.limit, 100) }, runtime).hits;
@@ -575,12 +582,17 @@ export async function federatedEntries(
     selectionReasons: ['project_origin', ...hit.reasons],
   }));
   const ecosystem = ecosystemEntries(database, input.project, input.query, { ...DEFAULT_FEDERATED_POLICY, project: { enabled: true, limit: input.limit }, ecosystem: { ...DEFAULT_FEDERATED_POLICY.ecosystem, limit: input.limit }, global: { enabled: false, limit: 0 } }, false, input.fingerprint, runtime).entries;
-  const global = globalLaneCandidates(database, input.query, Math.min(input.limit, 100), runtime).candidates.map(({ entry, hit }) => ({
+  const globalLane = globalLaneCandidates(database, input.query, Math.min(input.limit, 100), runtime);
+  const global = globalLane.candidates.map(({ entry, hit }) => ({
     entry,
     origin: 'global' as const,
     score: hit.retrievalScore,
     selectionReasons: ['global_origin', ...hit.reasons],
   }));
   const byRelevance = (left: FederatedEntry, right: FederatedEntry): number => right.score - left.score || compareCanonicalStrings(left.entry.id, right.entry.id);
-  return [...current.sort(byRelevance), ...ecosystem.sort(byRelevance), ...global.sort(byRelevance)].slice(0, input.limit);
+  const selected = [...current.sort(byRelevance), ...ecosystem.sort(byRelevance), ...global.sort(byRelevance)].slice(0, input.limit);
+  input.observe?.({ primaryScopeEntries: retrievableWorkspaceEntryCount(database, input.project.workspace)
+    + retrievableWorkspaceEntryCount(database, GLOBAL_WORKSPACE), scopeExcludedMatches: globalLane.excluded,
+    selectedMatches: selected.length });
+  return selected;
 }

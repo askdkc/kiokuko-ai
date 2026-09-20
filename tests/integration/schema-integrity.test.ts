@@ -5,7 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { openConnection } from '../../src/db/connection.js';
 import { migrateDatabase } from '../../src/db/migrate.js';
-import { CURRENT_MIGRATION_VERSIONS, CURRENT_SCHEMA_VERSION } from '../fixtures/current-migrations.js';
+import { CURRENT_MIGRATION_SNAPSHOT, CURRENT_MIGRATION_VERSIONS, CURRENT_SCHEMA_VERSION } from '../fixtures/current-migrations.js';
 
 const repositoryRoot = path.resolve(import.meta.dirname, '../..');
 const migrationsDirectory = path.join(repositoryRoot, 'migrations');
@@ -26,6 +26,9 @@ const taskRunTables = [
   'nudge_deliveries',
   'orchestration_jobs',
   'task_context_revisions',
+  'task_memory_reviews',
+  'task_memory_operations',
+  'task_memory_evidence',
   'compaction_cycles',
   'compaction_post_events',
   'meditation_claims',
@@ -130,7 +133,7 @@ test('fresh migration applies the current schema and every task-run table and in
       taskRunIndexes.filter((index) => !exists(database, 'index', index)),
       [],
     );
-    assert.deepEqual(CURRENT_MIGRATION_VERSIONS, [1, 2, 3, 4, 5, 6, 7]);
+    assert.deepEqual(CURRENT_MIGRATION_VERSIONS, CURRENT_MIGRATION_VERSIONS.map((_, index) => index + 1));
     assert.equal(database.prepare('SELECT COUNT(*) AS count FROM schema_migrations').get<{ count: number }>()?.count, CURRENT_MIGRATION_VERSIONS.length);
     assert.equal(database.prepare('PRAGMA user_version').get<{ user_version: number }>()?.user_version, CURRENT_SCHEMA_VERSION);
     for (const removed of ['gateway_idempotency', 'agent_task_skill_discovery_attempts', 'enno_client_continuations', 'enno_client_continuation_receipts']) {
@@ -241,15 +244,7 @@ test('task-run foreign keys prevent orphaned child rows', async () => {
 });
 
 test('migration assets are present and checksums remain file-based', async () => {
-  assert.deepEqual((await readdir(migrationsDirectory)).filter((name) => name.endsWith('.sql')), [
-    '001_initial.sql',
-    '002_non_blocking_orchestration.sql',
-    '003_orcareplay_trace.sql',
-    '004_orcareplay_pipeline.sql',
-    '005_execution_selection.sql',
-    '006_stable_execution_leases.sql',
-    '007_akinator_memory_probe.sql',
-  ]);
+  assert.deepEqual((await readdir(migrationsDirectory)).filter(name => name.endsWith('.sql')).sort(), CURRENT_MIGRATION_SNAPSHOT.migrations.map(m => m.name));
   const sql = await readFile(path.join(migrationsDirectory, '001_initial.sql'), 'utf8');
   assert.match(sql, /CREATE TABLE ledger_runs/);
   assert.match(sql, /CREATE TABLE ledger_events/);

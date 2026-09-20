@@ -83,7 +83,12 @@ test('MCP exposes the memory-first task and lifecycle tools and persists candida
       'source_context',
       'task_answer',
       'task_context_read',
+      'task_context_refresh',
       'task_execution_select',
+      'task_memory_evidence',
+      'task_memory_review',
+      'task_memory_status',
+      'task_memory_verify',
       'task_prepare',
     ]);
     assert.equal(tools.tools.find((tool) => tool.name === 'task_prepare')?.annotations?.idempotentHint, false);
@@ -1390,6 +1395,7 @@ test('memory_checkpoint returns actionable MCP guidance during intake and succee
       evidenceCount: 0,
       reasoningPaths: 0,
       qualifiedReasoningPaths: 0,
+      memoryApplication: { deliveryId: null, required: 0, pending: [], invalid: [], complete: true, evidenceOrigin: 'none', clientObserved: false },
     });
     assert.equal(checkpointContent.entries.length, 1);
 
@@ -1570,8 +1576,8 @@ test('task_prepare degrades safely for oversized and malformed capability items'
     const boundaryContent = boundary.structuredContent as { run: { runId: string }; capabilities: { availability: string; diagnostics: unknown } };
     assert.notEqual(exactBoundaryContent.run.runId, content.run.runId);
     assert.notEqual(boundaryContent.run.runId, exactBoundaryContent.run.runId);
-    assert.equal(boundaryContent.capabilities.availability, 'unknown');
-    assert.deepEqual(boundaryContent.capabilities.diagnostics, { received: 201, accepted: 200, truncated: 0, dropped: 1 });
+    assert.equal(boundaryContent.capabilities.availability, 'known-nonempty');
+    assert.deepEqual(boundaryContent.capabilities.diagnostics, { received: 201, accepted: 201, truncated: 0, dropped: 0 });
 
     const finalExactDescription = MAX_RAW_CAPABILITY_CATALOG_CODE_POINTS
       - (7 * MAX_RAW_CAPABILITY_DESCRIPTION_CHARS)
@@ -1591,9 +1597,9 @@ test('task_prepare degrades safely for oversized and malformed capability items'
       },
     });
     const budgetContent = budget.structuredContent as { capabilities: { availability: string; diagnostics: unknown; warnings: Array<{ code: string }> } };
-    assert.equal(budgetContent.capabilities.availability, 'unknown');
+    assert.equal(budgetContent.capabilities.availability, 'known-nonempty');
     assert.deepEqual(budgetContent.capabilities.diagnostics, { received: 8, accepted: 8, truncated: 8, dropped: 0 });
-    assert.ok(budgetContent.capabilities.warnings.some((warning) => warning.code === 'CAPABILITY_CATALOG_BUDGET_EXCEEDED'));
+    assert.ok(budgetContent.capabilities.warnings.some((warning) => warning.code === 'CAPABILITY_CATALOG_COMPACTED'));
 
     const incomplete = await selectedPrepare(client, {
       name: 'task_prepare',

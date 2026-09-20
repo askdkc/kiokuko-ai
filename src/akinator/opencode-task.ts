@@ -1,3 +1,4 @@
+import { memoryApplicationStatus, type MemoryApplicationStatus } from '../context/memory-application.js';
 import { readMemoryResolution } from './profile-memory-store.js';
 import { snapshotProfileHints } from './profile-hint-snapshot.js';
 import { captureProfileProbeContext, profileHintsForRun } from './memory-probe.js';
@@ -129,6 +130,7 @@ export interface PreparedOpenCodeTask {
   context: ScopedContextResult | null;
   traceContext?: OpenCodeTraceAdvisoryContext;
   memoryPolicy: MemoryPolicy;
+  memoryApplication?: MemoryApplicationStatus;
   warnings: StructuredWarning[];
   nextAction: 'proceed';
   contextRevision: number;
@@ -559,6 +561,7 @@ function buildPreparedTaskBase(
     context: scopedContext,
     ...(traceContext === undefined ? {} : { traceContext }),
     memoryPolicy: deriveMemoryPolicy(context.session.profile, memoryUse, capabilities, deliveryObservation),
+    ...(context.status === 'ready' ? { memoryApplication: memoryApplicationStatus(database, run.runId, project.repositoryRoot) } : {}),
     warnings: [...capabilityResolution.warnings, ...additionalWarnings, ...profileWarnings],
     nextAction: 'proceed',
     contextRevision: 0,

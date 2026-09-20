@@ -67,10 +67,12 @@ for (const file of files.sort()) {
 
 const migrationEntries = await readdir('migrations');
 const migrationSqlFiles = migrationEntries.filter((entry) => entry.endsWith('.sql')).sort();
-const expectedMigrations = ['001_initial.sql', '002_non_blocking_orchestration.sql', '003_orcareplay_trace.sql', '004_orcareplay_pipeline.sql', '005_execution_selection.sql', '006_stable_execution_leases.sql', '007_akinator_memory_probe.sql'];
-if (JSON.stringify(migrationSqlFiles) !== JSON.stringify(expectedMigrations)) {
-  findings.push(`migrations: expected [${expectedMigrations.join(', ')}], found [${migrationSqlFiles.join(', ')}]`);
+// Current migrations grow with the package; historical fixtures pin their own version.
+for (const [index, name] of migrationSqlFiles.entries()) {
+  const match = /^(\d{3})_[a-z0-9_-]+\.sql$/u.exec(name);
+  if (!match || Number(match[1]) !== index + 1) findings.push(`migrations: invalid sequence at ${name}`);
 }
+if (migrationSqlFiles.length === 0) findings.push('migrations: no migrations found');
 
 for (const directory of removedGatewayDirectories) {
   let exists = false;

@@ -70,6 +70,7 @@ export interface DoctorResult {
     openCodeMcp: DoctorCheck;
     openCodeRuntime: DoctorCheck;
     openCodeSkills: DoctorCheck;
+    memoryApplication?: DoctorCheck;
   };
 }
 
@@ -523,6 +524,11 @@ async function collectDoctorResult(
     embeddings: embeddings.check,
     ennoOperations,
     orchestration,
+    memoryApplication: {
+      ok: true,
+      count: count(database, 'SELECT COUNT(*) FROM task_memory_reviews'),
+      detail: `advisory; reviews=${count(database, 'SELECT COUNT(*) FROM task_memory_reviews')}; reported=${count(database, "SELECT COUNT(*) FROM task_memory_evidence WHERE json_extract(evidence_json, '$.origin') = 'model_reported'")}; hostExecuted=${count(database, "SELECT COUNT(*) FROM task_memory_evidence WHERE json_extract(evidence_json, '$.origin') = 'host_executed'")}; clientObservation=unavailable; current gaps and file freshness: task_memory_status`,
+    },
     openCodePlugin: options.openCodePlugin,
     openCodeMcp: options.openCodeMcp,
     openCodeRuntime: options.openCodeRuntime,

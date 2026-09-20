@@ -1,9 +1,9 @@
 import type { JsonObject } from '../ledger/types.js';
 import { KiokukoError } from '../errors.js';
 import { canonicalContentHash } from '../serialization/validate.js';
-import { normalizeCapabilityCatalog, type CapabilityDescriptor } from './capabilities.js';
+import { CAPABILITY_NORMALIZATION_VERSION, normalizeCapabilityCatalog, type CapabilityDescriptor } from './capabilities.js';
 
-export const CAPABILITY_CATALOG_BINDING_VERSION = 1 as const;
+export const CAPABILITY_CATALOG_BINDING_VERSION = 2 as const;
 export const CAPABILITY_CATALOG_BINDING_METADATA_KEY = 'kiokukoCapabilityCatalogBinding' as const;
 
 type CapabilityCatalogBinding = {
@@ -47,6 +47,7 @@ export function capabilityCatalogDigest(capabilities: unknown): string {
       };
   return canonicalContentHash({
     version: CAPABILITY_CATALOG_BINDING_VERSION,
+    normalizationVersion: CAPABILITY_NORMALIZATION_VERSION,
     supplied: capabilities !== undefined,
     availability: normalized.availability,
     diagnostics,

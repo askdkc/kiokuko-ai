@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { CURRENT_MIGRATION_VERSIONS, CURRENT_SCHEMA_VERSION } from '../fixtures/current-migrations.js';
+import { CURRENT_MIGRATION_SNAPSHOT, CURRENT_MIGRATION_VERSIONS, CURRENT_SCHEMA_VERSION } from '../fixtures/current-migrations.js';
 import { cp, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -147,7 +147,7 @@ test('migration 003 keeps job kind deduplication and cascade behavior', async ()
 
 test('migration 003 checksums remain file-based and the migration list is contiguous', async () => {
   const files = (await readdir(migrationsDirectory)).filter((name) => name.endsWith('.sql')).sort();
-  assert.deepEqual(files, ['001_initial.sql', '002_non_blocking_orchestration.sql', '003_orcareplay_trace.sql', '004_orcareplay_pipeline.sql', '005_execution_selection.sql', '006_stable_execution_leases.sql', '007_akinator_memory_probe.sql']);
+  assert.deepEqual(files, CURRENT_MIGRATION_SNAPSHOT.migrations.map(m => m.name));
 });
 
 test('execution migration marks existing runs legacy and never opts them into the new selection protocol', async () => {

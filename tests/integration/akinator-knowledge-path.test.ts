@@ -1,3 +1,5 @@
+import { reviewTaskMemory, recordMemoryEvidence } from '../../src/context/memory-application.js';
+import { writeFile } from 'node:fs/promises';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdtemp } from 'node:fs/promises';
@@ -33,6 +35,16 @@ test('counts only verified independent Akinator runs and makes repeated portable
         client: { kind: 'opencode' as const, sessionId },
       });
       workspace = prepared.project.workspace;
+      for (const item of prepared.context?.items ?? []) {
+        await writeFile(path.join(root, 'recovery.test.ts'), '// migration recovery verification fixture\n');
+        const identity = { cwd: root, runId: prepared.run.runId, deliveryId: prepared.context!.deliveryId! };
+        const evidence = await recordMemoryEvidence(database, { ...identity, requestId: `evidence-${item.entryId}`,
+          command: 'node:test migration recovery', outcome: 'passed', exitCode: 0, paths: ['recovery.test.ts'] });
+        await reviewTaskMemory(database, { ...identity, requestId: `review-${item.entryId}`, entryId: item.entryId,
+          entryRevision: item.revision, expectedRevision: 0, decision: 'adopt', basis: 'Current recovery fixture verifies the migration state',
+          invariant: 'Preserve applied migrations', counterexample: 'Recovery modifies an applied migration',
+          verificationMethod: 'Run migration recovery test', evidenceIds: [evidence.evidenceId] });
+      }
       const checkpoint = await checkpointScopedMemory(database, {
         cwd: root,
         runId: prepared.run.runId,

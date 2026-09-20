@@ -4,7 +4,7 @@ import { canonicalContentHash, compareCanonicalStrings } from '../serialization/
 import { readEntry, type EntryRecord } from '../memory/entries.js';
 import { decodeStoredStructuredScope, readEntryRevision } from '../memory/revisions.js';
 import { ensureGlobalWorkspace, GLOBAL_WORKSPACE, resolveProjectWorkspace, type ResolvedProjectWorkspace } from '../memory/workspaces.js';
-import { federatedEntries, type FederatedOrigin } from '../memory/federated-retrieval.js';
+import { federatedEntries, type FederatedOrigin, type FederatedSearchObservation } from '../memory/federated-retrieval.js';
 import { isRetrievableEntry } from '../memory/hybrid-retrieval.js';
 import { effectiveRetrievalScope, hasExplicitApplicability } from '../memory/structured-memory.js';
 import type { TaskProfile } from '../akinator/types.js';
@@ -84,6 +84,7 @@ export interface ScopedContextResult {
   deliveryId: string | null;
   truncated: boolean;
   untrusted: true;
+  retrieval?: { status: 'delivered' | 'no_primary_scope_entries' | 'no_match' | 'out_of_scope' | 'historical_empty'; primaryScopeEntries?: number; scopeExcludedMatches?: number };
 }
 
 export interface ScopedContextGateDecision<T> {
@@ -616,6 +617,7 @@ async function prepareScopedContext(
   database: SqliteDatabase,
   raw: ScopedContextQuery,
   requestedRuntime: HybridSearchRuntime,
+  refreshDigest?: string,
 ): Promise<PreparedScopedContext> {
   const runtime = snapshotSemanticRuntime(requestedRuntime);
   const semanticIdentity = semanticQueryIdentity(runtime);
@@ -682,6 +684,7 @@ async function prepareScopedContext(
     retrievalStateHash,
     runStateHash: run?.stateHash ?? null,
     semanticQuery: semanticIdentity,
+    ...(refreshDigest === undefined ? {} : { refreshDigest }),
   });
   const replay = replayableDelivery(
     database,
@@ -699,6 +702,7 @@ async function prepareScopedContext(
         queryHash,
         policyVersion: SCOPED_CONTEXT_POLICY_VERSION,
         items: storedScopedItems(database, replay),
+        retrieval: { status: replay.items.length ? 'delivered' : 'historical_empty' },
         deliveryId: replay.deliveryId,
         truncated: replay.truncated,
         untrusted: true,
@@ -712,12 +716,14 @@ async function prepareScopedContext(
       projectState,
     };
   }
+  let observation: FederatedSearchObservation | undefined;
   const candidates = new Map<string, ScopedContextItem>();
   const federated = project === undefined ? [] : await federatedEntries(database, {
     project,
     ...(fingerprint === undefined ? {} : { fingerprint }),
     query: queryText,
     limit: 200,
+    observe: value => { observation = value; },
   }, runtime);
   for (const hit of federated) {
     const entry = hit.entry;
@@ -741,6 +747,12 @@ async function prepareScopedContext(
       queryHash,
       policyVersion: SCOPED_CONTEXT_POLICY_VERSION,
       items: fitted.items,
+      retrieval: {
+        status: fitted.items.length ? 'delivered'
+          : observation?.scopeExcludedMatches ? 'out_of_scope'
+          : observation?.primaryScopeEntries === 0 ? 'no_primary_scope_entries' : 'no_match',
+        ...(observation ? { primaryScopeEntries: observation.primaryScopeEntries, scopeExcludedMatches: observation.scopeExcludedMatches } : {}),
+      },
       deliveryId: null,
       truncated: fitted.truncated,
       untrusted: true,
@@ -805,6 +817,7 @@ function persistPreparedScopedContext(
   database: SqliteDatabase,
   prepared: PreparedScopedContext,
   assertBeforePersist?: () => void,
+  afterPersist?: (result: ScopedContextResult) => void,
 ): ScopedContextResult {
   if (prepared.pendingDelivery === null) {
     return withImmediateTransaction(database, () => {
@@ -813,6 +826,7 @@ function persistPreparedScopedContext(
         assertBeforePersist();
         assertPreparedScopedState(database, prepared);
       }
+      afterPersist?.(prepared.result);
       return prepared.result;
     });
   }
@@ -828,12 +842,14 @@ function persistPreparedScopedContext(
       database,
       { ...request, deliveryId: scopedDeliveryId(request) },
     );
-    return {
+    const result = {
       ...prepared.result,
       items: storedScopedItems(database, delivery),
       deliveryId: delivery.deliveryId,
       truncated: delivery.truncated,
     };
+    afterPersist?.(result);
+    return result;
   });
 }
 
@@ -867,4 +883,12 @@ export async function queryScopedContextGated<T>(
     value: decision.value,
     selectionStateHash: prepared.selectionStateHash,
   };
+}
+
+/** Commit refresh metadata and immutable context alongside the selected delivery. */
+export async function queryScopedContextTransaction(
+  database: SqliteDatabase, query: ScopedContextQuery, refreshDigest: string,
+  assertBeforePersist: () => void, afterPersist: (result: ScopedContextResult) => void,
+): Promise<ScopedContextResult> {
+  return persistPreparedScopedContext(database, await prepareScopedContext(database, query, {}, refreshDigest), assertBeforePersist, afterPersist);
 }
