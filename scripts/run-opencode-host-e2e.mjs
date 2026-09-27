@@ -11,6 +11,7 @@ import { startFakeOpenAiServer } from '../tests/e2e/fake-openai-server.mjs';
 import { agentDefinition, buildExecutionCatalog, EXECUTION_ROLES, orchestrationOptionsSchema } from '../dist/execution/catalog.js';
 import { probeMcpTools, callMcpTool } from './lib/mcp-probe.mjs';
 import { startPackedRegistry } from './lib/packed-registry.mjs';
+import { waitForPackedPlugin } from './lib/plugin-readiness.mjs';
 
 const repositoryRoot = path.resolve(import.meta.dirname, '..');
 const maxOutputBytes = 96 * 1024;
@@ -299,20 +300,16 @@ export async function runHostContract(options = {}) {
     if (health.version !== '2.0.18') throw new Error('OpenCode version contract failed');
     const location = { directory: projectRoot };
     const session = await server.client.session.create({ location, model: { providerID: 'fixture', id: 'fixture-model' } });
-    let agentCatalog = await server.client.agent.list({ location });
-    let checked = await server.client.plugin.list({ location });
-    let plugin = checked.data.find(item => item.id === 'kiokuko-ai');
-    for (let attempt = 0; attempt < 100 && plugin?.state.status !== 'active'; attempt++) {
-      await new Promise(resolve => setTimeout(resolve, 200));
-      checked = await server.client.plugin.list({ location });
-      plugin = checked.data.find(item => item.id === 'kiokuko-ai');
-    }
-    agentCatalog = await server.client.agent.list({ location });
+    // A cold npm cache makes package installation substantially slower on the
+    // macOS x64 runner. Keep polling the actual plugin state, not a fixed 20s
+    // number of attempts, and fail immediately if the host reports a failure.
+    const plugin = await waitForPackedPlugin(server.client, location);
+    const agentCatalog = await server.client.agent.list({ location });
     if (plugin?.state.status !== 'active' || plugin.source.type !== 'package'
       || !plugin.source.target.startsWith('kiokuko-ai@')) {
       const configured = await server.client.config.get({ location });
       const sources = configured.map(item => ({ type: item.type, path: item.path, pluginPackages: item.info?.plugins?.map(entry => entry.package) }));
-      throw new Error(`packed_plugin_not_active:${plugin?.state.status ?? 'missing'}:checked=${JSON.stringify(checked)}:agents=${JSON.stringify(agentCatalog)}:session=${JSON.stringify(session)}:configured=${JSON.stringify(sources)}:registry=${JSON.stringify(registry.requests)}:${server.diagnostics()}`);
+      throw new Error(`packed_plugin_not_active:${plugin?.state.status ?? 'missing'}:source=${JSON.stringify(plugin?.source)}:configured=${JSON.stringify(sources)}:registry=${JSON.stringify(registry.diagnostics())}:${server.diagnostics()}`);
     }
     const mcp = await server.client.mcp.list({ location });
     if (mcp.data.find(item => item.name === 'kiokuko')?.status.status !== 'connected') throw new Error('OpenCode Kiokuko MCP is not connected');
