@@ -76,7 +76,7 @@ raw+=line(4,'shell.result',{exit_code:1})+'\\n'+line(5,'run.end',{exit_code:0})+
     await worker.close();
     await writeFile(path.join(cwd, 'continue'), '1');
     assert.equal(await closed, 0, stderr);
-    assert.deepEqual(JSON.parse(await readFile(path.join(cwd, 'args.json'), 'utf8')), ['record', 'opencode', '--', ...args]);
+    assert.deepEqual(JSON.parse(await readFile(path.join(cwd, 'args.json'), 'utf8')), ['record', 'opencode', '--', 'run', '--standalone', ...args.slice(1)]);
     const stored = readStoredTraceContext(db, runs, traceId)!;
     const summary = stored.context.summary as Record<string, any>;
     assert.equal(summary.events, 6);

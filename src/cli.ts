@@ -516,12 +516,13 @@ export function buildCli(dependencies: CliDependencies = {}): Command {
     humanOrJson(options.json, 'backup', result, `Backup written to ${options.output}`);
   });
 
-  cli.command('doctor').description('Check runtime, database, and OpenCode MCP configuration health; interactively clean missing repository locations').option('--json').action(async (options: { json?: boolean }) => {
+  cli.command('doctor').description('Check runtime, database, and OpenCode MCP configuration health; interactively clean missing repository locations').option('--json').option('--opencode-url <url>', 'Check the explicitly specified OpenCode v2 service').action(async (options: { json?: boolean; opencodeUrl?: string }) => {
     const doctorOptions: Parameters<typeof runDoctor>[0] = {
       ...(dependencies.doctorDatabasePath === undefined ? {} : { databasePath: dependencies.doctorDatabasePath }),
       ...(dependencies.doctorRuntimeDescriptorPath === undefined ? {} : { runtimeDescriptorPath: dependencies.doctorRuntimeDescriptorPath }),
       ...(dependencies.embeddingEnvironment === undefined ? {} : { embeddingEnvironment: dependencies.embeddingEnvironment }),
       ...(dependencies.embeddingBackend === undefined ? {} : { embeddingBackend: dependencies.embeddingBackend }),
+      ...(options.opencodeUrl === undefined ? {} : { opencodeUrl: options.opencodeUrl }),
     };
     const databaseOptions: Parameters<typeof initializeDatabase>[0] = dependencies.doctorDatabasePath === undefined
       ? {}

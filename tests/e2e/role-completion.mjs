@@ -9,7 +9,7 @@ export function createRoleCompletion(task, complete) {
         if (call.function?.name !== 'task') return false;
         try {
           const args = JSON.parse(call.function.arguments);
-          return args.prompt === task.prompt && args.subagent_type === task.subagent_type;
+          return args.prompt === task.prompt && args.agent === task.agent;
         } catch { return false; }
       });
       const completed = messages.some(message => message.role === 'tool'

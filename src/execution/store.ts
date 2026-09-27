@@ -60,7 +60,7 @@ export function executionView(db: SqliteDatabase, runId: string, availableCatalo
     })),
     selected,
     dispatch: selected === null ? null : Object.fromEntries(EXECUTION_ROLES.map(role => [role, {
-      subagent_type: selected[role].agent,
+      agent: selected[role].agent,
       promptPrefix: `<kiokuko-execution>${JSON.stringify({ runId, revision: row.revision, role })}</kiokuko-execution>\n`,
     }])),
   };

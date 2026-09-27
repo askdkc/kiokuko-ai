@@ -7,9 +7,9 @@ import { satisfies, valid } from 'semver';
 interface CompatibilityManifest {
   schemaVersion: number;
   minimum: string;
+  maximumExclusive: string;
   tested: string[];
-  releaseRepository: string;
-  platforms: Record<string, { archive: string; versions: Record<string, { sha512: string }> }>;
+  platforms: Record<string, { package: string; version: string; tarball: string; integrity: string; executable: string }>;
 }
 
 const repositoryRoot = path.resolve(import.meta.dirname, '../..');
@@ -23,22 +23,22 @@ test('OpenCode compatibility manifest is pinned and agrees with package engine',
     manifest(),
     readFile(path.join(repositoryRoot, 'package.json'), 'utf8').then((value) => JSON.parse(value) as { engines: { opencode: string } }),
   ]);
-  assert.equal(compatibility.schemaVersion, 1);
-  assert.equal(compatibility.releaseRepository, 'anomalyco/opencode');
+  assert.equal(compatibility.schemaVersion, 2);
+  assert.equal(compatibility.maximumExclusive, '2.1.0');
   assert.ok(valid(compatibility.minimum));
   assert.ok(satisfies(compatibility.minimum, packageJson.engines.opencode));
-  assert.deepEqual(compatibility.tested, ['1.18.25', '1.18.26']);
+  assert.deepEqual(compatibility.tested, ['2.0.18']);
   for (const version of [compatibility.minimum, ...compatibility.tested]) {
     assert.ok(valid(version));
     assert.ok(satisfies(version, packageJson.engines.opencode));
-    assert.ok(compatibility.platforms['linux-x64']?.versions[version]?.sha512);
+    assert.equal(compatibility.platforms['linux-x64']?.version, version);
   }
   for (const [platform, definition] of Object.entries(compatibility.platforms)) {
     assert.match(platform, /^(linux|macos|windows)-(x64|arm64)$/u);
-    assert.match(definition.archive, /^opencode-[a-z0-9-]+\.(zip|tar\.gz)$/u);
-    for (const [version, asset] of Object.entries(definition.versions)) {
-      assert.ok(compatibility.tested.includes(version));
-      assert.match(asset.sha512, /^[0-9a-f]{128}$/u);
-    }
+    assert.equal(definition.version, '2.0.18');
+    assert.match(definition.package, /^@opencode\/cli-(linux|darwin|windows)-(x64|arm64)$/u);
+    assert.match(definition.tarball, /^https:\/\/registry\.npmjs\.org\/@opencode\/cli-.+-2\.0\.18\.tgz$/u);
+    assert.match(definition.integrity, /^sha512-[A-Za-z0-9+/]+={0,2}$/u);
+    assert.match(definition.executable, /^package\/bin\/opencode(?:\.exe)?$/u);
   }
 });

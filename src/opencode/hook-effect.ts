@@ -8,6 +8,7 @@ import {
   inspectOpenCodeHookResponse,
 } from './hook-protocol.js';
 import type { CompactionHookRequest } from './compaction-protocol.js';
+import type { ContinuationReceipt, TrackedOpenCodeSession } from './tracking.js';
 
 export const KIOKUKO_HOOK_TIMEOUT_MS = 10_000;
 const MAX_HOOK_OUTPUT_BYTES = 64 * 1024;
@@ -405,6 +406,80 @@ export async function readKiokukoExecutionRouting(
     })();
     const timeout = new Promise<never>((_, reject) => {
       timer = setTimeout(() => { child.kill(); reject(new Error('Execution routing timed out')); }, dependencies.timeoutMs ?? KIOKUKO_HOOK_TIMEOUT_MS);
+    });
+    return await Promise.race(cancellation ? [operation, timeout, cancellation.promise] : [operation, timeout]);
+  } finally {
+    cancellation?.cleanup();
+    if (timer) clearTimeout(timer);
+    try { child.kill(); } catch { /* process may have exited */ }
+    await settleChild(child);
+  }
+}
+
+/** Resolve repository-owned sessions without mutating continuation or lease state. */
+export async function readKiokukoTrackedSessions(
+  directory: string,
+  dependencies: HookEffectDependencies = {},
+): Promise<TrackedOpenCodeSession[]> {
+  if (dependencies.runtimeFailure || dependencies.signal?.aborted) throw new Error('Session tracking unavailable');
+  const spawn = dependencies.spawn ?? runtimeSpawn();
+  const invocation = await trustedInvocation(dependencies);
+  if (!spawn || !invocation.argv) throw new Error('Session tracking runtime unavailable');
+  const child = spawn([...invocation.argv, 'enno', 'tracked-sessions', '--input-json', '-'], {
+    stdin: 'pipe', stdout: 'pipe', stderr: 'pipe', cwd: directory,
+  });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const cancellation = abortRace(dependencies.signal, child);
+  try {
+    const operation = (async () => {
+      const reading = Promise.all([readBounded(child.stdout), readBounded(child.stderr), child.exited]);
+      await child.stdin.write(JSON.stringify({ directory }));
+      await child.stdin.end();
+      const [output, , code] = await reading;
+      if (code !== 0) throw new Error('Session tracking read failed');
+      const value: unknown = JSON.parse(output);
+      if (!Array.isArray(value) || findSecretInValue(value)) throw new Error('Session tracking response invalid');
+      return value as TrackedOpenCodeSession[];
+    })();
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => { child.kill(); reject(new Error('Session tracking timed out')); }, dependencies.timeoutMs ?? KIOKUKO_HOOK_TIMEOUT_MS);
+    });
+    return await Promise.race(cancellation ? [operation, timeout, cancellation.promise] : [operation, timeout]);
+  } finally {
+    cancellation?.cleanup();
+    if (timer) clearTimeout(timer);
+    try { child.kill(); } catch { /* process may have exited */ }
+    await settleChild(child);
+  }
+}
+
+/** Confirm that a stored directive still has its exact durable receipt. */
+export async function readKiokukoContinuationReceipt(
+  input: { directory: string; runId: string; sessionId: string; terminalMessageId: string },
+  dependencies: HookEffectDependencies = {},
+): Promise<ContinuationReceipt | null> {
+  if (dependencies.runtimeFailure || dependencies.signal?.aborted) throw new Error('Continuation receipt unavailable');
+  const spawn = dependencies.spawn ?? runtimeSpawn();
+  const invocation = await trustedInvocation(dependencies);
+  if (!spawn || !invocation.argv) throw new Error('Continuation receipt runtime unavailable');
+  const child = spawn([...invocation.argv, 'enno', 'continuation-receipt', '--input-json', '-'], {
+    stdin: 'pipe', stdout: 'pipe', stderr: 'pipe', cwd: input.directory,
+  });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const cancellation = abortRace(dependencies.signal, child);
+  try {
+    const operation = (async () => {
+      const reading = Promise.all([readBounded(child.stdout), readBounded(child.stderr), child.exited]);
+      await child.stdin.write(JSON.stringify(input));
+      await child.stdin.end();
+      const [output, , code] = await reading;
+      if (code !== 0) throw new Error('Continuation receipt read failed');
+      const value: unknown = JSON.parse(output);
+      if (findSecretInValue(value)) throw new Error('Unsafe continuation receipt');
+      return value as ContinuationReceipt | null;
+    })();
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => { child.kill(); reject(new Error('Continuation receipt timed out')); }, dependencies.timeoutMs ?? KIOKUKO_HOOK_TIMEOUT_MS);
     });
     return await Promise.race(cancellation ? [operation, timeout, cancellation.promise] : [operation, timeout]);
   } finally {

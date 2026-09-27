@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { chmod, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -73,30 +73,7 @@ async function platformDefinition(platform) {
 
 async function extractArchive(archive, destination) {
   await mkdir(destination, { recursive: true });
-  if (archive.endsWith('.zip')) {
-    if (process.platform === 'win32') {
-      await execFileAsync('tar', ['-xf', archive, '-C', destination], { windowsHide: true });
-    } else {
-      await execFileAsync('unzip', ['-q', '-o', archive, '-d', destination], { windowsHide: true });
-    }
-    return;
-  }
   await execFileAsync('tar', ['-xzf', archive, '-C', destination], { windowsHide: true });
-}
-
-async function findExecutable(root) {
-  const expected = process.platform === 'win32' ? 'opencode.exe' : 'opencode';
-  const queue = [root];
-  while (queue.length > 0) {
-    const current = queue.shift();
-    const entries = await readdir(current, { withFileTypes: true });
-    for (const entry of entries) {
-      const target = path.join(current, entry.name);
-      if (entry.isDirectory()) queue.push(target);
-      else if (entry.name === expected) return target;
-    }
-  }
-  return undefined;
 }
 
 async function main() {
@@ -104,17 +81,21 @@ async function main() {
   const platform = argument('--platform');
   const output = path.resolve(argument('--output'));
   const { manifest, definition } = await platformDefinition(platform);
-  const asset = definition.versions?.[version];
-  if (asset === undefined) throw new Error('version is not pinned for this platform');
-  const url = `https://github.com/${manifest.releaseRepository}/releases/download/v${version}/${definition.archive}`;
-  const bytes = await downloadRelease(url);
-  const digest = createHash('sha512').update(bytes).digest('hex');
-  if (digest !== asset.sha512) throw new Error('OpenCode release checksum mismatch');
-  const archive = path.join(path.dirname(output), `opencode-${version}-${definition.archive}`);
+  if (manifest.schemaVersion !== 2 || definition.version !== version
+    || !/^https:\/\/registry\.npmjs\.org\/@opencode\/cli-[a-z0-9-]+\/-\/cli-[a-z0-9-]+-2\.0\.18\.tgz$/u.test(definition.tarball)
+    || typeof definition.integrity !== 'string' || !definition.integrity.startsWith('sha512-')) {
+    throw new Error('version is not pinned to a verified native npm package');
+  }
+  const bytes = await downloadRelease(definition.tarball);
+  const digest = `sha512-${createHash('sha512').update(bytes).digest('base64')}`;
+  if (digest !== definition.integrity) throw new Error('OpenCode native package integrity mismatch');
+  const archive = path.join(path.dirname(output), `opencode-${version}-${platform}.tgz`);
   await writeFile(archive, bytes, { mode: 0o600 });
   await extractArchive(archive, output);
-  const executable = await findExecutable(output);
-  if (executable === undefined) throw new Error('OpenCode release executable is missing');
+  const metadata = JSON.parse(await readFile(path.join(output, 'package', 'package.json'), 'utf8'));
+  if (metadata.name !== definition.package || metadata.version !== version) throw new Error('OpenCode native package identity mismatch');
+  const executable = path.join(output, definition.executable);
+  if (!(await stat(executable)).isFile()) throw new Error('OpenCode native executable is missing');
   if (process.platform !== 'win32') await chmod(executable, 0o755);
   process.stdout.write(`${JSON.stringify({ version, platform, sha512: digest, executable })}\n`);
 }

@@ -28,15 +28,14 @@ test('OpenCode Enno E2E runner rejects obsolete client selector arguments', asyn
   }
 });
 
-test('OpenCode E2E is not-run until the opt-in flag is set', async () => {
+test('OpenCode E2E fails closed when the pinned executable is absent', async () => {
   const directory = await mkdtemp(path.join(tmpdir(), 'kiokuko-enno-e2e-gate-'));
-  const output = await execute(process.execPath, [runner], { cwd: directory });
-  const result = JSON.parse(output.stdout) as { results?: Array<{ status?: string; reason?: string }> };
-  assert.deepEqual(result.results, [{
-    client: 'opencode',
-    status: 'not-run',
-    reason: 'RUN_OPENCODE_E2E=1 is not set',
-  }]);
+  await assert.rejects(execute(process.execPath, [runner], { cwd: directory, env: { ...process.env, OPENCODE_BIN: '' } }), (error: unknown) => {
+    const failure = error as { code?: unknown; stdout?: unknown };
+    if (failure.code !== 1 || typeof failure.stdout !== 'string') return false;
+    const result = JSON.parse(failure.stdout) as { results?: Array<{ status?: string; reason?: string }> };
+    return result.results?.[0]?.reason === 'OPENCODE_BIN_required';
+  });
 });
 
 test('live E2E setup and ledger verification share an isolated database on every platform', async () => {

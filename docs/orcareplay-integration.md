@@ -12,7 +12,10 @@ kiokuko-ai trace record --sync-timeout-ms 120000 -- run 'Run the tests'
 ```
 
 The wrapper preserves the capture working directory, passes arguments as an
-array to `orca record opencode -- ...`, and inherits the terminal streams.
+array to `orca record opencode -- ...`, inserts OpenCode v2's `--standalone`
+after `run` (or at the top level for an interactive launch), and inherits the
+terminal streams. It rejects `--server` and external server environment settings
+before recording so the trace cannot silently attach to a shared service.
 The ordinary recording has no time limit; the timeout applies to synchronization
 after Orca exits. No model configuration is changed by Kiokuko.
 
@@ -174,14 +177,25 @@ nor recovery deletes, repairs or writes the `.orca` original.
 
 ## Verification
 
-See [the implementation verification record](orcareplay-verification.md) for
-commands, regressions and the tested executable versions. The opt-in real Orca
-contract test uses a fake OpenCode executable and no paid model API:
+The v2 live capture check needs a pinned OpenCode 2.0.18 binary and an installed
+Orca executable. It runs both under a temporary HOME, routes a local fixture
+provider through Orca's proxy, and checks that model request/response events are
+sealed and ingested:
+
+```sh
+OPENCODE_BIN=/absolute/path/to/opencode \
+KIOKUKO_TEST_ORCA=/absolute/path/to/orca \
+npm run test:e2e:opencode:orca
+```
+
+See [the earlier implementation verification record](orcareplay-verification.md)
+for the historical 0.2.1 contract. Its opt-in test uses a fake OpenCode
+executable and no paid model API:
 
 ```sh
 KIOKUKO_TEST_ORCA=/absolute/path/to/orca node scripts/run-tests.mjs tests/integration/orcareplay-real-cli.test.ts
 ```
 
-That test pins OrcaReplay 0.2.1 and otherwise reports an explicit skip. Actual
-OpenCode TUI behavior and foreground process-group Ctrl-C require a separate PTY
-check; a fake child signal test does not establish that behavior.
+That historical test pins OrcaReplay 0.2.1 and otherwise reports an explicit
+skip. Foreground process-group Ctrl-C in an interactive TUI requires a separate
+PTY check; the signal fixture checks the wrapper's forwarding and final sync.

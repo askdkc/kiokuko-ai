@@ -99,16 +99,16 @@ test('installer rejects checksum mismatch before writing or extracting, without 
     await assert.rejects(promisify(execFile)(process.execPath, [
       '--import', preload,
       new URL('../../scripts/install-opencode-release.mjs', import.meta.url).pathname,
-      '--version', '1.18.26', '--platform', 'macos-x64', '--output', output,
+      '--version', '2.0.18', '--platform', 'macos-x64', '--output', output,
     ]), (error: unknown) => {
       const result = error as { code: number; stderr: string };
       assert.equal(result.code, 1);
-      assert.match(result.stderr, /OpenCode release checksum mismatch/u);
+      assert.match(result.stderr, /OpenCode native package integrity mismatch/u);
       assert.equal(result.stderr.match(/fixture-fetch/gu)?.length, 1);
       return true;
     });
     await assert.rejects(access(output), { code: 'ENOENT' });
-    await assert.rejects(access(path.join(root, 'opencode-1.18.26-opencode-darwin-x64.zip')), { code: 'ENOENT' });
+    await assert.rejects(access(path.join(root, 'opencode-2.0.18-cli-darwin-x64.tgz')), { code: 'ENOENT' });
   } finally {
     await rm(root, { recursive: true, force: true });
   }

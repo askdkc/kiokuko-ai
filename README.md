@@ -55,9 +55,10 @@ fallback behavior.
 
 ## Supported client
 
-OpenCode is the only supported client. Setup, Web UI, and restart instructions
+OpenCode `>=2.0.18 <2.1.0` is the supported client range. Setup, Web UI, and restart instructions
 are in [Getting started](docs/getting-started.md). The [documentation index](docs/README.md)
 links to conceptual and operational guides.
+For OpenCode v1, pin `kiokuko-ai@0.1.25`; a rollback also requires restoring the saved v1 configuration.
 
 ## Safety and limitations
 
@@ -83,10 +84,10 @@ asks for the model configuration; follow-ups retain the selection.
 2. In the effective OpenCode configuration (new installs use
    `~/.config/opencode/opencode.jsonc`), copy a generated `gokiWorker` agent under
    a new name. Change `model`; preserve its role prompt and permissions. The example
-   below is a complete worker definition: merge its `agent` member into your existing
-   `agent` object. Replace **`YOUR_PROVIDER/YOUR_MODEL`** with the confirmed model ID;
+   below is a complete worker definition: merge its `agents` member into your existing
+   `agents` object. Replace **`YOUR_PROVIDER/YOUR_MODEL`** with the confirmed model ID;
    replace **`my-orchestration-worker`** in both snippets if you choose another name.
-3. In the **existing Kiokuko plugin tuple's second object**, merge the registration
+3. In the **existing Kiokuko `plugins` entry's `options` object**, merge the registration
    below into `orchestration.customAgents.gokiWorker`. Keep existing options and
    other registered names. Do not replace the configuration file or plugin list.
 4. Restart OpenCode. For a new request, choose Enno, choose a preset, and override
@@ -95,18 +96,24 @@ asks for the model configuration; follow-ups retain the selection.
 <!-- kiokuko-custom-worker-example -->
 ```jsonc
 {
-  "agent": {
+  "agents": {
     "my-orchestration-worker": {
       "description": "My Kiokuko worker",
       "mode": "subagent",
       "model": "YOUR_PROVIDER/YOUR_MODEL",
-      "prompt": "Implement only the supplied approved WorkUnit and run its focused verification. Do not delegate or broaden scope. The parent owns the run, leases, and all Kiokuko reports. Do not call Kiokuko tools or change models. Return changed paths and verification evidence.",
-      "permission": {
-        "*": "deny",
-        "read": "allow", "glob": "allow", "grep": "allow", "list": "allow",
-        "skill": "allow", "edit": "allow", "bash": "allow",
-        "task": "deny", "kiokuko_*": "deny", "external_directory": "ask"
-      }
+      "system": "Implement only the supplied approved WorkUnit and run its focused verification. Do not delegate or broaden scope. The parent owns the run, leases, and all Kiokuko reports. Do not call Kiokuko tools or change models. Return changed paths and verification evidence.",
+      "permissions": [
+        { "action": "*", "resource": "*", "effect": "deny" },
+        { "action": "read", "resource": "*", "effect": "allow" },
+        { "action": "glob", "resource": "*", "effect": "allow" },
+        { "action": "grep", "resource": "*", "effect": "allow" },
+        { "action": "list", "resource": "*", "effect": "allow" },
+        { "action": "skill", "resource": "*", "effect": "allow" },
+        { "action": "edit", "resource": "*", "effect": "allow" },
+        { "action": "shell", "resource": "*", "effect": "allow" },
+        { "action": "kiokuko_*", "resource": "*", "effect": "deny" },
+        { "action": "external_directory", "resource": "*", "effect": "ask" }
+      ]
     }
   }
 }
@@ -115,8 +122,8 @@ asks for the model configuration; follow-ups retain the selection.
 
 <!-- kiokuko-custom-registration-example -->
 ```jsonc
-// Merge these fields into the options object of your EXISTING Kiokuko plugin tuple:
-// "plugin": [["kiokuko-ai@<installed-version>", { ...existing options, ...fields below }]]
+// Merge these fields into the options object of your EXISTING Kiokuko plugin entry:
+// "plugins": [{ "package": "kiokuko-ai@<installed-version>", "options": { ...existing options, ...fields below } }]
 {
   "orchestration": {
     "mode": "ask",

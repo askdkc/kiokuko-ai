@@ -212,5 +212,5 @@ test('repeated and embedding dependency setup preserve completed choices without
     assert.equal(checks, optionalPrompts ? 1 : 0);
   }
   assert.equal(text, '');
-  assert.equal(parse(await readFile(configPath, 'utf8')).mcp.kiokuko.environment.KIOKUKO_SKILL_DISCOVERY, 'community');
+  assert.equal(parse(await readFile(configPath, 'utf8')).mcp.servers.kiokuko.environment.KIOKUKO_SKILL_DISCOVERY, 'community');
 });

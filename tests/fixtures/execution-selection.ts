@@ -3,18 +3,23 @@ import type { SqliteDatabase } from '../../src/db/adapter.js';
 import { buildExecutionCatalog, MANAGED_EXECUTION_AGENTS, orchestrationOptionsSchema, object } from '../../src/execution/catalog.js';
 
 export function fixtureProviders(agents: Record<string, unknown> = MANAGED_EXECUTION_AGENTS) {
-  const providers: Record<string, { id: string; models: Record<string, unknown> }> = {};
-  for (const value of Object.values(agents)) {
-    const model = String(object(value).model);
+  return [...new Set(Object.values(agents).map(value => String(object(value).model).split('/')[0]))]
+    .map(id => ({ id, activation: 'enabled' }));
+}
+export function fixtureCatalogInput(agents: Record<string, unknown> = MANAGED_EXECUTION_AGENTS, subagentDepth = 2) {
+  const definitions = Object.entries(agents).map(([id, value]) => {
+    const definition = object(value);
+    const model = String(definition.model);
     const slash = model.indexOf('/');
-    const provider = model.slice(0, slash);
-    providers[provider] ??= { id: provider, models: {} };
-    providers[provider].models[model.slice(slash + 1)] = { capabilities: { toolcall: true } };
-  }
-  return { all: Object.values(providers), connected: Object.keys(providers) };
+    return { ...definition, id, model: { providerID: model.slice(0, slash), id: model.slice(slash + 1) } };
+  });
+  return { agents: definitions, models: definitions.map(definition => ({
+    providerID: definition.model.providerID, modelID: definition.model.id,
+    capabilities: { tools: true }, enabled: true,
+  })), providers: fixtureProviders(agents), subagentDepth };
 }
 export function fixtureExecutionCatalog() {
-  return buildExecutionCatalog({ agent: MANAGED_EXECUTION_AGENTS, subagent_depth: 2 }, fixtureProviders(), orchestrationOptionsSchema.parse({}));
+  return buildExecutionCatalog(fixtureCatalogInput(), orchestrationOptionsSchema.parse({}));
 }
 /** Existing orchestration tests explicitly opt in before exercising their phase contract. */
 export async function prepareSelectedTask(database: SqliteDatabase, input: PrepareOpenCodeTaskInput) {

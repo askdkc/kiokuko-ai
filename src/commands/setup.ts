@@ -62,8 +62,12 @@ import {
   type UnfinishedLedgerRunPlan,
 } from '../ledger/maintenance.js';
 function readSetupExecutionMode(content: string | undefined): EnnoSetupMode {
-  const plugins = object(parse(content ?? '{}')).plugin as unknown[];
-  const entry = plugins.find(value => Array.isArray(value) && String(value[0]).startsWith('kiokuko-ai@')) as unknown[] | undefined;
+  const root = object(parse(content ?? '{}'));
+  const plugins = Array.isArray(root.plugins) ? root.plugins : [];
+  const current = plugins.find(value => String(object(value).package ?? '').startsWith('kiokuko-ai@'));
+  if (current !== undefined) return orchestrationOptionsSchema.parse(object(object(current).options).orchestration ?? {}).mode;
+  const legacy = Array.isArray(root.plugin) ? root.plugin : [];
+  const entry = legacy.find(value => Array.isArray(value) && String(value[0]).startsWith('kiokuko-ai')) as unknown[] | undefined;
   return orchestrationOptionsSchema.parse(object(entry?.[1]).orchestration ?? {}).mode;
 }
 

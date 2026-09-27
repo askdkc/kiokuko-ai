@@ -45,7 +45,8 @@ kiokuko-ai setup
 
 ## 支持的客户端
 
-仅支持 OpenCode。设置、重启和 Web UI 的说明请参阅[英文 Getting started](docs/getting-started.md)。
+支持 OpenCode `>=2.0.18 <2.1.0`。设置、重启和 Web UI 的说明请参阅[英文 Getting started](docs/getting-started.md)。
+如需继续使用 OpenCode v1，请固定 `kiokuko-ai@0.1.25`；回退时还需恢复备份的 v1 配置。
 
 ## 安全性与限制
 
@@ -69,9 +70,9 @@ MCP tool 是否调用由客户端和模型决定，因此不保证模型每一�
    确认准确的 `provider/model`。
 2. 在有效的OpenCode配置（新建时为 `~/.config/opencode/opencode.jsonc`）中，
    复制生成的 `gokiWorker` 代理并改名，修改 `model`，保留角色提示和权限。
-   将下例中的代理条目合并到已有 `agent` 对象。将 **`YOUR_PROVIDER/YOUR_MODEL`**
+   将下例中的代理条目合并到已有 `agents` 对象。将 **`YOUR_PROVIDER/YOUR_MODEL`**
    替换为确认的模型ID；如需改名，两处 **`my-orchestration-worker`** 必须一致。
-3. 将第二个示例合并到**已有Kiokuko plugin元组的第二个对象**，在
+3. 将第二个示例合并到**已有Kiokuko `plugins` 条目的 `options` 对象**，在
    `orchestration.customAgents.gokiWorker` 中追加名称。保留已有选项和其他名称，
    不要替换整个配置文件或plugin列表。
 4. 重启OpenCode。在新请求中选择役小角及预设，再将worker改为新代理。
@@ -80,18 +81,24 @@ MCP tool 是否调用由客户端和模型决定，因此不保证模型每一�
 <!-- kiokuko-custom-worker-example -->
 ```jsonc
 {
-  "agent": {
+  "agents": {
     "my-orchestration-worker": {
       "description": "My Kiokuko worker",
       "mode": "subagent",
       "model": "YOUR_PROVIDER/YOUR_MODEL",
-      "prompt": "Implement only the supplied approved WorkUnit and run its focused verification. Do not delegate or broaden scope. The parent owns the run, leases, and all Kiokuko reports. Do not call Kiokuko tools or change models. Return changed paths and verification evidence.",
-      "permission": {
-        "*": "deny",
-        "read": "allow", "glob": "allow", "grep": "allow", "list": "allow",
-        "skill": "allow", "edit": "allow", "bash": "allow",
-        "task": "deny", "kiokuko_*": "deny", "external_directory": "ask"
-      }
+      "system": "Implement only the supplied approved WorkUnit and run its focused verification. Do not delegate or broaden scope. The parent owns the run, leases, and all Kiokuko reports. Do not call Kiokuko tools or change models. Return changed paths and verification evidence.",
+      "permissions": [
+        { "action": "*", "resource": "*", "effect": "deny" },
+        { "action": "read", "resource": "*", "effect": "allow" },
+        { "action": "glob", "resource": "*", "effect": "allow" },
+        { "action": "grep", "resource": "*", "effect": "allow" },
+        { "action": "list", "resource": "*", "effect": "allow" },
+        { "action": "skill", "resource": "*", "effect": "allow" },
+        { "action": "edit", "resource": "*", "effect": "allow" },
+        { "action": "shell", "resource": "*", "effect": "allow" },
+        { "action": "kiokuko_*", "resource": "*", "effect": "deny" },
+        { "action": "external_directory", "resource": "*", "effect": "ask" }
+      ]
     }
   }
 }
@@ -100,8 +107,8 @@ MCP tool 是否调用由客户端和模型决定，因此不保证模型每一�
 
 <!-- kiokuko-custom-registration-example -->
 ```jsonc
-// Merge these fields into the options object of your EXISTING Kiokuko plugin tuple:
-// "plugin": [["kiokuko-ai@<installed-version>", { ...existing options, ...fields below }]]
+// 将以下字段合并到现有 Kiokuko plugins 条目的 options 对象中:
+// "plugins": [{ "package": "kiokuko-ai@<installed-version>", "options": { ...existing options, ...fields below } }]
 {
   "orchestration": {
     "mode": "ask",
