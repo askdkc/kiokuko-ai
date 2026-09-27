@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 const { createRoleCompletion } = await import(new URL('../e2e/role-completion.mjs', import.meta.url).href);
-const task = { prompt: 'exact selected run and role', subagent_type: 'selected-head' };
+const task = { prompt: 'exact selected run and role', agent: 'selected-head' };
 const messages = [
   { role: 'assistant', tool_calls: [{ id: 'role-call', function: { name: 'task', arguments: JSON.stringify(task) } }] },
   { role: 'tool', tool_call_id: 'role-call', content: 'completed role' },

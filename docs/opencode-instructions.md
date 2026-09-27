@@ -33,7 +33,8 @@ The generated instructions describe the high-level `task_prepare`,
 the only model-facing task-memory entry points. Human/operator CLI and Web
 inspection remain management-only and are not a fallback for a client that
 cannot satisfy the task capability gate. When Enno-Oduno is enabled, setup
-installs the bounded OpenCode `session.idle` plugin. It only gates the existing
+installs the bounded OpenCode v2 plugin. It reconciles tracked sessions using
+`session.execution.*` and `session.status` events. It only gates the existing
 run-bound continuation; it does not recall memory, launch advisors, bypass
 planning or confirmation, or select a latest run. A client session is routing
 metadata, not authorization ownership. Continuation prefers the exact

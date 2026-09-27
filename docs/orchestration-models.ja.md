@@ -43,7 +43,7 @@ DeepSeek V4 Flashもworkerの代替候補です。[設定上の正確なモデ�
 [READMEのworker追加例](../README.ja.md#オーケストレーションのモデルを追加する)は
 エージェントとKiokuko側の登録を両方示しています。対象役割の生成済み定義を別名で
 コピーし、正式な `provider/model` に変更します。指示と権限を保持してください。
-既存Kiokuko plugin配列要素の2番目のオブジェクトへ、次のように登録を追記します。
+既存Kiokuko `plugins` エントリの `options` へ、次のように登録を追記します。
 
 ```jsonc
 {
@@ -60,7 +60,7 @@ DeepSeek V4 Flashもworkerの代替候補です。[設定上の正確なモデ�
 }
 ```
 
-各名前をOpenCodeの `agent` にも定義します。役割ごとに接続先を混在させられます。
+各名前をOpenCodeの `agents` にも定義します。役割ごとに接続先を混在させられます。
 おすすめ構成のworkerだけを別providerへ変更することも可能です。OpenCodeを再起動し、
 新しい依頼で役小角と構成を選んだ後、役割単位で候補を変更します。名前は大文字小文字を
 区別します。無関係なエージェントの名前から推測で登録しません。カスタム名と定義は
@@ -68,17 +68,17 @@ DeepSeek V4 Flashもworkerの代替候補です。[設定上の正確なモデ�
 
 ## Gokiの二段階委譲と権限
 
-親ホストは標準 `task.subagent_type` で固定モデルのエージェントを呼びます。
+親ホストは標準 `subagent` に選択済みの `agent` と `model` を渡します。
 実行前にrun、選択リビジョン、現在の役割、エージェント定義、モデルの利用可否を照合します。
 Gokiヘッドへ選択済みworkerの呼び出し情報を渡し、ヘッドからworkerへ委譲します。
 親がrunの識別子とWorkUnitのリースを保持し、子の完了を待って既存のMCP報告を送ります。
-`task_id` による子セッションの再利用とバックグラウンド実行は禁止します。同一プロンプトの
+`sessionID` による子セッションの再利用とバックグラウンド実行は禁止します。同一プロンプトの
 呼び出し記録を残し、結果不明な呼び出しの自動再送を防ぎます。
 
 全役割は `mode: "subagent"` で既定拒否です。共通で許可するのは `read`、`glob`、
 `grep`、`list`、`skill`。ideal・Zenki・checkは変更・shell・委譲を許可しません。
-Gokiヘッドは `task` を許可し、pluginがそのrunで選択したworkerに限定します。
-workerは `edit` と `bash` を許可し、`task` を拒否します。全役割で `kiokuko_*` を拒否し、
+Gokiヘッドは `subagent` を許可し、pluginがそのrunで選択したworkerに限定します。
+workerは `edit` と `shell` を許可し、`subagent` を拒否します。全役割で `kiokuko_*` を拒否し、
 `external_directory` は `ask` を保持します。これはOpenCodeのツール権限であり、workerの
 shellをOSレベルで隔離する仕組みではありません。承認済み範囲と既存のパス・リース検査を守ります。
 
@@ -109,18 +109,15 @@ checkが新しい検証証拠を読み取ります。
 
 ## 検証済み範囲
 
-macOS arm64上の実OpenCode **1.18.25／1.18.26** と隔離したOpenAI互換の偽サーバーで、
-全役割の送信モデル、親→Gokiヘッド→README例のカスタムworker、読み取り専用役割の
-変更拒否、worker再委譲の拒否、再起動後の選択復元、401・404・429時に別モデルへ
-切り替わらないことを確認しています。失敗後の再起動でも明示的な再選択または中止を
-必要とし、setup再実行はREADME例の定義・登録を保持しました。
-両バージョンでOpenCode自身がMCP準備を一度呼び、接続済みモデル一覧を取り込み、
-通常実行を選択して子セッションを作らない入口も検証しています。
+配布物のホスト試験では、OpenCode **2.0.18** と隔離したOpenAI互換fixtureで、
+plugin読込、MCP接続、継続receipt 1件、`ideal` の子セッションと実行モデルを
+照合した後のdispatch完了記録を確認します。ほかの役割、権限、provider失敗、
+再起動時のケースは単体・結合fixtureの検証範囲であり、実ホスト成功とは区別します。
 
 単体・結合試験は、draftを作らない通常実行、選択の再送、異なる構成の並行run、
 compaction時の選択保持、既存runの移行、両setup、JSONCコメント、dry-run、衝突検出を
 対象とします。既存のパッケージ版ホストE2EもMCP接続と一度だけの自動継続を確認します。
-CIには両バージョンを使うLinux上の役割振り分け試験を追加しています。
+CIは固定した2.0.18のホスト試験をLinux/macOSで実行する設定です。
 
 **OpenAI／ChatGPT、OpenCode Zen、OpenCode Go、OpenRouterの実アカウントは未検証です。**
 契約上の利用権限、提供モデル、課金、実モデルの指示追従を保証するものではありません。

@@ -3,27 +3,32 @@ import { canonicalContentHash } from '../serialization/validate.js';
 import { KiokukoError } from '../errors.js';
 import { MANAGED_EXECUTION_AGENTS, object, orchestrationOptionsSchema } from '../execution/catalog.js';
 
-/** Extend only the managed plugin tuple and absent or unmodified managed agents. */
+/** Extend only the managed plugin object and absent or unmodified managed agents. */
 export function renderExecutionConfig(source: string, pluginIndex: number, mode?: 'ask' | 'on' | 'off'): string {
   const root = object(parse(source));
-  if (root.agent !== undefined && (typeof root.agent !== 'object' || root.agent === null || Array.isArray(root.agent))) {
-    throw new KiokukoError('VALIDATION_ERROR', 'OpenCode agent must be an object');
+  if (root.agents !== undefined && (typeof root.agents !== 'object' || root.agents === null || Array.isArray(root.agents))) {
+    throw new KiokukoError('VALIDATION_ERROR', 'OpenCode agents must be an object');
   }
-  const plugins = root.plugin as unknown[];
-  const entry = plugins[pluginIndex];
-  const priorOptions = Array.isArray(entry) ? object(entry[1]) : {};
+  const plugins = root.plugins as unknown[];
+  const entry = object(plugins[pluginIndex]);
+  const priorOptions = object(entry.options);
   const priorOrchestration = priorOptions.orchestration ?? {};
   const options = orchestrationOptionsSchema.parse(priorOrchestration);
   if (mode !== undefined) options.mode = mode;
   const owned = object(priorOptions.orchestrationManagedAgents);
   const hashes = { ...owned };
-  const agents = object(root.agent);
+  const agents = object(root.agents);
+  const legacyAgents = object(root.agent);
   const formattingOptions = { insertSpaces: true, tabSize: 2, eol: source.includes('\r\n') ? '\r\n' : '\n' };
   let content = source;
   const set = (keys: (string | number)[], value: unknown) => {
     content = applyEdits(content, modify(content, keys, value, { formattingOptions }));
   };
   for (const [agent, definition] of Object.entries(MANAGED_EXECUTION_AGENTS)) {
+    const legacy = legacyAgents[agent];
+    if (legacy !== undefined && owned[agent] !== canonicalContentHash(legacy)) {
+      throw new KiokukoError('CONFLICT', `Legacy OpenCode agent has unowned changes: ${agent}`);
+    }
     const existing = agents[agent];
     if (existing !== undefined && owned[agent] !== canonicalContentHash(existing)) {
       if (owned[agent] === undefined && canonicalContentHash(existing) !== canonicalContentHash(definition)) {
@@ -31,16 +36,17 @@ export function renderExecutionConfig(source: string, pluginIndex: number, mode?
       }
       if (owned[agent] !== undefined) continue; // Preserve user edits, including their original ownership digest.
     }
-    if (existing === undefined || canonicalContentHash(existing) !== canonicalContentHash(definition)) set(['agent', agent], definition);
+    if (existing === undefined || canonicalContentHash(existing) !== canonicalContentHash(definition)) set(['agents', agent], definition);
+    if (legacy !== undefined) set(['agent', agent], undefined);
     hashes[agent] = canonicalContentHash(definition);
   }
-  if (root.subagent_depth === undefined) set(['subagent_depth'], 2);
-  if (!Array.isArray(entry)) set(['plugin', pluginIndex], [entry, {}]);
-  if (priorOptions.orchestration === undefined) set(['plugin', pluginIndex, 1, 'orchestration'], options);
+  if (object(root.experimental).subagent_depth === undefined) set(['experimental', 'subagent_depth'], 2);
+  if (priorOptions.orchestration === undefined) set(['plugins', pluginIndex, 'options', 'orchestration'], options);
   else {
-    if (object(priorOptions.orchestration).mode !== options.mode) set(['plugin', pluginIndex, 1, 'orchestration', 'mode'], options.mode);
-    if (object(priorOptions.orchestration).customAgents === undefined) set(['plugin', pluginIndex, 1, 'orchestration', 'customAgents'], options.customAgents);
+    if (object(priorOptions.orchestration).mode !== options.mode) set(['plugins', pluginIndex, 'options', 'orchestration', 'mode'], options.mode);
+    if (object(priorOptions.orchestration).customAgents === undefined) set(['plugins', pluginIndex, 'options', 'orchestration', 'customAgents'], options.customAgents);
   }
-  if (canonicalContentHash(owned) !== canonicalContentHash(hashes)) set(['plugin', pluginIndex, 1, 'orchestrationManagedAgents'], hashes);
+  if (priorOptions.orchestrationSubagentDepth !== 2) set(['plugins', pluginIndex, 'options', 'orchestrationSubagentDepth'], 2);
+  if (canonicalContentHash(owned) !== canonicalContentHash(hashes)) set(['plugins', pluginIndex, 'options', 'orchestrationManagedAgents'], hashes);
   return content;
 }

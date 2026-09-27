@@ -27,11 +27,12 @@ cancel. Continuation uses a short-lived route-epoch-bound resume token and one-o
 execution lease; expired leases can be reclaimed safely. Ambiguous active runs are
 not rerouted. Before OpenCode compacts an active session, the plugin adds the latest
 successful exact run identity, revision, route epoch, and execution lease to the
-compaction context so automatic continuation does not have to reconstruct them.
+compaction context when a verified boundary is available. Durable authority
+is restored from Kiokuko's saved run state, not from the summary text.
 The plugin revalidates root-session, directory, and completed-terminal evidence,
 single-flights each session, and confirms deterministic continuation prompts by
-messages read-back. API acceptance alone is not reported as delivery, and the
-read-back also prevents duplicate delivery after plugin reload.
+current-context read-back. API acceptance alone is not reported as delivery;
+an ambiguous send after cancellation or revert is quarantined, not retried.
 
 Final Review first runs approved verifiers with shell disabled and repository-relative
 paths. Evidence is bound to the contract revision, mutation revision, verifier

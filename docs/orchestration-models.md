@@ -41,7 +41,7 @@ ordinary work, or cancellation. The fixture tests do not certify paid subscripti
 
 Agents are shared across presets when role, provider and model match. They are named
 `kiokuko-<role>-<provider>-<model>` with `/` replaced by `-` in the agent name. Model IDs
-retain their `/` separators. Setup adds `subagent_depth: 2` only when absent; an explicit
+retain their `/` separators. Setup adds `experimental.subagent_depth: 2` only when absent; an explicit
 smaller value is preserved and makes the Goki head unavailable with an explanation.
 
 <a id="custom-agents"></a>
@@ -51,7 +51,7 @@ The [README worker example](../README.md#add-an-orchestration-model) includes bo
 agent definition and registration. Copy a generated agent for the desired role under
 a unique name, change `model` to an ID confirmed by `opencode models`, and preserve
 its prompt and permission envelope. Register names explicitly in the options object
-of the existing Kiokuko plugin tuple:
+of the existing Kiokuko `plugins` entry:
 
 ```jsonc
 {
@@ -68,7 +68,7 @@ of the existing Kiokuko plugin tuple:
 }
 ```
 
-Define every listed name under OpenCode's `agent` object. Different roles can use
+Define every listed name under OpenCode's `agents` object. Different roles can use
 different connected providers, including a custom worker with an otherwise standard
 preset. Restart OpenCode after editing. Start a new request, choose Enno and a preset,
 then replace individual roles with registered candidates. Names are case-sensitive.
@@ -77,26 +77,27 @@ are user-owned and are not removed or overwritten by setup.
 
 ## Delegation and permissions
 
-The parent uses standard `task.subagent_type`, not a model override. It checks the run,
+The parent calls native `subagent` with the selected `agent` and `model`. It checks the run,
 selection revision, phase, agent definition digest and current model availability
 before dispatch. The parent retains the run identity, revisions and WorkUnit lease,
 awaits each role result, and submits existing Enno MCP reports. Goki head receives
 the selected worker descriptor and delegates one level deeper. Fresh child sessions
-are required; reusing `task_id` or background role dispatch is rejected. Recorded
+are required; reusing `sessionID` or background role dispatch is rejected. Recorded
 invocations prevent exact prompt replay after an uncertain or completed call.
 
 All role templates use `mode: "subagent"` and default-deny permissions. Common allowed
 tools are `read`, `glob`, `grep`, `list`, and `skill`. `ideal`, `zenki`, and `check`
-allow neither mutation, shell execution nor delegation. Goki head permits `task`
+allow neither mutation, shell execution nor delegation. Goki head permits `subagent`
 and no mutation; the plugin restricts it to the selected worker for the current run.
-Worker additionally permits `edit` and `bash`, and denies `task`. All deny `kiokuko_*`;
+Worker additionally permits `edit` and `shell`, and denies `subagent`. All deny `kiokuko_*`;
 only the parent writes Enno reports. `external_directory` remains `ask`. This is an
 OpenCode tool permission envelope, not an operating-system sandbox for worker shell
 commands. Keep the approved WorkUnit scope and existing path/lease checks.
 
-For predictable validation, a custom role must retain the exact generated permission
-object. Additional or changed permission rules make it unavailable, including extra
-allow rules. Do not weaken a read-only template to perform worker duties. Final
+For predictable validation, a custom role must retain the exact final ordered
+permission block. OpenCode may prepend host defaults; additional rules after the
+Kiokuko block or changes to that block make the candidate unavailable. Do not weaken
+a read-only template to perform worker duties. Final
 verifiers run through the parent's `enno_verify_prepare` before dispatching `check`;
 the check agent reviews the resulting evidence.
 
@@ -125,21 +126,17 @@ when Kiokuko itself is unavailable.
 
 ## Verification coverage
 
-The implementation was exercised on macOS arm64 with real OpenCode **1.18.25 and
-1.18.26** and an isolated OpenAI-compatible fixture server. Both versions sent the
-selected model for every role, ran parent → Goki head → the README-defined custom
-worker, rejected writes from read-only roles and worker redelegation, restored the
-selection after restart, and handled HTTP 401, 404 and 429 without selecting another
-model. A failed selection remained blocked after restart until explicit reselection
-or cancellation. Setup reruns preserved the README worker and registration.
-The native MCP path also prepares once, injects the connected model catalog,
-selects ordinary work, and creates no child session on both versions.
+The packaged host test runs against OpenCode **2.0.18** with an isolated
+OpenAI-compatible fixture provider. It verifies package plugin activation, MCP
+connection, one durable continuation receipt, and an `ideal` subagent dispatch
+whose child session and actual model are checked before completion is recorded.
+Other role, permission, provider-error, and restart cases are exercised by
+unit/integration fixtures; they are not certified as live-host behavior here.
 
 Unit/integration coverage includes ordinary execution without a draft, idempotent
 selection, independent concurrent configurations, compaction choice retention,
 legacy-run migration, both setup paths, JSONC comments, dry-run and conflict checks.
-The existing packaged host E2E also verifies MCP connection and one durable idle
-continuation. CI runs the role-routing fixture against both pinned versions on Linux.
+CI is configured to run the pinned 2.0.18 host test on Linux and macOS.
 
 **Live OpenAI/ChatGPT, OpenCode Zen, OpenCode Go and OpenRouter accounts have not been
 tested.** In particular, the presets do not certify account entitlement, subscription

@@ -45,8 +45,9 @@ managed MCP block과 프로젝트 instructions를 갱신합니다. unmanaged ide
 
 ## 지원 클라이언트
 
-지원 클라이언트는 OpenCode 하나입니다. 설정, 재시작, Web UI 안내는
+지원 범위는 OpenCode `>=2.0.18 <2.1.0`입니다. 설정, 재시작, Web UI 안내는
 [영문 Getting started](docs/getting-started.md)에 정리되어 있습니다.
+OpenCode v1을 유지하려면 `kiokuko-ai@0.1.25`로 고정하세요. v1으로 되돌릴 때는 백업한 v1 설정도 복원해야 합니다.
 
 ## 안전성과 제한
 
@@ -71,10 +72,10 @@ MCP tool 호출은 클라이언트와 모델이 결정하므로 모델이 모든
    정확한 `provider/model`을 확인합니다.
 2. 적용 중인 OpenCode 설정(신규 생성 시 `~/.config/opencode/opencode.jsonc`)에서
    생성된 `gokiWorker` 에이전트를 다른 이름으로 복사하고 `model`을 변경합니다.
-   역할 지침과 권한은 유지합니다. 아래 에이전트 항목을 기존 `agent` 객체에 병합합니다.
+   역할 지침과 권한은 유지합니다. 아래 에이전트 항목을 기존 `agents` 객체에 병합합니다.
    **`YOUR_PROVIDER/YOUR_MODEL`**을 확인한 모델ID로 바꾸고, 이름을 바꿀 경우
    두 예제의 **`my-orchestration-worker`**를 같은 이름으로 바꿉니다.
-3. 두 번째 예제를 **기존 Kiokuko plugin 튜플의 두 번째 객체**에 병합하여
+3. 두 번째 예제를 **기존 Kiokuko `plugins` 항목의 `options` 객체**에 병합하여
    `orchestration.customAgents.gokiWorker`에 이름을 추가합니다. 기존 옵션과 다른
    등록 이름을 유지하고 설정 파일 전체나 plugin 목록을 교체하지 마세요.
 4. OpenCode를 재시작하고 새 요청에서 역할소각과 프리셋을 선택한 뒤 worker를 새
@@ -83,18 +84,24 @@ MCP tool 호출은 클라이언트와 모델이 결정하므로 모델이 모든
 <!-- kiokuko-custom-worker-example -->
 ```jsonc
 {
-  "agent": {
+  "agents": {
     "my-orchestration-worker": {
       "description": "My Kiokuko worker",
       "mode": "subagent",
       "model": "YOUR_PROVIDER/YOUR_MODEL",
-      "prompt": "Implement only the supplied approved WorkUnit and run its focused verification. Do not delegate or broaden scope. The parent owns the run, leases, and all Kiokuko reports. Do not call Kiokuko tools or change models. Return changed paths and verification evidence.",
-      "permission": {
-        "*": "deny",
-        "read": "allow", "glob": "allow", "grep": "allow", "list": "allow",
-        "skill": "allow", "edit": "allow", "bash": "allow",
-        "task": "deny", "kiokuko_*": "deny", "external_directory": "ask"
-      }
+      "system": "Implement only the supplied approved WorkUnit and run its focused verification. Do not delegate or broaden scope. The parent owns the run, leases, and all Kiokuko reports. Do not call Kiokuko tools or change models. Return changed paths and verification evidence.",
+      "permissions": [
+        { "action": "*", "resource": "*", "effect": "deny" },
+        { "action": "read", "resource": "*", "effect": "allow" },
+        { "action": "glob", "resource": "*", "effect": "allow" },
+        { "action": "grep", "resource": "*", "effect": "allow" },
+        { "action": "list", "resource": "*", "effect": "allow" },
+        { "action": "skill", "resource": "*", "effect": "allow" },
+        { "action": "edit", "resource": "*", "effect": "allow" },
+        { "action": "shell", "resource": "*", "effect": "allow" },
+        { "action": "kiokuko_*", "resource": "*", "effect": "deny" },
+        { "action": "external_directory", "resource": "*", "effect": "ask" }
+      ]
     }
   }
 }
@@ -103,8 +110,8 @@ MCP tool 호출은 클라이언트와 모델이 결정하므로 모델이 모든
 
 <!-- kiokuko-custom-registration-example -->
 ```jsonc
-// Merge these fields into the options object of your EXISTING Kiokuko plugin tuple:
-// "plugin": [["kiokuko-ai@<installed-version>", { ...existing options, ...fields below }]]
+// 기존 Kiokuko plugins 항목의 options 객체에 다음 필드를 병합하세요:
+// "plugins": [{ "package": "kiokuko-ai@<installed-version>", "options": { ...existing options, ...fields below } }]
 {
   "orchestration": {
     "mode": "ask",

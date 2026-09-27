@@ -14,19 +14,19 @@ Setup configures OpenCode automatically; `--clients` is not supported.
 `--no-standard-skills`, `--skill-discovery off|official|community`, and
 `--enno-oduno ask|on|off` control optional setup behavior.
 
-Setup owns the `kiokuko` MCP entry in OpenCode's `opencode.json` or `opencode.jsonc`
-and adds the npm plugin to the `plugin` array:
+Setup owns `mcp.servers.kiokuko` in OpenCode's `opencode.json` or `opencode.jsonc`
+and adds the npm plugin to the `plugins` array:
 
 ```jsonc
 {
-  "plugin": ["kiokuko-ai"],
+  "plugins": [{ "package": "kiokuko-ai@0.2.0", "options": {} }],
   "mcp": {
-    "kiokuko": {
+    "servers": { "kiokuko": {
       "type": "local",
       "command": ["kiokuko-ai", "mcp"],
-      "enabled": true,
+      "disabled": false,
       "environment": { "KIOKUKO_SKILL_DISCOVERY": "official" }
-    }
+    } }
   }
 }
 ```
@@ -46,8 +46,9 @@ bindings. Malformed markers, unreadable paths, and identity mismatches remain er
 Repeated setup keeps the configured discovery mode and recognizes an already
 installed OrcaReplay integration with its managed alias.
 
-Restart OpenCode after setup. Use `kiokuko-ai doctor --json` to inspect runtime,
-database, and OpenCode MCP health; doctor is read-only.
+Restart OpenCode after setup. Use `kiokuko-ai doctor --json` for static checks and
+`kiokuko-ai doctor --opencode-url http://127.0.0.1:4096 --json` for an explicit
+running server; doctor does not start or restart a shared service.
 
 ## Local semantic search
 
@@ -76,4 +77,4 @@ not run package installation or client/database mutations in parallel.
 Run `kiokuko-ai web` and open `http://127.0.0.1:4173`. The UI is local-only and is a
 human/operator management surface, not a substitute for model task-entry MCP calls.
 When Enno-Oduno is enabled, the OpenCode plugin handles bounded continuation through
-`session.idle` hook.
+`session.status` and execution events.

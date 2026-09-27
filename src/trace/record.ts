@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import type { SqliteDatabase } from '../db/adapter.js';
 import { resolveTraceStoreLocation, registerTraceStore } from './store-location.js';
 import { syncTraceStore, type TraceSyncResult } from './sync.js';
+import { KiokukoError } from '../errors.js';
 export interface TraceRecordOptions {
     cwd: string;
     args: readonly string[];
@@ -16,6 +17,11 @@ export async function recordTrace(database: SqliteDatabase, options: TraceRecord
     recordExitCode: number;
     sync: TraceSyncResult | null;
 }> {
+    const environment = options.environment ?? process.env;
+    if (options.args.some(arg => arg === '--server' || arg.startsWith('--server='))
+        || ['OPENCODE_SERVER', 'OPENCODE_SERVER_URL', 'OPENCODE_URL'].some(key => Boolean(environment[key]))) {
+        throw new KiokukoError('VALIDATION_ERROR', 'Orca recording requires a private OpenCode server; remove external server settings');
+    }
     const location = await resolveTraceStoreLocation(options.cwd);
     registerTraceStore(database, location);
     const abort = new AbortController();
@@ -36,7 +42,11 @@ export async function recordTrace(database: SqliteDatabase, options: TraceRecord
     let sync: TraceSyncResult | null = null;
     try {
         try {
-            child = (options.spawnImpl ?? spawn)(options.executable ?? 'orca', ['record', 'opencode', '--', ...options.args], { cwd: location.captureCwd, stdio: 'inherit', shell: false, ...(options.environment ? { env: options.environment } : {}) });
+            const requested = options.args.filter(arg => arg !== '--standalone');
+            const invocation = requested[0] === 'run'
+                ? ['run', '--standalone', ...requested.slice(1)]
+                : ['--standalone', ...requested];
+            child = (options.spawnImpl ?? spawn)(options.executable ?? 'orca', ['record', 'opencode', '--', ...invocation], { cwd: location.captureCwd, stdio: 'inherit', shell: false, env: environment });
             recordExitCode = await new Promise<number>((resolve, reject) => { child!.once('error', reject); child!.once('close', (code, signal) => resolve(code ?? (signal === 'SIGINT' ? 130 : signal === 'SIGTERM' ? 143 : 1))); });
         }
         catch {

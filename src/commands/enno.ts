@@ -20,6 +20,7 @@ import { parseCompactionHookRequest } from '../opencode/compaction-protocol.js';
 import { captureCompactionBoundary, queueCompactionMeditation } from '../meditation/compaction.js';
 import { canonicalContentHash } from '../serialization/validate.js';
 import { executionReadSchema, readExecutionRouting, executionDispatchSchema, recordExecutionDispatch } from '../execution/store.js';
+import { listTrackedOpenCodeSessions, readContinuationReceipt } from '../opencode/tracking.js';
 
 async function readInputFromStdin(): Promise<Buffer> {
   const chunks: Buffer[] = [];
@@ -46,6 +47,30 @@ export interface EnnoCommandDependencies {
 
 export function registerEnnoCommand(root: Command, dependencies: EnnoCommandDependencies = {}): void {
   const enno = root.command('enno').description('Run Enno-Oduno role directive generation');
+  enno.command('tracked-sessions')
+    .description('Read tracked OpenCode sessions for one canonical repository')
+    .requiredOption('--input-json <path>', 'stdin (-) only')
+    .action(async (options: { inputJson: string }) => {
+      if (options.inputJson !== '-' || !dependencies.withDatabase) throw new KiokukoError('VALIDATION_ERROR', 'Tracked sessions require stdin and a database');
+      const input = parseRoleJson(await readInputFromStdin()) as { directory?: unknown };
+      const directory = input.directory;
+      if (typeof directory !== 'string') throw new KiokukoError('VALIDATION_ERROR', 'Repository directory is required');
+      const result = await dependencies.withDatabase(database => listTrackedOpenCodeSessions(database, directory));
+      process.stdout.write(JSON.stringify(result));
+    });
+  enno.command('continuation-receipt')
+    .description('Read one exact OpenCode continuation receipt')
+    .requiredOption('--input-json <path>', 'stdin (-) only')
+    .action(async (options: { inputJson: string }) => {
+      if (options.inputJson !== '-' || !dependencies.withDatabase) throw new KiokukoError('VALIDATION_ERROR', 'Continuation receipt requires stdin and a database');
+      const input = parseRoleJson(await readInputFromStdin()) as Record<string, unknown>;
+      const { runId, sessionId, terminalMessageId } = input;
+      if ([runId, sessionId, terminalMessageId].some(value => typeof value !== 'string' || value.length < 1 || value.length > 256)) {
+        throw new KiokukoError('VALIDATION_ERROR', 'Continuation receipt identity is invalid');
+      }
+      const receipt = await dependencies.withDatabase(database => readContinuationReceipt(database, runId as string, sessionId as string, terminalMessageId as string));
+      process.stdout.write(JSON.stringify(receipt ?? null));
+    });
   enno.command('execution-dispatch')
     .description('Record an exact role invocation for the OpenCode plugin')
     .requiredOption('--input-json <path>', 'stdin (-) only')

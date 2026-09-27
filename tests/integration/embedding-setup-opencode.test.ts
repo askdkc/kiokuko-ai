@@ -13,7 +13,6 @@ import { setupOpenCode } from '../../src/commands/setup.js';
 import { getGlobalDatabasePath } from '../../src/config/paths.js';
 import { openConnection } from '../../src/db/connection.js';
 import { MANAGED_EXECUTION_AGENTS, agentDefinition } from '../../src/execution/catalog.js';
-import { renderOpenCodeConfig } from '../../src/setup/opencode-config.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -31,8 +30,9 @@ for (const initial of ['fresh', 'legacy', 'current'] as const) {
     try {
       await mkdir(path.dirname(configPath), { recursive: true });
       const unrelated = '{ // Preserve user configuration\n "plugin": ["unrelated-plugin"], "theme": "custom"\n}\n';
+      const legacy = '{ // Preserve user configuration\n "plugin": ["unrelated-plugin", ["kiokuko-ai", {"orchestration":{"mode":"ask"}}]], "theme": "custom", "mcp":{"kiokuko":{"type":"local","command":["kiokuko-ai","mcp"],"enabled":true,"environment":{"KIOKUKO_SKILL_DISCOVERY":"community"}}}\n}\n';
       await writeFile(configPath, initial === 'legacy'
-        ? renderOpenCodeConfig(unrelated, 'kiokuko-ai', 'community').content
+        ? legacy
         : unrelated);
       if (initial === 'current') await setupOpenCode({ env, skillDiscoveryMode: 'community' });
 
@@ -88,12 +88,12 @@ for (const initial of ['fresh', 'legacy', 'current'] as const) {
       assert.match(firstConfig, /Preserve user configuration/u);
       assert.equal(config.theme, 'custom');
       assert.equal(config.plugin[0], 'unrelated-plugin');
-      assert.equal(config.mcp.kiokuko.environment.KIOKUKO_SKILL_DISCOVERY, initial === 'fresh' ? 'official' : 'community');
-      assert.deepEqual(config.agent, MANAGED_EXECUTION_AGENTS);
-      const entry = config.plugin.find((item: unknown) => Array.isArray(item) && item[0].startsWith('kiokuko-ai@'));
-      assert.equal(entry[1].orchestration.mode, 'ask');
-      config.agent['custom-worker'] = agentDefinition('gokiWorker', 'fixture/custom');
-      entry[1].orchestration.customAgents.gokiWorker = ['custom-worker'];
+      assert.equal(config.mcp.servers.kiokuko.environment.KIOKUKO_SKILL_DISCOVERY, initial === 'fresh' ? 'official' : 'community');
+      assert.deepEqual(config.agents, MANAGED_EXECUTION_AGENTS);
+      const entry = config.plugins.find((item: { package: string }) => item.package.startsWith('kiokuko-ai@'));
+      assert.equal(entry.options.orchestration.mode, 'ask');
+      config.agents['custom-worker'] = agentDefinition('gokiWorker', 'fixture/custom');
+      entry.options.orchestration.customAgents.gokiWorker = ['custom-worker'];
       firstConfig = JSON.stringify(config, null, 2);
       await writeFile(configPath, firstConfig);
       await setup();

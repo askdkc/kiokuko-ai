@@ -38,17 +38,17 @@ test('setup targets OpenCode only and is idempotent', async () => {
   });
   assert.equal(first.client, 'opencode');
   const config = parse(await readFile(temporary.openCodeConfig, 'utf8')) as {
-    plugin: unknown[];
-    mcp: { kiokuko: { command: string[] } };
+    plugins: Array<{ package: string; options: Record<string, unknown> }>;
+    mcp: { servers: { kiokuko: { command: string[] } } };
   };
-  assert.equal(config.plugin.length, 1);
-  const plugin = config.plugin[0] as [string, Record<string, unknown>];
-  assert.equal(plugin[0], `${KIOKUKO_OPENCODE_PLUGIN_PACKAGE}@${PACKAGE_VERSION}`);
-  assert.deepEqual(Object.keys(plugin[1]).sort(), ['cliScript', 'nodeExecutable', 'orchestration', 'orchestrationManagedAgents', 'packageVersion', 'protocolVersion']);
-  assert.equal(config.mcp.kiokuko.command.at(-1), 'mcp');
-  assert.equal(config.mcp.kiokuko.command.length, 3);
-  assert.ok(config.mcp.kiokuko.command[0]?.startsWith('/'));
-  assert.ok(config.mcp.kiokuko.command[1]?.endsWith('/dist/bin/kiokuko.js'));
+  assert.equal(config.plugins.length, 1);
+  const plugin = config.plugins[0]!;
+  assert.equal(plugin.package, `${KIOKUKO_OPENCODE_PLUGIN_PACKAGE}@${PACKAGE_VERSION}`);
+  assert.deepEqual(Object.keys(plugin.options).sort(), ['cliScript', 'nodeExecutable', 'orchestration', 'orchestrationManagedAgents', 'orchestrationSubagentDepth', 'packageVersion', 'protocolVersion']);
+  assert.equal(config.mcp.servers.kiokuko.command.at(-1), 'mcp');
+  assert.equal(config.mcp.servers.kiokuko.command.length, 3);
+  assert.ok(config.mcp.servers.kiokuko.command[0]?.startsWith('/'));
+  assert.ok(config.mcp.servers.kiokuko.command[1]?.endsWith('/dist/bin/kiokuko.js'));
   const second = await setupOpenCode({
     databasePath: temporary.databasePath,
     platform: 'linux',
@@ -85,9 +85,9 @@ test('setup preserves unknown OpenCode plugin entries', async () => {
     env: temporary.env,
     standardSkills: false,
   });
-  const config = parse(await readFile(temporary.openCodeConfig, 'utf8')) as { plugin: unknown[] };
+  const config = parse(await readFile(temporary.openCodeConfig, 'utf8')) as { plugin: unknown[]; plugins: Array<{ package: string }> };
   assert.equal(config.plugin[0], 'unrelated-plugin');
-  assert.equal((config.plugin[1] as [string])[0], `${KIOKUKO_OPENCODE_PLUGIN_PACKAGE}@${PACKAGE_VERSION}`);
+  assert.equal(config.plugins[0]?.package, `${KIOKUKO_OPENCODE_PLUGIN_PACKAGE}@${PACKAGE_VERSION}`);
 });
 
 
@@ -107,7 +107,7 @@ test('setup respects explicit config directory and file overrides and preserves 
   assert.ok(dry.files.some(file => file.path === explicit && file.action === 'created'));
   await assert.rejects(access(explicit));
   await setupOpenCode({ env: changedEnv, databasePath: fixture.databasePath, standardSkills: false, command: 'kiokuko-ai' });
-  assert.ok(parse(await readFile(explicit, 'utf8')).agent);
+  assert.ok(parse(await readFile(explicit, 'utf8')).agents);
 });
 
 test('interactive setup deletes unfinished ledger runs after default confirmation', async () => {

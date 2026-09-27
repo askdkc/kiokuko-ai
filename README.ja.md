@@ -50,8 +50,9 @@ managed MCP blockと登録済みプロジェクトのinstructionsを更新しま
 
 ## 対応クライアント
 
-対応クライアントはOpenCodeのみです。設定、再起動、Web UIは
+対応範囲はOpenCode `>=2.0.18 <2.1.0`です。設定、再起動、Web UIは
 [導入ガイド](docs/getting-started.ja.md)にまとめています。
+OpenCode v1を使い続ける場合は`kiokuko-ai@0.1.25`に固定してください。v1へ戻す際は保存したv1設定も復元します。
 
 ## 安全性と制約
 
@@ -88,10 +89,10 @@ MCP toolの呼び出しはclientとモデルが決めるため、モデルが毎
 2. 有効なOpenCode設定（新規作成時は `~/.config/opencode/opencode.jsonc`）の
    生成済み `gokiWorker` エージェントを別名でコピーし、`model` を変更します。
    役割の指示と権限は保持してください。下の例はworkerの定義全体です。既存の
-   `agent` オブジェクトへこの項目を追加し、**`YOUR_PROVIDER/YOUR_MODEL`** を
+   `agents` オブジェクトへこの項目を追加し、**`YOUR_PROVIDER/YOUR_MODEL`** を
    確認したモデルIDに置き換えます。名前を変える場合は両方の例の
    **`my-orchestration-worker`** を同じ名前に置き換えます。
-3. **既存のKiokuko plugin配列要素の2番目のオブジェクト**にある
+3. **既存のKiokuko `plugins` エントリの `options`** にある
    `orchestration.customAgents.gokiWorker` へ登録名を追加します。既存オプションや
    他の登録名を残し、設定ファイル全体やplugin一覧を置き換えないでください。
 4. OpenCodeを再起動し、新しい依頼で役小角とおすすめ構成を選び、workerを
@@ -100,18 +101,24 @@ MCP toolの呼び出しはclientとモデルが決めるため、モデルが毎
 <!-- kiokuko-custom-worker-example -->
 ```jsonc
 {
-  "agent": {
+  "agents": {
     "my-orchestration-worker": {
       "description": "My Kiokuko worker",
       "mode": "subagent",
       "model": "YOUR_PROVIDER/YOUR_MODEL",
-      "prompt": "Implement only the supplied approved WorkUnit and run its focused verification. Do not delegate or broaden scope. The parent owns the run, leases, and all Kiokuko reports. Do not call Kiokuko tools or change models. Return changed paths and verification evidence.",
-      "permission": {
-        "*": "deny",
-        "read": "allow", "glob": "allow", "grep": "allow", "list": "allow",
-        "skill": "allow", "edit": "allow", "bash": "allow",
-        "task": "deny", "kiokuko_*": "deny", "external_directory": "ask"
-      }
+      "system": "Implement only the supplied approved WorkUnit and run its focused verification. Do not delegate or broaden scope. The parent owns the run, leases, and all Kiokuko reports. Do not call Kiokuko tools or change models. Return changed paths and verification evidence.",
+      "permissions": [
+        { "action": "*", "resource": "*", "effect": "deny" },
+        { "action": "read", "resource": "*", "effect": "allow" },
+        { "action": "glob", "resource": "*", "effect": "allow" },
+        { "action": "grep", "resource": "*", "effect": "allow" },
+        { "action": "list", "resource": "*", "effect": "allow" },
+        { "action": "skill", "resource": "*", "effect": "allow" },
+        { "action": "edit", "resource": "*", "effect": "allow" },
+        { "action": "shell", "resource": "*", "effect": "allow" },
+        { "action": "kiokuko_*", "resource": "*", "effect": "deny" },
+        { "action": "external_directory", "resource": "*", "effect": "ask" }
+      ]
     }
   }
 }
@@ -120,8 +127,8 @@ MCP toolの呼び出しはclientとモデルが決めるため、モデルが毎
 
 <!-- kiokuko-custom-registration-example -->
 ```jsonc
-// Merge these fields into the options object of your EXISTING Kiokuko plugin tuple:
-// "plugin": [["kiokuko-ai@<installed-version>", { ...existing options, ...fields below }]]
+// 既存のKiokuko pluginsエントリのoptionsへ、以下の項目を追加します:
+// "plugins": [{ "package": "kiokuko-ai@<installed-version>", "options": { ...existing options, ...fields below } }]
 {
   "orchestration": {
     "mode": "ask",

@@ -14,18 +14,18 @@ setupはOpenCodeを自動設定します。`--clients`はサポートしてい�
 `--skill-discovery off|official|community`、`--enno-oduno ask|on|off`も指定できます。
 
 setupはOpenCodeの`opencode.json`または`opencode.jsonc`に`kiokuko` MCP entryを設定し、
-`plugin`配列にnpm pluginを追加します。
+`plugins`配列にnpm pluginを追加します。
 
 ```jsonc
 {
-  "plugin": ["kiokuko-ai"],
+  "plugins": [{ "package": "kiokuko-ai@0.2.0", "options": {} }],
   "mcp": {
-    "kiokuko": {
+    "servers": { "kiokuko": {
       "type": "local",
       "command": ["kiokuko-ai", "mcp"],
-      "enabled": true,
+      "disabled": false,
       "environment": { "KIOKUKO_SKILL_DISCOVERY": "official" }
-    }
+    } }
   }
 }
 ```
@@ -41,8 +41,8 @@ setupは対応する形式のプロジェクトinstructionsだけを更新しま
 ファイルとbindingを変更せず、保持したことを表示します。不正なmarker、読めないpath、identity不一致は引き続きエラーです。
 再実行時は設定済みのdiscovery modeを維持し、OrcaReplayと管理対象aliasが導入済みなら再確認しません。
 
-起動中のOpenCodeは設定後に再起動してください。`kiokuko-ai doctor --json`はruntime、DB、
-OpenCode MCPを読み取り専用で検査します。
+設定後はOpenCodeを再読込または再起動してください。`kiokuko-ai doctor --json`は静的設定を検査します。
+実行中の接続先は`kiokuko-ai doctor --opencode-url http://127.0.0.1:4096 --json`で明示して確認します。
 
 ## ローカルsemantic検索
 
@@ -65,4 +65,4 @@ unmanaged MCP identityをfail closedします。dry-run以外ではoptional runt
 ## Web UIとclient
 
 `kiokuko-ai web`を実行し、`http://127.0.0.1:4173`を開きます。UIはローカル限定の管理画面で、model向けMCP呼び出しの代替ではありません。
-Enno-Oduno有効時はOpenCode pluginが`session.idle` hookで継続処理を行います。
+Enno-Oduno有効時はOpenCode pluginが`session.status`と実行イベントを照合して継続処理を行います。

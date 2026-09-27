@@ -340,10 +340,10 @@ test('interactive setup replaces a conflicting OpenCode MCP identity after accep
   assert.match(stdout, /Kiokuko configured for opencode/u);
   const config = JSON.parse(await readFile(configPath, 'utf8')) as {
     theme: string;
-    mcp: { kiokuko: { type: string }; other: unknown };
+    mcp: { servers: { kiokuko: { type: string } }; other: unknown };
   };
   assert.equal(config.theme, 'keep');
-  assert.equal(config.mcp.kiokuko.type, 'local');
+  assert.equal(config.mcp.servers.kiokuko.type, 'local');
   assert.deepEqual(config.mcp.other, { command: ['keep'] });
 });
 

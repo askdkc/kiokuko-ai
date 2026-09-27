@@ -29,6 +29,7 @@ import { inspectOpenCodeIntegration } from '../setup/opencode-config.js';
 import { isSetupOpenCodeMcpIdentityConflict } from '../setup/mcp-conflict.js';
 import { loadBundledStandardSkillFiles } from '../setup/standard-skills.js';
 import { resolveManagedOpenCodeRuntime } from '../opencode/runtime-invocation.js';
+import { OpenCode } from '@opencode/client';
 import { orchestrationJobDiagnostics } from '../orchestration/jobs.js';
 
 export interface DoctorCheck {
@@ -70,6 +71,7 @@ export interface DoctorResult {
     openCodeMcp: DoctorCheck;
     openCodeRuntime: DoctorCheck;
     openCodeSkills: DoctorCheck;
+    openCodeHost: DoctorCheck;
     memoryApplication?: DoctorCheck;
   };
 }
@@ -80,6 +82,42 @@ export interface DoctorOptions {
   runtimeDescriptorPath?: string;
   embeddingEnvironment?: NodeJS.ProcessEnv;
   embeddingBackend?: VectorSearchBackend;
+  opencodeUrl?: string;
+}
+
+async function openCodeHostCheck(url: string | undefined): Promise<DoctorCheck> {
+  if (url === undefined) return { ok: true, count: 0, detail: 'runtime=unverified; specify --opencode-url' };
+  let parsed: URL;
+  try { parsed = new URL(url); }
+  catch { return { ok: false, count: 1, detail: 'runtime=invalid-url' }; }
+  if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) {
+    return { ok: false, count: 1, detail: 'runtime=invalid-url' };
+  }
+  try {
+    const password = process.env.OPENCODE_PASSWORD;
+    const client = OpenCode.make({ baseUrl: parsed.toString(),
+      ...(password ? { headers: { Authorization: `Basic ${Buffer.from(`opencode:${password}`).toString('base64')}` } } : {}),
+    });
+    const location = { directory: process.cwd() };
+    const signal = AbortSignal.timeout(5_000);
+    let plugins = await client.plugin.list({ location }, { signal });
+    for (let attempt = 0; attempt < 20 && !plugins.data.some(item => item.id === 'kiokuko-ai'); attempt++) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+      plugins = await client.plugin.list({ location }, { signal });
+    }
+    const servers = await client.mcp.list({ location }, { signal });
+    const plugin = plugins.data.find(item => item.id === 'kiokuko-ai');
+    const mcp = servers.data.find(item => item.name === 'kiokuko');
+    const locationMatches = plugins.location.directory === location.directory
+      && servers.location.directory === location.directory;
+    const active = plugin?.state.status === 'active' && plugin.source.type === 'package'
+      && plugin.source.target.startsWith('kiokuko-ai@');
+    const connected = mcp?.status.status === 'connected';
+    return { ok: Boolean(locationMatches && active && connected), count: Number(!locationMatches) + Number(!active) + Number(!connected),
+      detail: `runtime=${locationMatches ? 'location-matched' : 'location-mismatch'}; plugin=${plugin?.state.status ?? 'missing'}; mcp=${mcp?.status.status ?? 'missing'}` };
+  } catch {
+    return { ok: false, count: 1, detail: 'runtime=unavailable' };
+  }
 }
 
 export interface DoctorDependencies {
@@ -258,6 +296,7 @@ interface DoctorCollectionOptions {
   openCodeMcp: DoctorCheck;
   openCodeRuntime: DoctorCheck;
   openCodeSkills: DoctorCheck;
+  openCodeHost: DoctorCheck;
 }
 
 async function collectDoctorResult(
@@ -533,6 +572,7 @@ async function collectDoctorResult(
     openCodeMcp: options.openCodeMcp,
     openCodeRuntime: options.openCodeRuntime,
     openCodeSkills: options.openCodeSkills,
+    openCodeHost: options.openCodeHost,
   };
   const ok = Object.values(checks).every((check) => check.ok);
   return {
@@ -563,6 +603,7 @@ export async function runDoctor(
       runtime: skippedOpenCodeMcpCheck(),
       skills: skippedOpenCodeMcpCheck(),
     };
+  const openCodeHost = await openCodeHostCheck(options.opencodeUrl);
   let embeddingConfig;
   try {
     embeddingConfig = options.embeddingEnvironment === undefined
@@ -604,6 +645,7 @@ export async function runDoctor(
       openCodeMcp: openCode.mcp,
       openCodeRuntime: openCode.runtime,
       openCodeSkills: openCode.skills,
+      openCodeHost,
     });
   } catch (error) {
     operationFailed = true;

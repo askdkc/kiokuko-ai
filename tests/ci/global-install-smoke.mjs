@@ -86,7 +86,7 @@ async function recordInstalledPackage(packageDirectory, names) {
 const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), 'kiokuko-global-install-'));
 const packDirectory = path.join(temporaryRoot, 'pack');
 const prefixDirectory = path.join(temporaryRoot, 'prefix');
-npmCacheDirectory = path.join(temporaryRoot, 'npm-cache');
+npmCacheDirectory = process.env.KIOKUKO_TEST_NPM_CACHE ?? path.join(temporaryRoot, 'npm-cache');
 
 try {
   const packageJson = JSON.parse(await readFile(path.join(repositoryRoot, 'package.json'), 'utf8'));
