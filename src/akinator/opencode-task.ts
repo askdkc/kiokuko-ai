@@ -148,7 +148,7 @@ export interface PreparedOpenCodeTask {
 }
 
 export interface OpenCodeTraceAdvisoryContext {
-  readonly source: 'orcareplay';
+  readonly source: 'agenticreplay';
   readonly referenceOnly: true;
   readonly autoInstall: false;
   readonly autoExecute: false;

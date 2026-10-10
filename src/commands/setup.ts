@@ -49,7 +49,7 @@ import {
   type ProjectAgentRefreshResult,
   type RegisteredProjectLocation,
 } from '../setup/project-agent-refresh.js';
-import { enableOrcaReplayIntegration, type OrcaReplaySpawner } from './orca-replay.js';
+import { enableAgenticReplayIntegration, type AgenticReplaySpawner } from './agentic-replay.js';
 import {
   findMissingRepositoryLocations,
   removeMissingRepositoryLocations,
@@ -280,8 +280,8 @@ export interface SetupFlowOptions {
 
 export interface SetupFlowDependencies<T extends { client: 'opencode'; projectAgentFiles: ProjectAgentRefreshResult[] }> {
   readonly setupOpenCode?: (options: SetupOptions) => Promise<T>;
-  readonly orcaReplaySpawnInstall?: OrcaReplaySpawner;
-  readonly orcaReplayCheckInstalled?: OrcaReplaySpawner;
+  readonly agenticReplaySpawnInstall?: AgenticReplaySpawner;
+  readonly agenticReplayCheckInstalled?: AgenticReplaySpawner;
 }
 
 /** Run the OpenCode conflict-confirmation and setup flow. */
@@ -371,14 +371,14 @@ export async function runSetupFlow<T extends { client: 'opencode'; projectAgentF
     (result as T & { appliedMigrations: number[] }).appliedMigrations = [...appliedMigrations].sort((left, right) => left - right);
   }
   if (interactive && options.optionalPrompts !== false && options.dryRun !== true) {
-    await enableOrcaReplayIntegration({
+    await enableAgenticReplayIntegration({
       interactive:true,
       environment:setupProcessEnvironment,
       ...(pathEnvironment.platform ? {platform:pathEnvironment.platform}:{}),
       input,
       output,
-      ...(dependencyOverrides.orcaReplaySpawnInstall === undefined ? {} : { spawnInstall: dependencyOverrides.orcaReplaySpawnInstall }),
-      ...(dependencyOverrides.orcaReplayCheckInstalled === undefined ? {} : { checkInstalled: dependencyOverrides.orcaReplayCheckInstalled }),
+      ...(dependencyOverrides.agenticReplaySpawnInstall === undefined ? {} : { spawnInstall: dependencyOverrides.agenticReplaySpawnInstall }),
+      ...(dependencyOverrides.agenticReplayCheckInstalled === undefined ? {} : { checkInstalled: dependencyOverrides.agenticReplayCheckInstalled }),
     });
   }
   return result;

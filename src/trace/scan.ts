@@ -6,10 +6,10 @@ import { enqueueOrchestrationJob } from '../orchestration/jobs.js';
 import { canonicalContentHash } from '../serialization/validate.js';
 import { findSecretInValue } from '../memory/secrets.js';
 import { KiokukoError } from '../errors.js';
-import { readOrcaTraceManifest, ORCA_TRACE_RUN_ID_PATTERN } from './orca-trace.js';
+import { readAgenticReplayTraceManifest, AGENTICREPLAY_TRACE_RUN_ID_PATTERN } from './agentic-trace.js';
 import { TRACE_LIMITS, TraceInputError, assertTracePath, traceCaptureRoot, fileIdentity, readBoundedTraceFile } from './bounded-read.js';
 import { createHash } from 'node:crypto';
-export const ORCA_TRACE_SCAN_MAX_RUNS = 8;
+export const AGENTICREPLAY_TRACE_SCAN_MAX_RUNS = 8;
 export interface TraceScanOutcome {
     runsDirectory: string;
     scanned: number;
@@ -21,10 +21,10 @@ export interface TraceScanOutcome {
     hasMore: boolean;
     warningCodes: string[];
 }
-export function orcaRunsDirectory(root: string): string {
+export function agenticreplayRunsDirectory(root: string): string {
     if (!path.isAbsolute(root) || root.length > 4096)
         throw new KiokukoError('VALIDATION_ERROR', 'Project root invalid');
-    return path.join(root, '.orca', 'runs');
+    return path.join(root, '.agenticreplay', 'runs');
 }
 /** A live Dir handle is deliberately retained across bounded steps. */
 export class TraceScanSession {
@@ -61,10 +61,10 @@ export class TraceScanSession {
                 this.#dir = undefined;
                 break;
             }
-            if (!ORCA_TRACE_RUN_ID_PATTERN.test(entry.name))
+            if (!AGENTICREPLAY_TRACE_RUN_ID_PATTERN.test(entry.name))
                 continue;
             const now = new Date().toISOString();
-            database.prepare(`INSERT INTO orcareplay_trace_cursors(directory,trace_run_id,created_at,updated_at,finalization,diagnostic_code)
+            database.prepare(`INSERT INTO agenticreplay_trace_cursors(directory,trace_run_id,created_at,updated_at,finalization,diagnostic_code)
     VALUES(?,?,?,?,?,?) ON CONFLICT(directory,trace_run_id) DO NOTHING`).run(this.runsDirectory, entry.name, now, now, entry.isDirectory() ? 'recording' : 'blocked', entry.isDirectory() ? null : 'run_not_directory');
             discovered++;
         }
@@ -78,7 +78,7 @@ export class TraceScanSession {
         }
     }
 }
-export async function scanOrcaTraceStore(database: SqliteDatabase, runsDirectory: string, options: {
+export async function scanAgenticReplayTraceStore(database: SqliteDatabase, runsDirectory: string, options: {
     maxRuns?: number;
     now?: string;
     session?: TraceScanSession;
@@ -87,7 +87,7 @@ export async function scanOrcaTraceStore(database: SqliteDatabase, runsDirectory
 } = {}): Promise<TraceScanOutcome> {
     if (!path.isAbsolute(runsDirectory) || runsDirectory.length > 4096)
         throw new KiokukoError('VALIDATION_ERROR', 'Trace store path invalid');
-    const limit = options.maxRuns ?? ORCA_TRACE_SCAN_MAX_RUNS;
+    const limit = options.maxRuns ?? AGENTICREPLAY_TRACE_SCAN_MAX_RUNS;
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 64)
         throw new KiokukoError('VALIDATION_ERROR', 'Trace scan limit invalid');
     const session = options.session ?? new TraceScanSession(runsDirectory);
@@ -96,7 +96,7 @@ export async function scanOrcaTraceStore(database: SqliteDatabase, runsDirectory
         out.discovered = await session.step(database, TRACE_LIMITS.discovery, options.signal);
         out.scanComplete = session.complete;
         const rows = database.prepare(`SELECT trace_run_id AS id,last_seq AS seq,generation,revision,next_byte_offset AS offset,input_fingerprint AS fingerprint,
-   finalization FROM orcareplay_trace_cursors WHERE directory=? ${options.traceRunId === undefined ? '' : 'AND trace_run_id=?'} ORDER BY last_checked_at,trace_run_id LIMIT ?`).all<{
+   finalization FROM agenticreplay_trace_cursors WHERE directory=? ${options.traceRunId === undefined ? '' : 'AND trace_run_id=?'} ORDER BY last_checked_at,trace_run_id LIMIT ?`).all<{
             id: string;
             seq: number;
             generation: number;
@@ -111,7 +111,7 @@ export async function scanOrcaTraceStore(database: SqliteDatabase, runsDirectory
             out.scanned++;
             const now = options.now ?? new Date().toISOString();
             // Monotonic processing opportunities also work when callers inject one timestamp.
-            database.prepare("UPDATE orcareplay_trace_cursors SET last_checked_at=printf('%020d',(SELECT COALESCE(CAST(MAX(last_checked_at) AS INTEGER),0)+1 FROM orcareplay_trace_cursors WHERE directory=?)) WHERE directory=? AND trace_run_id=?").run(runsDirectory, runsDirectory, row.id);
+            database.prepare("UPDATE agenticreplay_trace_cursors SET last_checked_at=printf('%020d',(SELECT COALESCE(CAST(MAX(last_checked_at) AS INTEGER),0)+1 FROM agenticreplay_trace_cursors WHERE directory=?)) WHERE directory=? AND trace_run_id=?").run(runsDirectory, runsDirectory, row.id);
             try {
                 const manifestPath = path.join(runsDirectory, row.id, 'manifest.json');
                 const raw = await readBoundedTraceFile(manifestPath, traceCaptureRoot(runsDirectory), TRACE_LIMITS.manifest);
@@ -124,16 +124,16 @@ export async function scanOrcaTraceStore(database: SqliteDatabase, runsDirectory
                 const fingerprint = canonicalContentHash({ manifestHash, file: fileIdentity(stat) });
                 if (row.fingerprint === fingerprint)
                     continue;
-                const manifest = await readOrcaTraceManifest(runsDirectory, row.id);
+                const manifest = await readAgenticReplayTraceManifest(runsDirectory, row.id);
                 if (options.signal?.aborted)
                     break;
                 if (!manifest.ok && manifest.reason === 'unsupported_schema') {
-                    database.prepare("UPDATE orcareplay_trace_cursors SET state='unsupported',finalization='unsupported',input_fingerprint=? WHERE directory=? AND trace_run_id=?").run(fingerprint, runsDirectory, row.id);
+                    database.prepare("UPDATE agenticreplay_trace_cursors SET state='unsupported',finalization='unsupported',input_fingerprint=? WHERE directory=? AND trace_run_id=?").run(fingerprint, runsDirectory, row.id);
                     out.skippedUnsupported++;
                     continue;
                 }
                 if (!manifest.ok) {
-                    database.prepare('UPDATE orcareplay_trace_cursors SET diagnostic_code=? WHERE directory=? AND trace_run_id=?').run(manifest.reason, runsDirectory, row.id);
+                    database.prepare('UPDATE agenticreplay_trace_cursors SET diagnostic_code=? WHERE directory=? AND trace_run_id=?').run(manifest.reason, runsDirectory, row.id);
                     out.warningCodes.push(manifest.reason);
                     continue;
                 }
@@ -147,7 +147,7 @@ export async function scanOrcaTraceStore(database: SqliteDatabase, runsDirectory
                     enqueueOrchestrationJob(database, { kind: 'trace_ingestion', payload, now });
                     out.enqueued++;
                 }
-                database.prepare('UPDATE orcareplay_trace_cursors SET input_fingerprint=? WHERE directory=? AND trace_run_id=?').run(fingerprint, runsDirectory, row.id);
+                database.prepare('UPDATE agenticreplay_trace_cursors SET input_fingerprint=? WHERE directory=? AND trace_run_id=?').run(fingerprint, runsDirectory, row.id);
             }
             catch (error) {
                 if (options.signal?.aborted)
@@ -156,12 +156,12 @@ export async function scanOrcaTraceStore(database: SqliteDatabase, runsDirectory
                 if (!(error instanceof TraceInputError) && !missing)
                     throw error;
                 const code = missing ? 'source_missing' : (error as TraceInputError).code;
-                database.prepare('UPDATE orcareplay_trace_cursors SET finalization=?,diagnostic_code=? WHERE directory=? AND trace_run_id=?').run(missing ? 'source_missing' : 'blocked', code, runsDirectory, row.id);
+                database.prepare('UPDATE agenticreplay_trace_cursors SET finalization=?,diagnostic_code=? WHERE directory=? AND trace_run_id=?').run(missing ? 'source_missing' : 'blocked', code, runsDirectory, row.id);
                 if (out.warningCodes.length < TRACE_LIMITS.warnings)
                     out.warningCodes.push(code);
             }
         }
-        out.hasMore = !out.scanComplete || database.prepare("SELECT 1 FROM orcareplay_trace_cursors WHERE directory=? AND last_checked_at='' LIMIT 1").get(runsDirectory) !== undefined;
+        out.hasMore = !out.scanComplete || database.prepare("SELECT 1 FROM agenticreplay_trace_cursors WHERE directory=? AND last_checked_at='' LIMIT 1").get(runsDirectory) !== undefined;
         return out;
     }
     finally {

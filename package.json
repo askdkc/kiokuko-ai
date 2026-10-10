@@ -55,7 +55,7 @@
     "pack:check": "npm pack --dry-run",
     "prepublishOnly": "npm run typecheck && npm test && npm run test:evaluation && npm run pack:check",
     "test:e2e:opencode:execution": "npm run build && node scripts/run-opencode-execution-e2e.mjs",
-    "test:e2e:opencode:orca": "npm run build && node scripts/run-opencode-orca-e2e.mjs",
+    "test:e2e:opencode:agenticreplay": "npm run build && node scripts/run-opencode-agenticreplay-e2e.mjs",
     "memory:backfill:akinator": "npm run build && node scripts/backfill-akinator-memory.mjs",
     "test:evaluation:akinator": "npm run build && node scripts/run-akinator-memory-evaluation.mjs",
     "test:benchmark:akinator": "npm run build && node scripts/run-akinator-memory-benchmark.mjs"

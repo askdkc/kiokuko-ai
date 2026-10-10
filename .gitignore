@@ -15,6 +15,7 @@ AGENTS.md
 *.sqlite3-wal
 *.sqlite3-shm
 .orca
+.agenticreplay
 
 # Reproducible Akinator evaluation and benchmark reports
 /artifacts

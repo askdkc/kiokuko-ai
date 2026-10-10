@@ -6,10 +6,10 @@ import path from 'node:path';
 import test from 'node:test';
 import { KiokukoError } from '../../src/errors.js';
 import {
-  ORCA_TRACE_MAX_WARNINGS,
-  readOrcaTraceManifest,
-  readOrcaTraceRun,
-} from '../../src/trace/orca-trace.js';
+  AGENTICREPLAY_TRACE_MAX_WARNINGS,
+  readAgenticReplayTraceManifest,
+  readAgenticReplayTraceRun,
+} from '../../src/trace/agentic-trace.js';
 
 const RUN_ID = 'run_abcdef123456';
 
@@ -44,7 +44,7 @@ async function makeRun(
   const eventsText = `${lines.join('\n')}\n`;
   const eventsSha256 = options.eventsSha256 ?? createHash('sha256').update(eventsText).digest('hex');
   const manifest = {
-    schema_version: options.schemaVersion ?? '0.1.0',
+    schema_version: options.schemaVersion ?? '0.4.0',
     run_id: runId,
     counts: { events: options.counts ?? lines.length },
     integrity: { events_sha256: eventsSha256 },
@@ -55,14 +55,14 @@ async function makeRun(
 }
 
 test('reads a valid run with verified integrity and manifest view', async () => {
-  const base = await mkdtemp(path.join(tmpdir(), 'kiokuko-orca-'));
+  const base = await mkdtemp(path.join(tmpdir(), 'kiokuko-agenticreplay-'));
   try {
     const lines = [eventLine(1), eventLine(2, { turn: 1, type: 'tool.call', actor: 'agent' })];
     const runDir = await makeRun(base, { lines, counts: 2 });
-    const read = await readOrcaTraceRun(base, RUN_ID);
+    const read = await readAgenticReplayTraceRun(base, RUN_ID);
     assert.equal(read.status, 'ready');
     assert.equal(read.integrity, 'verified');
-    assert.equal(read.manifest?.schemaVersion, '0.1.0');
+    assert.equal(read.manifest?.schemaVersion, '0.4.0');
     assert.equal(read.manifest?.runId, RUN_ID);
     assert.equal(read.manifest?.countsEvents, 2);
     assert.match(read.manifest?.eventsSha256 ?? '', /^[0-9a-f]{64}$/u);
@@ -78,27 +78,39 @@ test('reads a valid run with verified integrity and manifest view', async () => 
   }
 });
 
+test('AgenticReplay 0.4 retrieval, agent and graph events remain known trace events', async t => {
+  const base = await mkdtemp(path.join(tmpdir(), 'kiokuko-agentic-events-'));
+  t.after(() => rm(base, { recursive: true, force: true }));
+  const types = ['retrieval.context', 'agent.start', 'agent.handoff', 'agent.guardrail', 'graph.node.start', 'graph.node.end'];
+  await makeRun(base, { lines: types.map((type, seq) => eventLine(seq, { type, actor: 'agenticreplay' })) });
+  const read = await readAgenticReplayTraceRun(base, RUN_ID);
+  assert.equal(read.integrity, 'verified');
+  assert.deepEqual(read.events.map(event => event.type), types);
+  assert.ok(read.events.every(event => !event.unknownType));
+  assert.deepEqual(read.warnings, []);
+});
+
 test('reports missing_manifest and invalid_manifest', async () => {
-  const base = await mkdtemp(path.join(tmpdir(), 'kiokuko-orca-'));
+  const base = await mkdtemp(path.join(tmpdir(), 'kiokuko-agenticreplay-'));
   try {
     await mkdir(path.join(base, RUN_ID, 'blobs'), { recursive: true });
     await writeFile(path.join(base, RUN_ID, 'events.jsonl'), '');
-    const missing = await readOrcaTraceRun(base, RUN_ID);
+    const missing = await readAgenticReplayTraceRun(base, RUN_ID);
     assert.equal(missing.status, 'missing_manifest');
     assert.equal(missing.integrity, 'unavailable');
     assert.equal(missing.events.length, 0);
 
     await writeFile(path.join(base, RUN_ID, 'manifest.json'), '{not json');
-    const invalid = await readOrcaTraceRun(base, RUN_ID);
+    const invalid = await readAgenticReplayTraceRun(base, RUN_ID);
     assert.equal(invalid.status, 'invalid_manifest');
 
     await writeFile(path.join(base, RUN_ID, 'manifest.json'), JSON.stringify({
-      schema_version: '0.1.0',
+      schema_version: '0.4.0',
       run_id: 'run_ffffffffffff',
       counts: { events: 1 },
       integrity: { events_sha256: '0'.repeat(64) },
     }));
-    const mismatch = await readOrcaTraceRun(base, RUN_ID);
+    const mismatch = await readAgenticReplayTraceRun(base, RUN_ID);
     assert.equal(mismatch.status, 'invalid_manifest');
   } finally {
     await rm(base, { recursive: true, force: true });
@@ -106,10 +118,10 @@ test('reports missing_manifest and invalid_manifest', async () => {
 });
 
 test('reports unsupported_schema for an unknown schema version', async () => {
-  const base = await mkdtemp(path.join(tmpdir(), 'kiokuko-orca-'));
+  const base = await mkdtemp(path.join(tmpdir(), 'kiokuko-agenticreplay-'));
   try {
     await makeRun(base, { schemaVersion: '1.0.0' });
-    const read = await readOrcaTraceRun(base, RUN_ID);
+    const read = await readAgenticReplayTraceRun(base, RUN_ID);
     assert.equal(read.status, 'unsupported_schema');
     assert.equal(read.integrity, 'unavailable');
     assert.equal(read.events.length, 0);
@@ -119,26 +131,26 @@ test('reports unsupported_schema for an unknown schema version', async () => {
 });
 
 test('rejects invalid runs directory and run id at the boundary', async () => {
-  const base = await mkdtemp(path.join(tmpdir(), 'kiokuko-orca-'));
+  const base = await mkdtemp(path.join(tmpdir(), 'kiokuko-agenticreplay-'));
   try {
     await assert.rejects(
-      () => readOrcaTraceManifest('relative/path', RUN_ID),
+      () => readAgenticReplayTraceManifest('relative/path', RUN_ID),
       (error: unknown) => (error as KiokukoError).code === 'VALIDATION_ERROR',
     );
     await assert.rejects(
-      () => readOrcaTraceManifest(base, 'not-a-run-id'),
+      () => readAgenticReplayTraceManifest(base, 'not-a-run-id'),
       (error: unknown) => (error as KiokukoError).code === 'VALIDATION_ERROR',
     );
     await assert.rejects(
-      () => readOrcaTraceManifest(`${'a'.repeat(4097)}`, RUN_ID),
+      () => readAgenticReplayTraceManifest(`${'a'.repeat(4097)}`, RUN_ID),
       (error: unknown) => (error as KiokukoError).code === 'VALIDATION_ERROR',
     );
     await assert.rejects(
-      () => readOrcaTraceRun('relative/path', RUN_ID),
+      () => readAgenticReplayTraceRun('relative/path', RUN_ID),
       (error: unknown) => (error as KiokukoError).code === 'VALIDATION_ERROR',
     );
     await assert.rejects(
-      () => readOrcaTraceRun(base, 'run_../escape'),
+      () => readAgenticReplayTraceRun(base, 'run_../escape'),
       (error: unknown) => (error as KiokukoError).code === 'VALIDATION_ERROR',
     );
   } finally {
@@ -147,7 +159,7 @@ test('rejects invalid runs directory and run id at the boundary', async () => {
 });
 
 test('skips malformed lines and keeps valid events with warnings', async () => {
-  const base = await mkdtemp(path.join(tmpdir(), 'kiokuko-orca-'));
+  const base = await mkdtemp(path.join(tmpdir(), 'kiokuko-agenticreplay-'));
   try {
     const lines = [
       eventLine(1),
@@ -161,7 +173,7 @@ test('skips malformed lines and keeps valid events with warnings', async () => {
       lines,
       eventsSha256: createHash('sha256').update(eventsText).digest('hex'),
     });
-    const read = await readOrcaTraceRun(base, RUN_ID);
+    const read = await readAgenticReplayTraceRun(base, RUN_ID);
     assert.equal(read.events.length, 2);
     assert.equal(read.maxSeq, 2);
     const codes = read.warnings.map((warning) => warning.code);
@@ -174,7 +186,7 @@ test('skips malformed lines and keeps valid events with warnings', async () => {
 });
 
 test('warns on duplicate and out-of-order seq without regressing maxSeq', async () => {
-  const base = await mkdtemp(path.join(tmpdir(), 'kiokuko-orca-'));
+  const base = await mkdtemp(path.join(tmpdir(), 'kiokuko-agenticreplay-'));
   try {
     const lines = [
       eventLine(1),
@@ -188,7 +200,7 @@ test('warns on duplicate and out-of-order seq without regressing maxSeq', async 
       lines,
       eventsSha256: createHash('sha256').update(eventsText).digest('hex'),
     });
-    const read = await readOrcaTraceRun(base, RUN_ID);
+    const read = await readAgenticReplayTraceRun(base, RUN_ID);
     assert.equal(read.events.map((event) => event.seq).join(','), '1,2,3');
     assert.equal(read.maxSeq, 3);
     assert.equal(read.warnings.filter((warning) => warning.code === 'invalid_event').length, 2);
@@ -198,7 +210,7 @@ test('warns on duplicate and out-of-order seq without regressing maxSeq', async 
 });
 
 test('warns on seq gaps but still ingests', async () => {
-  const base = await mkdtemp(path.join(tmpdir(), 'kiokuko-orca-'));
+  const base = await mkdtemp(path.join(tmpdir(), 'kiokuko-agenticreplay-'));
   try {
     const lines = [eventLine(1), eventLine(4)];
     const eventsText = `${lines.join('\n')}\n`;
@@ -206,7 +218,7 @@ test('warns on seq gaps but still ingests', async () => {
       lines,
       eventsSha256: createHash('sha256').update(eventsText).digest('hex'),
     });
-    const read = await readOrcaTraceRun(base, RUN_ID);
+    const read = await readAgenticReplayTraceRun(base, RUN_ID);
     assert.equal(read.events.length, 2);
     assert.equal(read.maxSeq, 4);
     assert.deepEqual(read.warnings, [{ code: 'seq_gap' }]);
@@ -216,7 +228,7 @@ test('warns on seq gaps but still ingests', async () => {
 });
 
 test('rejects invalid envelope fields', async () => {
-  const base = await mkdtemp(path.join(tmpdir(), 'kiokuko-orca-'));
+  const base = await mkdtemp(path.join(tmpdir(), 'kiokuko-agenticreplay-'));
   try {
     const lines = [
       JSON.stringify({ seq: 1, ts: 'not-a-date', mono_us: 1, turn: 0, type: 'note', actor: 'host' }),
@@ -231,7 +243,7 @@ test('rejects invalid envelope fields', async () => {
       lines,
       eventsSha256: createHash('sha256').update(eventsText).digest('hex'),
     });
-    const read = await readOrcaTraceRun(base, RUN_ID);
+    const read = await readAgenticReplayTraceRun(base, RUN_ID);
     assert.equal(read.events.length, 1);
     assert.equal(read.maxSeq, 6);
     assert.equal(read.warnings.filter((warning) => warning.code === 'invalid_event').length, 5);
@@ -241,7 +253,7 @@ test('rejects invalid envelope fields', async () => {
 });
 
 test('rejects invalid causes, attrs, and redacted', async () => {
-  const base = await mkdtemp(path.join(tmpdir(), 'kiokuko-orca-'));
+  const base = await mkdtemp(path.join(tmpdir(), 'kiokuko-agenticreplay-'));
   try {
     const lines = [
       JSON.stringify({ seq: 1, ts: '2026-09-06T08:00:00.000Z', mono_us: 1, turn: 0, type: 'note', actor: 'host', causes: [2] }),
@@ -255,7 +267,7 @@ test('rejects invalid causes, attrs, and redacted', async () => {
       lines,
       eventsSha256: createHash('sha256').update(eventsText).digest('hex'),
     });
-    const read = await readOrcaTraceRun(base, RUN_ID);
+    const read = await readAgenticReplayTraceRun(base, RUN_ID);
     assert.equal(read.events.length, 1);
     assert.equal(read.events[0]?.causes?.join(','), '1');
     assert.deepEqual(read.events[0]?.attrs, { key: 'value' });
@@ -267,7 +279,7 @@ test('rejects invalid causes, attrs, and redacted', async () => {
 });
 
 test('returns descriptors without opening small or large blobs', async () => {
-  const base = await mkdtemp(path.join(tmpdir(), 'kiokuko-orca-'));
+  const base = await mkdtemp(path.join(tmpdir(), 'kiokuko-agenticreplay-'));
   try {
     const runDir = path.join(base, RUN_ID);
     await mkdir(path.join(runDir, 'blobs'), { recursive: true });
@@ -288,13 +300,13 @@ test('returns descriptors without opening small or large blobs', async () => {
     const eventsText = `${lines.join('\n')}\n`;
     await writeFile(path.join(runDir, 'events.jsonl'), eventsText);
     await writeFile(path.join(runDir, 'manifest.json'), JSON.stringify({
-      schema_version: '0.1.0',
+      schema_version: '0.4.0',
       run_id: RUN_ID,
       counts: { events: 2 },
       integrity: { events_sha256: createHash('sha256').update(eventsText).digest('hex') },
     }));
 
-    const read = await readOrcaTraceRun(base, RUN_ID);
+    const read = await readAgenticReplayTraceRun(base, RUN_ID);
     assert.equal(read.warnings.length, 0);
     assert.deepEqual(read.events[0]?.payload, { blobDigest:inlineHex,bytes:Buffer.byteLength(inlineText) });
     const descriptor = read.events[1]?.payload as { blobDigest: string; bytes: number; mediaType: string };
@@ -307,7 +319,7 @@ test('returns descriptors without opening small or large blobs', async () => {
 });
 
 test('reports blob_unresolved for missing, mismatched, malformed, and invalid blobs', async () => {
-  const base = await mkdtemp(path.join(tmpdir(), 'kiokuko-orca-'));
+  const base = await mkdtemp(path.join(tmpdir(), 'kiokuko-agenticreplay-'));
   try {
     const runDir = path.join(base, RUN_ID);
     await mkdir(path.join(runDir, 'blobs'), { recursive: true });
@@ -326,13 +338,13 @@ test('reports blob_unresolved for missing, mismatched, malformed, and invalid bl
     const eventsText = `${lines.join('\n')}\n`;
     await writeFile(path.join(runDir, 'events.jsonl'), eventsText);
     await writeFile(path.join(runDir, 'manifest.json'), JSON.stringify({
-      schema_version: '0.1.0',
+      schema_version: '0.4.0',
       run_id: RUN_ID,
       counts: { events: 5 },
       integrity: { events_sha256: createHash('sha256').update(eventsText).digest('hex') },
     }));
 
-    const read = await readOrcaTraceRun(base, RUN_ID);
+    const read = await readAgenticReplayTraceRun(base, RUN_ID);
     assert.equal(read.events.length, 5);
     assert.equal(read.maxSeq, 5);
     const blobWarnings = read.warnings.filter((warning) => warning.code === 'blob_unresolved');
@@ -343,7 +355,7 @@ test('reports blob_unresolved for missing, mismatched, malformed, and invalid bl
 });
 
 test('reports truncated_final_line for an incomplete final line', async () => {
-  const base = await mkdtemp(path.join(tmpdir(), 'kiokuko-orca-'));
+  const base = await mkdtemp(path.join(tmpdir(), 'kiokuko-agenticreplay-'));
   try {
     const eventsText = `${eventLine(1)}\n{"seq":2,"ts":"2026-09-06T08:00:00.000Z","mono_us":2,"turn":0,"type":"note","actor":"host","payload":`;
     await makeRun(base, {
@@ -351,7 +363,7 @@ test('reports truncated_final_line for an incomplete final line', async () => {
       eventsSha256: createHash('sha256').update(eventsText).digest('hex'),
     });
     await writeFile(path.join(base, RUN_ID, 'events.jsonl'), eventsText);
-    const read = await readOrcaTraceRun(base, RUN_ID);
+    const read = await readAgenticReplayTraceRun(base, RUN_ID);
     assert.equal(read.events.length, 1);
     assert.equal(read.maxSeq, 1);
     assert.deepEqual(read.warnings, [{ code: 'truncated_final_line' }]);
@@ -361,7 +373,7 @@ test('reports truncated_final_line for an incomplete final line', async () => {
 });
 
 test('defers a valid final line without final manifest evidence', async () => {
-  const base = await mkdtemp(path.join(tmpdir(), 'kiokuko-orca-'));
+  const base = await mkdtemp(path.join(tmpdir(), 'kiokuko-agenticreplay-'));
   try {
     const eventsText = `${eventLine(1)}\n${eventLine(2)}`;
     await makeRun(base, {
@@ -369,7 +381,7 @@ test('defers a valid final line without final manifest evidence', async () => {
       eventsSha256: createHash('sha256').update(eventsText).digest('hex'),
     });
     await writeFile(path.join(base, RUN_ID, 'events.jsonl'), eventsText);
-    const read = await readOrcaTraceRun(base, RUN_ID);
+    const read = await readAgenticReplayTraceRun(base, RUN_ID);
     assert.equal(read.events.length, 1);
     assert.equal(read.maxSeq, 1);
     assert.equal(read.warnings.length, 1);
@@ -379,7 +391,7 @@ test('defers a valid final line without final manifest evidence', async () => {
 });
 
 test('rejects an oversized unterminated line instead of rereading a bounded file prefix', async () => {
-  const base = await mkdtemp(path.join(tmpdir(), 'kiokuko-orca-'));
+  const base = await mkdtemp(path.join(tmpdir(), 'kiokuko-agenticreplay-'));
   try {
     const runDir = path.join(base, RUN_ID);
     await mkdir(path.join(runDir, 'blobs'), { recursive: true });
@@ -388,40 +400,40 @@ test('rejects an oversized unterminated line instead of rereading a bounded file
     await handle.truncate(80 * 1024 * 1024);
     await handle.close();
     await writeFile(path.join(runDir, 'manifest.json'), JSON.stringify({
-      schema_version: '0.1.0',
+      schema_version: '0.4.0',
       run_id: RUN_ID,
       counts: { events: 1 },
       integrity: { events_sha256: '0'.repeat(64) },
     }));
-    await assert.rejects(()=>readOrcaTraceRun(base,RUN_ID), (error:unknown)=>(error as {code:string}).code==='event_line_too_large');
+    await assert.rejects(()=>readAgenticReplayTraceRun(base,RUN_ID), (error:unknown)=>(error as {code:string}).code==='event_line_too_large');
   } finally {
     await rm(base, { recursive: true, force: true });
   }
 });
 
 test('caps warnings at the configured maximum', async () => {
-  const base = await mkdtemp(path.join(tmpdir(), 'kiokuko-orca-'));
+  const base = await mkdtemp(path.join(tmpdir(), 'kiokuko-agenticreplay-'));
   try {
-    const lines = Array.from({ length: ORCA_TRACE_MAX_WARNINGS + 8 }, (_, index) => `{not json ${index}`);
+    const lines = Array.from({ length: AGENTICREPLAY_TRACE_MAX_WARNINGS + 8 }, (_, index) => `{not json ${index}`);
     lines.push(eventLine(1));
     const eventsText = `${lines.join('\n')}\n`;
     await makeRun(base, {
       lines,
       eventsSha256: createHash('sha256').update(eventsText).digest('hex'),
     });
-    const read = await readOrcaTraceRun(base, RUN_ID);
-    assert.equal(read.warnings.length, ORCA_TRACE_MAX_WARNINGS);
+    const read = await readAgenticReplayTraceRun(base, RUN_ID);
+    assert.equal(read.warnings.length, AGENTICREPLAY_TRACE_MAX_WARNINGS);
   } finally {
     await rm(base, { recursive: true, force: true });
   }
 });
 
 test('never writes into the trace directory during a read', async () => {
-  const base = await mkdtemp(path.join(tmpdir(), 'kiokuko-orca-'));
+  const base = await mkdtemp(path.join(tmpdir(), 'kiokuko-agenticreplay-'));
   try {
     await makeRun(base, {});
     const before = (await readdir(path.join(base, RUN_ID))).sort();
-    const read = await readOrcaTraceRun(base, RUN_ID);
+    const read = await readAgenticReplayTraceRun(base, RUN_ID);
     assert.equal(read.status, 'ready');
     const after = (await readdir(path.join(base, RUN_ID))).sort();
     assert.deepEqual(after, before);
@@ -433,15 +445,15 @@ test('never writes into the trace directory during a read', async () => {
 });
 
 test('exposes counts and integrity from the manifest view', async () => {
-  const base = await mkdtemp(path.join(tmpdir(), 'kiokuko-orca-'));
+  const base = await mkdtemp(path.join(tmpdir(), 'kiokuko-agenticreplay-'));
   try {
     await makeRun(base, { counts: 3 });
-    const read = await readOrcaTraceManifest(base, RUN_ID);
+    const read = await readAgenticReplayTraceManifest(base, RUN_ID);
     assert.equal(read.ok, true);
     if (read.ok) {
       assert.equal(read.manifest.countsEvents, 3);
       assert.match(read.manifest.eventsSha256 ?? '', /^[0-9a-f]{64}$/u);
-      assert.equal(read.manifest.schemaVersion, '0.1.0');
+      assert.equal(read.manifest.schemaVersion, '0.4.0');
     }
   } finally {
     await rm(base, { recursive: true, force: true });

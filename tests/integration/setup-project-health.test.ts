@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { PassThrough } from 'node:stream';
-import { orcaAliasBlock } from '../../src/commands/orca-replay.js';
+import { agenticreplayAliasBlock } from '../../src/commands/agentic-replay.js';
 import { AGENT_TEMPLATE_VERSION } from '../../src/agent-file/render.js';
 import { parse } from 'jsonc-parser';
 import { buildCli } from '../../src/cli.js';
@@ -202,12 +202,12 @@ test('repeated and embedding dependency setup preserve completed choices without
   t.after(() => { input.destroy(); output.destroy(); });
   let text = '';
   output.on('data', chunk => { text += chunk.toString(); });
-  await writeFile(path.join(options.env.HOME, '.zshrc'), orcaAliasBlock());
+  await writeFile(path.join(options.env.HOME, '.zshrc'), agenticreplayAliasBlock());
   for (const optionalPrompts of [true, false]) {
     let checks = 0;
     await runSetupFlow({ environment: { env: { ...options.env, SHELL: '/bin/zsh' } }, standardSkills: false, optionalPrompts, input, output }, {
-      orcaReplayCheckInstalled: async () => { checks++; },
-      orcaReplaySpawnInstall: async () => { assert.fail('must not reinstall optional Orca'); },
+      agenticReplayCheckInstalled: async () => { checks++; },
+      agenticReplaySpawnInstall: async () => { assert.fail('must not reinstall optional AgenticReplay'); },
     });
     assert.equal(checks, optionalPrompts ? 1 : 0);
   }

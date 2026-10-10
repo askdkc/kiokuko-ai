@@ -9,13 +9,13 @@ import { KiokukoError } from '../errors.js';
 import { findSecretInValue } from '../memory/secrets.js';
 import { canonicalContentHash, type JsonObject } from '../serialization/validate.js';
 import { enqueueOrchestrationJob, assertOrchestrationJobLease } from '../orchestration/jobs.js';
-import { readOrcaTraceManifest, readTraceBatch, ORCA_TRACE_READER_POLICY_VERSION } from './orca-trace.js';
+import { readAgenticReplayTraceManifest, readTraceBatch, AGENTICREPLAY_TRACE_READER_POLICY_VERSION } from './agentic-trace.js';
 import { applyTraceEvents, buildTraceContext, buildTraceMemoryCandidates, traceProjectionSchema, type TraceProjection } from './aggregate.js';
 import { TRACE_LIMITS, TraceInputError, sameFile, fileIdentity, parseTraceJson, type TraceFileIdentity } from './bounded-read.js';
-export const ORCA_TRACE_CONTEXT_MAX_BYTES = TRACE_LIMITS.context;
-export const ORCA_TRACE_MAX_MEMORY_CANDIDATES = 8;
-export const ORCA_TRACE_MAX_SKILL_QUERIES = 3;
-export const ORCA_TRACE_MAX_SKILL_CANDIDATES = 2;
+export const AGENTICREPLAY_TRACE_CONTEXT_MAX_BYTES = TRACE_LIMITS.context;
+export const AGENTICREPLAY_TRACE_MAX_MEMORY_CANDIDATES = 8;
+export const AGENTICREPLAY_TRACE_MAX_SKILL_QUERIES = 3;
+export const AGENTICREPLAY_TRACE_MAX_SKILL_CANDIDATES = 2;
 export type TraceIngestOutcome = JsonObject & {
     ingested: boolean;
     reason: string | null;
@@ -66,7 +66,7 @@ export function requireTraceRunId(value: unknown): string {
     return value;
 }
 export function readTraceCursor(database: SqliteDatabase, directory: string, id: string): TraceCursorRow | undefined {
-    const row = database.prepare('SELECT * FROM orcareplay_trace_cursors WHERE directory=? AND trace_run_id=?').get<Record<string, any>>(directory, id);
+    const row = database.prepare('SELECT * FROM agenticreplay_trace_cursors WHERE directory=? AND trace_run_id=?').get<Record<string, any>>(directory, id);
     if (!row)
         return undefined;
     if (!Number.isSafeInteger(row.last_seq) || row.last_seq < -1 || !Number.isSafeInteger(row.revision) || !Number.isSafeInteger(row.generation))
@@ -87,7 +87,7 @@ export function upsertTraceCursor(database: SqliteDatabase, input: {
 }): void {
     if (!Number.isSafeInteger(input.lastSeq) || input.lastSeq < -1)
         throw new KiokukoError('VALIDATION_ERROR', 'Trace sequence invalid');
-    database.prepare(`INSERT INTO orcareplay_trace_cursors(directory,trace_run_id,last_seq,state,created_at,updated_at)
+    database.prepare(`INSERT INTO agenticreplay_trace_cursors(directory,trace_run_id,last_seq,state,created_at,updated_at)
  VALUES(?,?,?,?,?,?) ON CONFLICT(directory,trace_run_id) DO UPDATE SET last_seq=excluded.last_seq,state=excluded.state,updated_at=excluded.updated_at`).run(input.runsDirectory, input.traceRunId, input.lastSeq, input.state, input.now, input.now);
 }
 export function readStoredTraceContext(database: SqliteDatabase, runsDirectory: string, traceRunId: string): {
@@ -96,7 +96,7 @@ export function readStoredTraceContext(database: SqliteDatabase, runsDirectory: 
 } | undefined {
     const row = database.prepare(`
     SELECT digest AS digest, context_json AS contextJson
-    FROM orcareplay_trace_context
+    FROM agenticreplay_trace_context
     WHERE directory = ? AND trace_run_id = ?
   `).get<{
         digest: unknown;
@@ -105,17 +105,17 @@ export function readStoredTraceContext(database: SqliteDatabase, runsDirectory: 
     if (row === undefined)
         return undefined;
     if (typeof row.digest !== 'string' || typeof row.contextJson !== 'string') {
-        throw new KiokukoError('INTEGRITY_ERROR', 'Stored OrcaReplay trace context is invalid');
+        throw new KiokukoError('INTEGRITY_ERROR', 'Stored AgenticReplay trace context is invalid');
     }
     let parsed: unknown;
     try {
         parsed = JSON.parse(row.contextJson);
     }
     catch {
-        throw new KiokukoError('INTEGRITY_ERROR', 'Stored OrcaReplay trace context is invalid');
+        throw new KiokukoError('INTEGRITY_ERROR', 'Stored AgenticReplay trace context is invalid');
     }
     if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-        throw new KiokukoError('INTEGRITY_ERROR', 'Stored OrcaReplay trace context is invalid');
+        throw new KiokukoError('INTEGRITY_ERROR', 'Stored AgenticReplay trace context is invalid');
     }
     return { digest: row.digest, context: parsed as JsonObject };
 }
@@ -126,21 +126,21 @@ function writeTraceContext(database: SqliteDatabase, input: {
     readonly contextJson: string;
     readonly now: string;
 }): 'inserted' | 'unchanged' | 'updated' {
-    const existing = database.prepare('SELECT digest,context_json AS json FROM orcareplay_trace_context WHERE directory=? AND trace_run_id=?').get<{
+    const existing = database.prepare('SELECT digest,context_json AS json FROM agenticreplay_trace_context WHERE directory=? AND trace_run_id=?').get<{
         digest: string;
         json: string;
     }>(input.runsDirectory, input.traceRunId);
     if (existing !== undefined && existing.digest === input.digest && existing.json === input.contextJson)
         return 'unchanged';
     database.prepare(`
-    INSERT INTO orcareplay_trace_context (directory, trace_run_id, digest, context_json, source, created_at, updated_at)
-    VALUES (?, ?, ?, ?, 'orcareplay', ?, ?)
+    INSERT INTO agenticreplay_trace_context (directory, trace_run_id, digest, context_json, source, created_at, updated_at)
+    VALUES (?, ?, ?, ?, 'agenticreplay', ?, ?)
     ON CONFLICT(directory, trace_run_id) DO UPDATE SET
       digest = excluded.digest,
       context_json = excluded.context_json,
       source = excluded.source,
       updated_at = excluded.updated_at
-    WHERE orcareplay_trace_context.digest <> excluded.digest OR orcareplay_trace_context.context_json <> excluded.context_json
+    WHERE agenticreplay_trace_context.digest <> excluded.digest OR agenticreplay_trace_context.context_json <> excluded.context_json
   `).run(input.runsDirectory, input.traceRunId, input.digest, input.contextJson, input.now, input.now);
     return existing === undefined ? 'inserted' : 'updated';
 }
@@ -164,7 +164,7 @@ export async function ingestTraceRun(database: SqliteDatabase, input: TraceInges
     };
     const outcome: TraceIngestOutcome = { ingested: false, reason: null, traceRunId: id, throughSeq: previous?.lastSeq ?? -1, cursorSeq: previous?.lastSeq ?? -1,
         integrity: previous?.integrity ?? 'unavailable', contextDigest: null, memoryCandidates: 0, suppressedMemoryCandidates: 0, skillCandidates: 0, hasMore: false, finalization: previous?.finalization ?? 'recording' };
-    const manifestRead = await readOrcaTraceManifest(runs, id);
+    const manifestRead = await readAgenticReplayTraceManifest(runs, id);
     if (!manifestRead.ok) {
         outcome.reason = manifestRead.reason;
         outcome.finalization = manifestRead.reason === 'unsupported_schema' ? 'unsupported' : 'recording';
@@ -173,7 +173,7 @@ export async function ingestTraceRun(database: SqliteDatabase, input: TraceInges
             cas();
             if (manifestRead.reason === 'unsupported_schema') {
                 upsertTraceCursor(database, { runsDirectory: runs, traceRunId: id, lastSeq: previous?.lastSeq ?? -1, state: 'unsupported', now });
-                database.prepare("UPDATE orcareplay_trace_cursors SET finalization='unsupported', revision=revision+1 WHERE directory=? AND trace_run_id=?").run(runs, id);
+                database.prepare("UPDATE agenticreplay_trace_cursors SET finalization='unsupported', revision=revision+1 WHERE directory=? AND trace_run_id=?").run(runs, id);
             }
             return outcome;
         });
@@ -225,7 +225,7 @@ export async function ingestTraceRun(database: SqliteDatabase, input: TraceInges
                 position = batch.nextByteOffset;
                 seq = batch.lastSeq;
             } while (batch.hasMore);
-            const reread = await readOrcaTraceManifest(runs, id);
+            const reread = await readAgenticReplayTraceManifest(runs, id);
             if (!reread.ok || reread.fingerprint !== fingerprint)
                 throw new TraceInputError('manifest_changed', true);
             sourceDigest = hash.digest('hex');
@@ -243,7 +243,7 @@ export async function ingestTraceRun(database: SqliteDatabase, input: TraceInges
             outcome.reason = 'final_verification_interrupted';
         }
     }
-    const metadata: JsonObject = { readerPolicyVersion: ORCA_TRACE_READER_POLICY_VERSION, generation, finalization, sourceDigest,
+    const metadata: JsonObject = { readerPolicyVersion: AGENTICREPLAY_TRACE_READER_POLICY_VERSION, generation, finalization, sourceDigest,
         captureCwd: path.dirname(path.dirname(runs)), traceCreatedAt: manifest.createdAt ?? '', derived: manifest.derived ?? false };
     const built = buildTraceContext(id, manifest.schemaVersion, batch.lastSeq, integrity, aggregate, metadata);
     if (!built.bounded || findSecretInValue(built.context) !== undefined || findSecretInValue(aggregate) !== undefined)
@@ -254,7 +254,7 @@ export async function ingestTraceRun(database: SqliteDatabase, input: TraceInges
         throw new TraceInputError('aggregate_too_large');
     const digest = canonicalContentHash(built.context);
     const candidates = finalization === 'finalized' && aggregate.runEnded && aggregate.warningCount === 0 ? buildTraceMemoryCandidates(aggregate) : { candidates: [], suppressed: 0 };
-    const payload: JsonObject = { source: 'orcareplay', runsDirectory: runs, traceRunId: id, generation, readerPolicyVersion: ORCA_TRACE_READER_POLICY_VERSION, sourceDigest, candidates: [...candidates.candidates] };
+    const payload: JsonObject = { source: 'agenticreplay', runsDirectory: runs, traceRunId: id, generation, readerPolicyVersion: AGENTICREPLAY_TRACE_READER_POLICY_VERSION, sourceDigest, candidates: [...candidates.candidates] };
     if (findSecretInValue(payload) !== undefined)
         throw new KiokukoError('SECURITY_REJECTION', 'Trace candidate rejected');
     canonicalContentHash(payload);
@@ -265,10 +265,10 @@ export async function ingestTraceRun(database: SqliteDatabase, input: TraceInges
     return withImmediateTransaction(database, () => {
         cas();
         upsertTraceCursor(database, { runsDirectory: runs, traceRunId: id, lastSeq: batch.lastSeq, state: 'active', now });
-        database.prepare(`UPDATE orcareplay_trace_cursors SET generation=?, revision=revision+1,next_byte_offset=?,file_identity_json=?,manifest_fingerprint=?,
+        database.prepare(`UPDATE agenticreplay_trace_cursors SET generation=?, revision=revision+1,next_byte_offset=?,file_identity_json=?,manifest_fingerprint=?,
    aggregate_json=?,aggregate_digest=?,finalization=?,integrity=?,reader_policy_version=2,diagnostic_code=? WHERE directory=? AND trace_run_id=?`).run(generation, batch.nextByteOffset, JSON.stringify(batch.fileIdentity), fingerprint, aggregateJson, aggregateDigest, finalization, integrity, integrity === 'mismatch' ? 'integrity_mismatch' : interruptedFinalization ? 'final_verification_interrupted' : batch.waitingForCompleteLine ? 'waiting_for_complete_line' : null, runs, id);
         writeTraceContext(database, { runsDirectory: runs, traceRunId: id, digest, contextJson: JSON.stringify(built.context), now });
-        database.prepare('UPDATE orcareplay_trace_context SET reader_policy_version=2,generation=?,trace_created_at=?,finalization=? WHERE directory=? AND trace_run_id=?').run(generation, manifest.createdAt ?? '', finalization, runs, id);
+        database.prepare('UPDATE agenticreplay_trace_context SET reader_policy_version=2,generation=?,trace_created_at=?,finalization=? WHERE directory=? AND trace_run_id=?').run(generation, manifest.createdAt ?? '', finalization, runs, id);
         let mode: 'off' | 'official' | 'community' = 'off';
         try {
             mode = input.skillDiscoveryMode ?? normalizeSkillDiscoveryMode(process.env.KIOKUKO_SKILL_DISCOVERY);
@@ -290,7 +290,7 @@ export async function ingestTraceRun(database: SqliteDatabase, input: TraceInges
                     break;
             }
             if (queries.length)
-                enqueueOrchestrationJob(database, { kind: 'skill_discovery', payload: { source: 'orcareplay', directory: runs, traceRunId: id, generation, readerPolicyVersion: 2, sourceDigest, mode, queries }, now });
+                enqueueOrchestrationJob(database, { kind: 'skill_discovery', payload: { source: 'agenticreplay', directory: runs, traceRunId: id, generation, readerPolicyVersion: 2, sourceDigest, mode, queries }, now });
         }
         if (candidates.candidates.length)
             enqueueOrchestrationJob(database, { kind: 'memory_promotion', payload, now });

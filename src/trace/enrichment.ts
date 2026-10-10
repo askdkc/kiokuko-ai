@@ -42,10 +42,10 @@ export async function enrichTraceSkills(database: SqliteDatabase, job: Orchestra
     canonicalContentHash(result);
     return withImmediateTransaction(database, () => {
         assertOrchestrationJobLease(database, { jobId: job.jobId, owner: job.leaseOwner! });
-        const current = database.prepare("SELECT 1 FROM orcareplay_trace_context WHERE directory=? AND trace_run_id=? AND generation=? AND reader_policy_version=2 AND finalization='finalized' AND json_extract(context_json,'$.sourceDigest')=?").get(directory, traceRunId, generation, sourceDigest);
+        const current = database.prepare("SELECT 1 FROM agenticreplay_trace_context WHERE directory=? AND trace_run_id=? AND generation=? AND reader_policy_version=2 AND finalization='finalized' AND json_extract(context_json,'$.sourceDigest')=?").get(directory, traceRunId, generation, sourceDigest);
         if (!current)
             return { searched: false, reason: 'trace_generation_superseded' };
-        database.prepare('INSERT INTO orcareplay_trace_enrichment VALUES(?,?,?,?,?) ON CONFLICT DO NOTHING').run(directory, traceRunId, generation, sourceDigest, JSON.stringify(result));
+        database.prepare('INSERT INTO agenticreplay_trace_enrichment VALUES(?,?,?,?,?) ON CONFLICT DO NOTHING').run(directory, traceRunId, generation, sourceDigest, JSON.stringify(result));
         return { searched: true, candidateCount: candidates.length, failures };
     });
 }

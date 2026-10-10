@@ -6,11 +6,11 @@ import process from 'node:process';
 import { startFakeOpenAiServer } from '../tests/e2e/fake-openai-server.mjs';
 import { requireSuccess, resolveOpenCodeBinary } from './run-opencode-host-e2e.mjs';
 
-const executable = process.env.KIOKUKO_TEST_ORCA;
-if (!executable || !path.isAbsolute(executable)) throw new Error('KIOKUKO_TEST_ORCA must be an absolute Orca executable path');
+const executable = process.env.KIOKUKO_TEST_AGENTICREPLAY;
+if (!executable || !path.isAbsolute(executable)) throw new Error('KIOKUKO_TEST_AGENTICREPLAY must be an absolute AgenticReplay executable path');
 if (!process.env.OPENCODE_BIN) throw new Error('OPENCODE_BIN must be set');
 const opencode = await resolveOpenCodeBinary(process.env.OPENCODE_BIN);
-const root = await realpath(await mkdtemp(path.join(tmpdir(), 'kiokuko-v2-orca-')));
+const root = await realpath(await mkdtemp(path.join(tmpdir(), 'kiokuko-v2-agenticreplay-')));
 const project = path.join(root, 'project');
 const bin = path.join(root, 'bin');
 const home = path.join(root, 'home');
@@ -21,13 +21,17 @@ await mkdir(path.join(config, 'opencode'), { recursive: true });
 await symlink(opencode, path.join(bin, process.platform === 'win32' ? 'opencode.exe' : 'opencode'));
 const environment = {
   ...process.env, HOME: home, XDG_CONFIG_HOME: config, XDG_DATA_HOME: data,
+  XDG_CACHE_HOME: path.join(root, 'cache'), XDG_STATE_HOME: path.join(root, 'state'),
   KIOKUKO_DATA_DIR: data, OPENCODE_CONFIG_CONTENT: '{}',
   OPENCODE_CONFIG_DIR: path.join(config, 'opencode'),
-  OPENCODE_CONFIG: path.join(config, 'opencode', 'opencode.jsonc'),
   OPENCODE_DISABLE_AUTOUPDATE: 'true', OPENCODE_DISABLE_DEFAULT_PLUGINS: 'true',
+  OPENCODE_DISABLE_MODELS_FETCH: 'true',
   PATH: `${bin}${path.delimiter}${path.dirname(executable)}${path.delimiter}${process.env.PATH ?? ''}`,
   NO_PROXY: '127.0.0.1,localhost', no_proxy: '127.0.0.1,localhost',
 };
+// AgenticReplay owns a run-local OpenCode 2 plugin overlay. An explicit config
+// override is unsupported upstream; the fixture uses normal config discovery.
+delete environment.OPENCODE_CONFIG;
 await requireSuccess('git', ['init', '-q'], { cwd: project, env: environment, label: 'git_init' });
 const version = await requireSuccess(opencode, ['--version'], { cwd: project, env: environment, label: 'opencode_version' });
 if (!/\bv?2\.0\.18\b/u.test(version.stdout.toString('utf8'))) throw new Error('OpenCode 2.0.18 is required');
@@ -41,9 +45,9 @@ try {
   };
   environment.OPENAI_API_KEY = 'fixture-key';
   environment.OPENAI_BASE_URL = fixture.baseURL;
-  environment.ORCA_UPSTREAM_OPENAI = new URL(fixture.baseURL).origin;
+  environment.AGENTICREPLAY_UPSTREAM_OPENAI = new URL(fixture.baseURL).origin;
   environment.OPENCODE_CONFIG_CONTENT = JSON.stringify(openCodeConfig);
-  await writeFile(environment.OPENCODE_CONFIG, `${JSON.stringify(openCodeConfig, null, 2)}\n`);
+  await writeFile(path.join(config, 'opencode', 'opencode.jsonc'), `${JSON.stringify(openCodeConfig, null, 2)}\n`);
   await writeFile(path.join(project, 'opencode.json'), `${JSON.stringify(openCodeConfig, null, 2)}\n`);
   const cli = path.resolve(import.meta.dirname, '../dist/bin/kiokuko.js');
   await access(cli);
@@ -60,10 +64,10 @@ try {
   });
   clearTimeout(timer);
   if (exit !== 0) throw new Error(`record failed:${exit}:${output.slice(-1500)}`);
-  if (fixture.stats.chatCompletions < 1) throw new Error('Orca-wrapped OpenCode did not reach the provider fixture');
-  const runs = path.join(project, '.orca', 'runs');
+  if (fixture.stats.chatCompletions < 1) throw new Error('AgenticReplay-wrapped OpenCode did not reach the provider fixture');
+  const runs = path.join(project, '.agenticreplay', 'runs');
   const ids = (await readdir(runs)).filter(value => /^run_[0-9a-f]+$/u.test(value));
-  if (ids.length !== 1) throw new Error(`expected one Orca run, found ${ids.length}`);
+  if (ids.length !== 1) throw new Error(`expected one AgenticReplay run, found ${ids.length}`);
   const run = path.join(runs, ids[0]);
   const manifest = JSON.parse(await readFile(path.join(run, 'manifest.json'), 'utf8'));
   const events = (await readFile(path.join(run, 'events.jsonl'), 'utf8')).trim().split('\n').map(line => JSON.parse(line));

@@ -38,6 +38,10 @@ const taskRunTables = [
   'enno_work_claim_receipts',
   'orcareplay_trace_cursors',
   'orcareplay_trace_context',
+  'agenticreplay_trace_stores',
+  'agenticreplay_trace_enrichment',
+  'agenticreplay_trace_cursors',
+  'agenticreplay_trace_context',
 ] as const;
 
 const taskRunIndexes = [
@@ -255,6 +259,9 @@ test('migration assets are present and checksums remain file-based', async () =>
   assert.match(trace, /CREATE TABLE orcareplay_trace_cursors/);
   assert.match(trace, /CREATE TABLE orcareplay_trace_context/);
   assert.match(trace, /'trace_ingestion'/);
+  const agentic = await readFile(path.join(migrationsDirectory, '010_agenticreplay_trace.sql'), 'utf8');
+  assert.match(agentic, /CREATE TABLE agenticreplay_trace_cursors/);
+  assert.match(agentic, /CREATE TABLE agenticreplay_trace_context/);
 });
 
 test('idempotency schema has composite uniqueness, bounded hash checks, and no raw key/request columns', async () => {

@@ -12,7 +12,7 @@ import { migrateDatabase } from '../../src/db/migrate.js';
 import { openConnection } from '../../src/db/connection.js';
 import type { SqliteDatabase } from '../../src/db/adapter.js';
 import { canonicalContentHash, type JsonObject } from '../../src/serialization/validate.js';
-import { orcaRunsDirectory } from '../../src/trace/scan.js';
+import { agenticreplayRunsDirectory } from '../../src/trace/scan.js';
 
 const capabilities = [
   { kind: 'skill' as const, name: 'kiokuko-soul', description: 'Routes work.' },
@@ -52,15 +52,15 @@ function storedContext(root:string):JsonObject {
 }
 
 function insertStoredContext(database: SqliteDatabase, root: string, context: JsonObject, digest = canonicalContentHash(context)): void {
-  const directory = orcaRunsDirectory(root);
+  const directory = agenticreplayRunsDirectory(root);
   registerTraceStore(database,{repositoryRoot:root,captureCwd:root,runsDirectory:directory});
-  database.prepare("UPDATE orcareplay_trace_stores SET state='present'").run();
+  database.prepare("UPDATE agenticreplay_trace_stores SET state='present'").run();
   upsertTraceCursor(database,{runsDirectory:directory,traceRunId:'run_abcdef123456',lastSeq:4,state:'active',now:'2026-09-07T00:00:00Z'});
   const traceRunId = context.traceRunId;
   if (typeof traceRunId !== 'string') throw new Error('test trace context is missing its run ID');
   database.prepare(`
-    INSERT INTO orcareplay_trace_context (directory, trace_run_id, digest, context_json, source, created_at, updated_at)
-    VALUES (?, ?, ?, ?, 'orcareplay', ?, ?)
+    INSERT INTO agenticreplay_trace_context (directory, trace_run_id, digest, context_json, source, created_at, updated_at)
+    VALUES (?, ?, ?, ?, 'agenticreplay', ?, ?)
   `).run(
     directory,
     traceRunId,
@@ -69,7 +69,7 @@ function insertStoredContext(database: SqliteDatabase, root: string, context: Js
     '2026-09-06T08:00:00.000Z',
     '2026-09-06T08:00:00.000Z',
   );
-  database.prepare("UPDATE orcareplay_trace_context SET reader_policy_version=2,finalization='finalized'").run();
+  database.prepare("UPDATE agenticreplay_trace_context SET reader_policy_version=2,finalization='finalized'").run();
 }
 
 test('task preparation is unchanged when no stored trace context exists', async () => {
@@ -87,10 +87,10 @@ test('attaches the newest stored trace context as explicit advisory-only data', 
   try {
     const context = storedContext(root);
     insertStoredContext(database, root, context);
-    assert.equal(database.prepare('SELECT COUNT(*) AS count FROM orcareplay_trace_context WHERE directory = ?').get<{ count: number }>(orcaRunsDirectory(root))?.count, 1);
+    assert.equal(database.prepare('SELECT COUNT(*) AS count FROM agenticreplay_trace_context WHERE directory = ?').get<{ count: number }>(agenticreplayRunsDirectory(root))?.count, 1);
     const prepared = await prepare(root, database, 'trace-advisory-with-context');
     assert.deepEqual(prepared.traceContext, {
-      source: 'orcareplay',
+      source: 'agenticreplay',
       referenceOnly: true,
       autoInstall: false,
       autoExecute: false,
@@ -116,7 +116,7 @@ test('isolates malformed trace context while continuing task preparation', async
   const { root, database } = await fixture();
   try {
     insertStoredContext(database,root,storedContext(root));
-    database.prepare("UPDATE orcareplay_trace_context SET context_json='[1,2,3]'").run();
+    database.prepare("UPDATE agenticreplay_trace_context SET context_json='[1,2,3]'").run();
     const prepared=await prepare(root,database,'trace-advisory-malformed');
     assert.equal(prepared.traceContext,undefined);
     assert.ok(prepared.warnings.some(x=>x.code==='TRACE_CONTEXT_REJECTED'));

@@ -14,21 +14,21 @@ export async function resolveTraceStoreLocation(cwd: string, repositoryRoot?: st
     const relative = path.relative(root, captureCwd);
     if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative))
         throw new TraceInputError('capture_outside_repository');
-    return { repositoryRoot: root, captureCwd, runsDirectory: path.join(captureCwd, '.orca', 'runs') };
+    return { repositoryRoot: root, captureCwd, runsDirectory: path.join(captureCwd, '.agenticreplay', 'runs') };
 }
 export function registerTraceStore(database: SqliteDatabase, location: TraceStoreLocation): void {
     // Only resolved host location data reaches this registration boundary.
     if (Object.values(location).some(x => !path.isAbsolute(x) || x.length > 4096 || /[\x00-\x1f\x7f]/u.test(x)))
         throw new TraceInputError('invalid_store_location');
-    if (location.runsDirectory !== path.join(location.captureCwd, '.orca', 'runs'))
+    if (location.runsDirectory !== path.join(location.captureCwd, '.agenticreplay', 'runs'))
         throw new TraceInputError('invalid_store_location');
-    const existing = database.prepare('SELECT repository_root AS root,capture_cwd AS cwd FROM orcareplay_trace_stores WHERE directory=?').get<{
+    const existing = database.prepare('SELECT repository_root AS root,capture_cwd AS cwd FROM agenticreplay_trace_stores WHERE directory=?').get<{
         root: string;
         cwd: string;
     }>(location.runsDirectory);
     if (existing && (existing.root !== location.repositoryRoot || existing.cwd !== location.captureCwd))
         throw new TraceInputError('store_identity_conflict');
-    database.prepare("INSERT INTO orcareplay_trace_stores(directory,repository_root,capture_cwd,state) VALUES(?,?,?,'pending') ON CONFLICT(directory) DO NOTHING").run(location.runsDirectory, location.repositoryRoot, location.captureCwd);
+    database.prepare("INSERT INTO agenticreplay_trace_stores(directory,repository_root,capture_cwd,state) VALUES(?,?,?,'pending') ON CONFLICT(directory) DO NOTHING").run(location.runsDirectory, location.repositoryRoot, location.captureCwd);
 }
 export async function validateTraceStore(location: TraceStoreLocation): Promise<'present' | 'missing'> {
     try {

@@ -1,5 +1,5 @@
 import type { SqliteDatabase } from '../db/adapter.js';
-import { TraceScanSession, scanOrcaTraceStore } from './scan.js';
+import { TraceScanSession, scanAgenticReplayTraceStore } from './scan.js';
 import { registerTraceStore, validateTraceStore, type TraceStoreLocation } from './store-location.js';
 import { TraceInputError } from './bounded-read.js';
 export class TraceDiscoveryCoordinator {
@@ -19,7 +19,7 @@ export class TraceDiscoveryCoordinator {
     async step(): Promise<void> {
         if (this.#abort.signal.aborted)
             return;
-        const stores = this.database.prepare('SELECT directory AS runsDirectory,repository_root AS repositoryRoot,capture_cwd AS captureCwd FROM orcareplay_trace_stores ORDER BY directory').all<TraceStoreLocation & Record<string, unknown>>();
+        const stores = this.database.prepare('SELECT directory AS runsDirectory,repository_root AS repositoryRoot,capture_cwd AS captureCwd FROM agenticreplay_trace_stores ORDER BY directory').all<TraceStoreLocation & Record<string, unknown>>();
         if (!stores.length)
             return;
         const store = stores[this.#index++ % stores.length]!;
@@ -27,7 +27,7 @@ export class TraceDiscoveryCoordinator {
             const state = await validateTraceStore(store);
             if (this.#abort.signal.aborted)
                 return;
-            this.database.prepare('UPDATE orcareplay_trace_stores SET state=?,diagnostic_code=NULL WHERE directory=?').run(state, store.runsDirectory);
+            this.database.prepare('UPDATE agenticreplay_trace_stores SET state=?,diagnostic_code=NULL WHERE directory=?').run(state, store.runsDirectory);
             if (state !== 'present')
                 return;
             let session = this.#sessions.get(store.runsDirectory);
@@ -37,13 +37,13 @@ export class TraceDiscoveryCoordinator {
                 session = new TraceScanSession(store.runsDirectory);
                 this.#sessions.set(store.runsDirectory, session);
             }
-            await scanOrcaTraceStore(this.database, store.runsDirectory, { session, signal: this.#abort.signal });
+            await scanAgenticReplayTraceStore(this.database, store.runsDirectory, { session, signal: this.#abort.signal });
         }
         catch (error) {
             if (!(error instanceof TraceInputError))
                 throw error;
             if (!this.#abort.signal.aborted)
-                this.database.prepare("UPDATE orcareplay_trace_stores SET state='blocked',diagnostic_code=? WHERE directory=?").run(error.code, store.runsDirectory);
+                this.database.prepare("UPDATE agenticreplay_trace_stores SET state='blocked',diagnostic_code=? WHERE directory=?").run(error.code, store.runsDirectory);
         }
     }
     start(): void {

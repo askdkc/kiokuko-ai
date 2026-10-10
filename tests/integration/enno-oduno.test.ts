@@ -453,9 +453,16 @@ test('v5 migration preserves an active lease and recovers only its exact receipt
   // Freeze the historical fixture before applying the current migration set.
   const { root, database } = await fixture(7);
   try {
+    // Current task preparation needs the new recorder tables. Use them only as
+    // fixture scaffolding, then remove them before reconstructing the v5 schema.
+    database.exec(CURRENT_MIGRATION_SNAPSHOT.migrations.find(m => m.version === 10)!.sql);
     const planned = await plannedExecution(database, root, 'legacy-lease', verifier(root, 'pass'));
     // Recreate the v5 representation: only the credential hash was persisted.
-    database.exec(`ALTER TABLE enno_execution_leases DROP COLUMN lease_token;
+    database.exec(`DROP TABLE agenticreplay_trace_enrichment;
+      DROP TABLE agenticreplay_trace_context;
+      DROP TABLE agenticreplay_trace_cursors;
+      DROP TABLE agenticreplay_trace_stores;
+      ALTER TABLE enno_execution_leases DROP COLUMN lease_token;
       DROP TRIGGER akinator_memory_source_deleted;
       DROP TRIGGER akinator_profile_session_changed;
       DROP TRIGGER akinator_profile_sources_changed;

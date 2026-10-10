@@ -20,7 +20,7 @@ export async function recordTrace(database: SqliteDatabase, options: TraceRecord
     const environment = options.environment ?? process.env;
     if (options.args.some(arg => arg === '--server' || arg.startsWith('--server='))
         || ['OPENCODE_SERVER', 'OPENCODE_SERVER_URL', 'OPENCODE_URL'].some(key => Boolean(environment[key]))) {
-        throw new KiokukoError('VALIDATION_ERROR', 'Orca recording requires a private OpenCode server; remove external server settings');
+        throw new KiokukoError('VALIDATION_ERROR', 'AgenticReplay recording requires a private OpenCode server; remove external server settings');
     }
     const location = await resolveTraceStoreLocation(options.cwd);
     registerTraceStore(database, location);
@@ -46,11 +46,11 @@ export async function recordTrace(database: SqliteDatabase, options: TraceRecord
             const invocation = requested[0] === 'run'
                 ? ['run', '--standalone', ...requested.slice(1)]
                 : ['--standalone', ...requested];
-            child = (options.spawnImpl ?? spawn)(options.executable ?? 'orca', ['record', 'opencode', '--', ...invocation], { cwd: location.captureCwd, stdio: 'inherit', shell: false, env: environment });
+            child = (options.spawnImpl ?? spawn)(options.executable ?? 'agenticreplay', ['record', 'opencode', '--', ...invocation], { cwd: location.captureCwd, stdio: 'inherit', shell: false, env: environment });
             recordExitCode = await new Promise<number>((resolve, reject) => { child!.once('error', reject); child!.once('close', (code, signal) => resolve(code ?? (signal === 'SIGINT' ? 130 : signal === 'SIGTERM' ? 143 : 1))); });
         }
         catch {
-            stderr.write('OrcaReplay could not be started. Check that orca is executable.\n');
+            stderr.write('AgenticReplay could not be started. Check that agenticreplay is executable.\n');
         }
         if (recordExitCode === 0 && lastSignal)
             recordExitCode = lastSignal === 'SIGINT' ? 130 : 143;

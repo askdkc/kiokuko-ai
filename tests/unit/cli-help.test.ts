@@ -92,7 +92,7 @@ test('registers exactly the supported OpenCode and operator commands', () => {
   ]);
 });
 
-test('exposes the bounded OrcaReplay trace scan command', () => {
+test('exposes the bounded AgenticReplay trace scan command', () => {
   const trace = buildCli().commands.find((command) => command.name() === 'trace');
   assert.ok(trace);
   const scan = trace.commands.find((command) => command.name() === 'scan');

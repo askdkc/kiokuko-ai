@@ -9,9 +9,9 @@ import { migrateDatabase } from '../../src/db/migrate.js';
 import type { SqliteDatabase } from '../../src/db/adapter.js';
 import { upsertTraceCursor } from '../../src/trace/ingest.js';
 import {
-  ORCA_TRACE_SCAN_MAX_RUNS,
-  orcaRunsDirectory,
-  scanOrcaTraceStore,
+  AGENTICREPLAY_TRACE_SCAN_MAX_RUNS,
+  agenticreplayRunsDirectory,
+  scanAgenticReplayTraceStore,
 } from '../../src/trace/scan.js';
 
 function eventLine(seq: number): string {
@@ -63,17 +63,17 @@ test('treats a missing store and an empty run as a no-op', async () => {
   const projectRoot = await mkdtemp(path.join(tmpdir(), 'kiokuko-scan-project-'));
   const databaseConnection = await database();
   try {
-    assert.deepEqual(await scanOrcaTraceStore(databaseConnection, orcaRunsDirectory(projectRoot)), {
-      runsDirectory: orcaRunsDirectory(projectRoot),
+    assert.deepEqual(await scanAgenticReplayTraceStore(databaseConnection, agenticreplayRunsDirectory(projectRoot)), {
+      runsDirectory: agenticreplayRunsDirectory(projectRoot),
       scanned: 0,
       enqueued: 0,
       skippedUnsupported: 0, storesVisited:1,discovered:0,scanComplete:true,hasMore:false,warningCodes:[],
     });
 
-    const runsDirectory = orcaRunsDirectory(projectRoot);
+    const runsDirectory = agenticreplayRunsDirectory(projectRoot);
     await mkdir(runsDirectory, { recursive: true });
     await makeRun(runsDirectory, 'run_aaaaaa', []);
-    const outcome = await scanOrcaTraceStore(databaseConnection, runsDirectory);
+    const outcome = await scanAgenticReplayTraceStore(databaseConnection, runsDirectory);
     assert.equal(outcome.scanned, 1);
     assert.equal(outcome.enqueued, 1);
   } finally {
@@ -84,14 +84,14 @@ test('treats a missing store and an empty run as a no-op', async () => {
 
 test('bounds the number of runs probed and enqueued', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'kiokuko-scan-project-'));
-  const runsDirectory = path.join(root, '.orca', 'runs');
+  const runsDirectory = path.join(root, '.agenticreplay', 'runs');
   const databaseConnection = await database();
   try {
     await mkdir(runsDirectory, { recursive: true });
-    for (let index = 0; index < ORCA_TRACE_SCAN_MAX_RUNS + 3; index += 1) {
+    for (let index = 0; index < AGENTICREPLAY_TRACE_SCAN_MAX_RUNS + 3; index += 1) {
       await makeRun(runsDirectory, `run_${index.toString(16).padStart(6, '0')}`, [0]);
     }
-    const outcome = await scanOrcaTraceStore(databaseConnection, runsDirectory, { maxRuns: 3 });
+    const outcome = await scanAgenticReplayTraceStore(databaseConnection, runsDirectory, { maxRuns: 3 });
     assert.equal(outcome.scanned, 3);
     assert.equal(outcome.enqueued, 3);
     assert.equal(jobPayloads(databaseConnection).length, 3);
@@ -103,13 +103,13 @@ test('bounds the number of runs probed and enqueued', async () => {
 
 test('deduplicates an identical scan before ingestion advances its cursor', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'kiokuko-scan-project-'));
-  const runsDirectory = path.join(root, '.orca', 'runs');
+  const runsDirectory = path.join(root, '.agenticreplay', 'runs');
   const databaseConnection = await database();
   try {
     await mkdir(runsDirectory, { recursive: true });
     await makeRun(runsDirectory, 'run_aaaaaa', [0]);
-    const first = await scanOrcaTraceStore(databaseConnection, runsDirectory, { now: '2026-09-06T08:00:00.000Z' });
-    const second = await scanOrcaTraceStore(databaseConnection, runsDirectory, { now: '2026-09-06T08:00:01.000Z' });
+    const first = await scanAgenticReplayTraceStore(databaseConnection, runsDirectory, { now: '2026-09-06T08:00:00.000Z' });
+    const second = await scanAgenticReplayTraceStore(databaseConnection, runsDirectory, { now: '2026-09-06T08:00:01.000Z' });
     assert.equal(first.enqueued, 1);
     assert.equal(second.enqueued, 0);
     assert.equal(jobPayloads(databaseConnection).length, 1);
@@ -121,7 +121,7 @@ test('deduplicates an identical scan before ingestion advances its cursor', asyn
 
 test('marks unsupported schemas and detects non-zero or gapped sequence lag', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'kiokuko-scan-project-'));
-  const runsDirectory = path.join(root, '.orca', 'runs');
+  const runsDirectory = path.join(root, '.agenticreplay', 'runs');
   const databaseConnection = await database();
   try {
     await mkdir(runsDirectory, { recursive: true });
@@ -135,7 +135,7 @@ test('marks unsupported schemas and detects non-zero or gapped sequence lag', as
       state: 'active',
       now: '2026-09-06T08:00:00.000Z',
     });
-    const outcome = await scanOrcaTraceStore(databaseConnection, runsDirectory, { now: '2026-09-06T08:00:01.000Z' });
+    const outcome = await scanAgenticReplayTraceStore(databaseConnection, runsDirectory, { now: '2026-09-06T08:00:01.000Z' });
     assert.equal(outcome.scanned, 3);
     assert.equal(outcome.enqueued, 2);
     assert.equal(outcome.skippedUnsupported, 1);

@@ -1,11 +1,11 @@
 import { z } from 'zod';
-import type { OrcaTraceEvent, OrcaTraceIntegrity } from './orca-trace.js';
+import type { AgenticReplayTraceEvent, AgenticReplayTraceIntegrity } from './agentic-trace.js';
 import type { JsonObject } from '../serialization/validate.js';
 import { findSecretInValue } from '../memory/secrets.js';
 import { KiokukoError } from '../errors.js';
 import { TRACE_LIMITS } from './bounded-read.js';
 const MAX_LISTED_ERRORS = 4, MAX_LISTED_FS_CHANGES = 8, MAX_LISTED_NOTES = 4;
-const ORCA_TRACE_MAX_MEMORY_CANDIDATES = 8;
+const AGENTICREPLAY_TRACE_MAX_MEMORY_CANDIDATES = 8;
 export interface TraceProjection {
     readonly events: number;
     readonly turns: number;
@@ -59,7 +59,7 @@ function boundedText(value: unknown, maximum: number): string | undefined {
     }
     return result;
 }
-export function applyTraceEvents(previous: TraceProjection | undefined, events: readonly OrcaTraceEvent[], warningCount = 0, skippedEventCount = 0): TraceProjection {
+export function applyTraceEvents(previous: TraceProjection | undefined, events: readonly AgenticReplayTraceEvent[], warningCount = 0, skippedEventCount = 0): TraceProjection {
     const toolCounts = new Map<string, number>((previous?.toolCalls ?? []).map(x => [x.name, x.count]));
     let otherToolCalls = previous?.otherToolCalls ?? 0;
     let overflow = previous?.overflow ?? false;
@@ -166,7 +166,7 @@ export function buildTraceMemoryCandidates(projection: TraceProjection): TraceMe
     }> = [];
     let suppressed = 0;
     const consider = (kind: 'error' | 'shell_failure' | 'note', summary: string): void => {
-        if (candidates.length >= ORCA_TRACE_MAX_MEMORY_CANDIDATES)
+        if (candidates.length >= AGENTICREPLAY_TRACE_MAX_MEMORY_CANDIDATES)
             return;
         if (findSecretInValue({ kind, summary }) !== undefined) {
             suppressed += 1;
@@ -189,7 +189,7 @@ interface TraceContextBuild {
     readonly context: JsonObject;
     readonly bounded: boolean;
 }
-export function buildTraceContext(traceRunId: string, schemaVersion: string, throughSeq: number, integrity: OrcaTraceIntegrity, projection: TraceProjection, metadata: JsonObject): TraceContextBuild {
+export function buildTraceContext(traceRunId: string, schemaVersion: string, throughSeq: number, integrity: AgenticReplayTraceIntegrity, projection: TraceProjection, metadata: JsonObject): TraceContextBuild {
     let toolCalls = [...projection.toolCalls].sort((a, b) => b.count - a.count || (a.name < b.name ? -1 : 1)).slice(0, 8).map(x => ({ ...x, name: boundedText(x.name, 200)! }));
     let errors = projection.errors;
     let fsChanges = projection.fsChanges;
@@ -197,7 +197,7 @@ export function buildTraceContext(traceRunId: string, schemaVersion: string, thr
     let detailsTruncated = projection.overflow || projection.toolCalls.length > 8 || projection.toolCalls.some(x => boundedText(x.name, 200) !== x.name);
     const build = (): JsonObject => ({
         ...metadata,
-        source: 'orcareplay',
+        source: 'agenticreplay',
         referenceOnly: true, autoInstall: false, autoExecute: false,
         completeness: { parse: projection.warningCount > 0 ? 'partial' : 'complete', warningCount: projection.warningCount, skippedEventCount: projection.skippedEventCount, detailsTruncated },
         traceRunId,

@@ -8,20 +8,20 @@ import { openConnection } from '../../src/db/connection.js';
 import { migrateDatabase } from '../../src/db/migrate.js';
 import { canonicalContentHash } from '../../src/serialization/validate.js';
 import { ingestTraceRun, readStoredTraceContext } from '../../src/trace/ingest.js';
-import { scanOrcaTraceStore } from '../../src/trace/scan.js';
+import { scanAgenticReplayTraceStore } from '../../src/trace/scan.js';
 import { createOrchestrationWorker } from '../../src/orchestration/worker.js';
-import { traceId, traceLine, writeTrace } from '../fixtures/orca-trace.js';
+import { traceId, traceLine, writeTrace } from '../fixtures/agentic-trace.js';
 async function fixture(t: test.TestContext) {
     const root = await mkdtemp(path.join(tmpdir(), 'trace-regression-'));
     const db = openConnection(path.join(root, 'db.sqlite'));
     migrateDatabase(db);
     t.after(async () => { db.close(); await rm(root, { recursive: true, force: true }); });
-    return { db, runs: path.join(root, '.orca/runs') };
+    return { db, runs: path.join(root, '.agenticreplay/runs') };
 }
 test('trace worker completes ingestion once with strict JSON results', async (t) => {
     const { db, runs } = await fixture(t);
     await writeTrace(runs, [traceLine(0, 'run.start'), traceLine(1, 'run.end')]);
-    await scanOrcaTraceStore(db, runs);
+    await scanAgenticReplayTraceStore(db, runs);
     const worker = createOrchestrationWorker({ database: db, intervalMs: 10 });
     worker.start();
     try {

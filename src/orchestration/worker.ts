@@ -85,7 +85,7 @@ async function processSemanticContext(options: OrchestrationWorkerOptions, job: 
 }
 
 async function processSkillDiscovery(options: OrchestrationWorkerOptions, job: OrchestrationJob): Promise<unknown> {
-  if (job.runId === null && job.payload.source === 'orcareplay') return enrichTraceSkills(options.database, job, options.fetchImpl);
+  if (job.runId === null && job.payload.source === 'agenticreplay') return enrichTraceSkills(options.database, job, options.fetchImpl);
   if (job.runId === null) throw new KiokukoError('INTEGRITY_ERROR', 'Skill discovery job has no run');
   const payload = objectPayload(job.payload, 'Skill discovery');
   const mode = payload.mode;
@@ -161,7 +161,7 @@ export async function processTraceIngestion(options: OrchestrationWorkerOptions,
   const payload = objectPayload(job.payload, 'Trace ingestion');
   if (findSecretInValue(payload) !== undefined || Buffer.byteLength(JSON.stringify(payload)) > 16 * 1024 || canonicalContentHash({ kind: job.kind, runId: job.runId, payload: job.payload }) !== job.inputDigest) throw new KiokukoError('INTEGRITY_ERROR', 'Trace job rejected');
   if (payload.readerPolicyVersion !== 2) return { ingested: false, reason: 'trace_policy_superseded' };
-  const progress = options.database.prepare('SELECT generation FROM orcareplay_trace_cursors WHERE directory=? AND trace_run_id=?').get<{ generation: number }>(String(payload.directory), String(payload.traceRunId));
+  const progress = options.database.prepare('SELECT generation FROM agenticreplay_trace_cursors WHERE directory=? AND trace_run_id=?').get<{ generation: number }>(String(payload.directory), String(payload.traceRunId));
   if (progress && progress.generation !== payload.generation) return { ingested: false, reason: 'trace_generation_superseded' };
   const traceRunId = requireTraceRunId(payload.traceRunId);
   const runsDirectory = payload.directory;
@@ -303,7 +303,7 @@ export async function executeTraceJob(options: OrchestrationWorkerOptions, job: 
   catch (error) {
     if ((error instanceof TraceInputError && !error.retryable) || (error instanceof KiokukoError && error.code === 'SECURITY_REJECTION')) {
       assertOrchestrationJobLease(options.database, { jobId: job.jobId, owner: job.leaseOwner! });
-      options.database.prepare("UPDATE orcareplay_trace_cursors SET finalization='blocked',diagnostic_code=? WHERE directory=? AND trace_run_id=?").run(error.code, String(job.payload.directory), String(job.payload.traceRunId));
+      options.database.prepare("UPDATE agenticreplay_trace_cursors SET finalization='blocked',diagnostic_code=? WHERE directory=? AND trace_run_id=?").run(error.code, String(job.payload.directory), String(job.payload.traceRunId));
       return { ingested: false, reason: error.code, finalization: 'blocked' };
     }
     throw error;

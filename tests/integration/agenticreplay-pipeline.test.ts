@@ -7,13 +7,14 @@ import test from 'node:test';
 import { openConnection } from '../../src/db/connection.js';
 import { migrateDatabase } from '../../src/db/migrate.js';
 import { prepareOpenCodeTask } from '../../src/akinator/opencode-task.js';
-import { scanOrcaTraceStore } from '../../src/trace/scan.js';
+import { scanAgenticReplayTraceStore } from '../../src/trace/scan.js';
 import { createOrchestrationWorker } from '../../src/orchestration/worker.js';
 import { syncTraceStore } from '../../src/trace/sync.js';
 import { readStoredTraceContext } from '../../src/trace/ingest.js';
 import { getGlobalDatabasePath } from '../../src/config/paths.js';
-import { traceId } from '../fixtures/orca-trace.js';
-const cli = path.resolve('src/bin/kiokuko.ts');
+import { traceId } from '../fixtures/agentic-trace.js';
+import { agenticreplayAliasBlock } from '../../src/commands/agentic-replay.js';
+const cli = process.env.KIOKUKO_TEST_BUILT_CLI ?? path.resolve('src/bin/kiokuko.ts');
 async function until(check: () => boolean | Promise<boolean>, ms = 10000) {
     const end = Date.now() + ms;
     while (!await check()) {
@@ -27,7 +28,7 @@ async function prepare(db: ReturnType<typeof openConnection>, root: string, id: 
         profileHints: { taskType: 'review', target: 'trace', expected: 'safe reference', constraints: null }, skillDiscoveryMode: 'off',
         capabilities: [{ kind: 'skill', name: 'kiokuko-soul' }], client: { kind: 'opencode', sessionId: 'pipeline' } });
 }
-test('real CLI wrapper waits for fake Orca final writes and delivers the cumulative snapshot', async (t) => {
+test('generated shell shortcut waits for AgenticReplay final writes and delivers the cumulative snapshot', { skip: process.platform === 'win32' }, async (t) => {
     const root = await realpath(await mkdtemp(path.join(tmpdir(), 'trace-pipeline-')));
     t.after(() => rm(root, { recursive: true, force: true }));
     execFileSync('git', ['init', '-q', root]);
@@ -38,21 +39,24 @@ test('real CLI wrapper waits for fake Orca final writes and delivers the cumulat
     const data = path.join(root, 'data');
     await mkdir(data);
     const environment = { ...process.env, HOME: root, KIOKUKO_DATA_DIR: data, KIOKUKO_SKILL_DISCOVERY: 'off', PATH: `${bin}:${process.env.PATH}` };
-    const fake = path.join(bin, 'orca');
+    const fake = path.join(bin, 'agenticreplay');
     await writeFile(fake, `#!${process.execPath}
 const fs=require('node:fs');const p=require('node:path');const crypto=require('node:crypto');const cp=require('node:child_process');
-const cwd=process.cwd(),dir=p.join(cwd,'.orca/runs/${traceId}');fs.mkdirSync(dir,{recursive:true});
+const cwd=process.cwd(),dir=p.join(cwd,'.agenticreplay/runs/${traceId}');fs.mkdirSync(dir,{recursive:true});
 fs.writeFileSync(p.join(cwd,'args.json'),JSON.stringify(process.argv.slice(2)));
 const line=(seq,type,attrs={})=>JSON.stringify({seq,type,attrs,ts:'2026-09-07T00:00:00Z',mono_us:seq,turn:0,actor:'host'});
 const file=p.join(dir,'events.jsonl');let raw=[line(0,'run.start'),line(1,'error',{kind:'compile'}),line(2,'tool.call',{name:'bash'}),line(3,'note',{rule:'demo'})].join('\\n')+'\\n';
-const manifest=()=>fs.writeFileSync(p.join(dir,'manifest.json'),JSON.stringify({schema_version:'0.1.0',run_id:'${traceId}',created_at:'2026-09-07T00:00:00Z',counts:{events:raw.split('\\n').length-1},integrity:{events_sha256:crypto.createHash('sha256').update(raw).digest('hex')}}));
+const manifest=()=>fs.writeFileSync(p.join(dir,'manifest.json'),JSON.stringify({schema_version:'0.4.0',run_id:'${traceId}',created_at:'2026-09-07T00:00:00Z',counts:{events:raw.split('\\n').length-1},integrity:{events_sha256:crypto.createHash('sha256').update(raw).digest('hex')}}));
 fs.writeFileSync(file,raw);manifest();fs.writeFileSync(p.join(cwd,'ready'),'1');
 const timer=setInterval(()=>{if(!fs.existsSync(p.join(cwd,'continue')))return;clearInterval(timer);
 cp.execFileSync(process.execPath,['-e','process.exit(0)']);
 raw+=line(4,'shell.result',{exit_code:1})+'\\n'+line(5,'run.end',{exit_code:0})+'\\n';fs.writeFileSync(file,raw);manifest();},10);
 `, { mode: 0o755 });
     const args = ['run', 'space and "quotes"', "single'quote", 'line\nbreak', '--model', 'unchanged'];
-    const child = spawn(process.execPath, ['--import', import.meta.resolve('tsx'), cli, 'trace', 'record', '--', ...args], { cwd, env: environment, stdio: ['ignore', 'pipe', 'pipe'] });
+    await writeFile(path.join(bin, 'kiokuko-ai'), `#!${process.execPath}\nconst result=require('node:child_process').spawnSync(${JSON.stringify(process.execPath)},['--import',${JSON.stringify(import.meta.resolve('tsx'))},${JSON.stringify(cli)},...process.argv.slice(2)],{stdio:'inherit'});process.exit(result.status??1);\n`, { mode: 0o755 });
+    const shellScript = path.join(root, 'shortcut.sh');
+    await writeFile(shellScript, `shopt -s expand_aliases\n${agenticreplayAliasBlock()}agenticreplay-opencode "$@"\n`);
+    const child = spawn('bash', [shellScript, ...args], { cwd, env: environment, stdio: ['ignore', 'pipe', 'pipe'] });
     let stderr = '';
     child.stderr.on('data', x => stderr += x);
     const closed = new Promise<number | null>((resolve, reject) => { child.once('error', reject); child.once('close', resolve); });
@@ -68,8 +72,8 @@ raw+=line(4,'shell.result',{exit_code:1})+'\\n'+line(5,'run.end',{exit_code:0})+
     const db = openConnection(getGlobalDatabasePath({ env: environment }));
     t.after(() => db.close());
     migrateDatabase(db);
-    const runs = path.join(cwd, '.orca/runs');
-    await scanOrcaTraceStore(db, runs);
+    const runs = path.join(cwd, '.agenticreplay/runs');
+    await scanAgenticReplayTraceStore(db, runs);
     const worker = createOrchestrationWorker({ database: db, intervalMs: 10 });
     worker.start();
     await until(() => readStoredTraceContext(db, runs, traceId) !== undefined);
@@ -119,12 +123,12 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const)
         await mkdir(bin);
         const data = path.join(root, 'data');
         await mkdir(data);
-        const fake = path.join(bin, 'orca');
+        const fake = path.join(bin, 'agenticreplay');
         await writeFile(fake, `#!${process.execPath}
  const fs=require('node:fs'),p=require('node:path'),crypto=require('node:crypto');
- const dir=p.join(process.cwd(),'.orca/runs/${traceId}');fs.mkdirSync(dir,{recursive:true});
+ const dir=p.join(process.cwd(),'.agenticreplay/runs/${traceId}');fs.mkdirSync(dir,{recursive:true});
  const line=(seq,type)=>JSON.stringify({seq,type,ts:'2026-09-07T00:00:00Z',mono_us:seq,turn:0,actor:'host'});
- const finish=()=>{const raw=line(0,'run.start')+'\\n'+line(1,'run.end')+'\\n';fs.writeFileSync(p.join(dir,'events.jsonl'),raw);fs.writeFileSync(p.join(dir,'manifest.json'),JSON.stringify({schema_version:'0.1.0',run_id:'${traceId}',counts:{events:2},integrity:{events_sha256:crypto.createHash('sha256').update(raw).digest('hex')}}));process.exit(0);};
+ const finish=()=>{const raw=line(0,'run.start')+'\\n'+line(1,'run.end')+'\\n';fs.writeFileSync(p.join(dir,'events.jsonl'),raw);fs.writeFileSync(p.join(dir,'manifest.json'),JSON.stringify({schema_version:'0.4.0',run_id:'${traceId}',counts:{events:2},integrity:{events_sha256:crypto.createHash('sha256').update(raw).digest('hex')}}));process.exit(0);};
  process.on('SIGINT',finish);process.on('SIGTERM',finish);fs.writeFileSync('ready','1');setInterval(()=>{},1000);
  `, { mode: 0o755 });
         const environment = { ...process.env, HOME: root, KIOKUKO_DATA_DIR: data, KIOKUKO_SKILL_DISCOVERY: 'off', PATH: `${bin}:${process.env.PATH}` };
@@ -139,7 +143,7 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const)
         assert.equal(await closed, signal === 'SIGINT' ? 130 : 143);
         const db = openConnection(getGlobalDatabasePath({ env: environment }));
         t.after(() => db.close());
-        assert.equal(readStoredTraceContext(db, path.join(root, '.orca/runs'), traceId)?.context.finalization, 'finalized');
+        assert.equal(readStoredTraceContext(db, path.join(root, '.agenticreplay/runs'), traceId)?.context.finalization, 'finalized');
     });
 test('parallel recordings synchronize both explicit store runs without selecting last', async (t) => {
     const root = await realpath(await mkdtemp(path.join(tmpdir(), 'trace-parallel-record-')));
@@ -147,10 +151,10 @@ test('parallel recordings synchronize both explicit store runs without selecting
     const bin = path.join(root, 'bin'), data = path.join(root, 'data');
     await mkdir(bin);
     await mkdir(data);
-    await writeFile(path.join(bin, 'orca'), `#!${process.execPath}
- const fs=require('node:fs'),p=require('node:path'),crypto=require('node:crypto');const id=process.argv.at(-1);const dir=p.join(process.cwd(),'.orca/runs',id);fs.mkdirSync(dir,{recursive:true});
+    await writeFile(path.join(bin, 'agenticreplay'), `#!${process.execPath}
+ const fs=require('node:fs'),p=require('node:path'),crypto=require('node:crypto');const id=process.argv.at(-1);const dir=p.join(process.cwd(),'.agenticreplay/runs',id);fs.mkdirSync(dir,{recursive:true});
  const raw=[{seq:0,type:'note',attrs:{rule:id}},{seq:1,type:'run.end',attrs:{}}].map(e=>JSON.stringify({...e,ts:'2026-09-07T00:00:00Z',mono_us:e.seq,turn:0,actor:'host'})).join('\\n')+'\\n';
- fs.writeFileSync(p.join(dir,'events.jsonl'),raw);fs.writeFileSync(p.join(dir,'manifest.json'),JSON.stringify({schema_version:'0.1.0',run_id:id,counts:{events:2},integrity:{events_sha256:crypto.createHash('sha256').update(raw).digest('hex')}}));
+ fs.writeFileSync(p.join(dir,'events.jsonl'),raw);fs.writeFileSync(p.join(dir,'manifest.json'),JSON.stringify({schema_version:'0.4.0',run_id:id,counts:{events:2},integrity:{events_sha256:crypto.createHash('sha256').update(raw).digest('hex')}}));
  `, { mode: 0o755 });
     const environment = { ...process.env, HOME: root, KIOKUKO_DATA_DIR: data, KIOKUKO_SKILL_DISCOVERY: 'off', PATH: `${bin}:${process.env.PATH}` };
     // Initialize before simultaneous processes so this case isolates recording/sync concurrency.
@@ -165,7 +169,7 @@ test('parallel recordings synchronize both explicit store runs without selecting
     })));
     assert.deepEqual(codes, [0, 0]);
     for (const id of ids) {
-        const context = readStoredTraceContext(db, path.join(root, '.orca/runs'), id)!.context;
+        const context = readStoredTraceContext(db, path.join(root, '.agenticreplay/runs'), id)!.context;
         assert.equal(context.traceRunId, id);
         assert.equal(context.finalization, 'finalized');
     }
@@ -181,7 +185,7 @@ test('wrapper preserves nonzero exit and distinguishes executable startup failur
     const db = openConnection(path.join(root, 'db.sqlite'));
     migrateDatabase(db);
     t.after(() => db.close());
-    const fake = path.join(root, 'orca');
+    const fake = path.join(root, 'agenticreplay');
     await writeFile(fake, `#!${process.execPath}\nprocess.exit(7);\n`, { mode: 0o755 });
     const stderr = new PassThrough();
     let text = '';

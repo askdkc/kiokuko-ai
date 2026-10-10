@@ -4,10 +4,10 @@ import { TRACE_LIMITS, TraceInputError, parseTraceJson, readBoundedTraceFile, tr
 import path from 'node:path';
 import { KiokukoError } from '../errors.js';
 import type { JsonObject, JsonValue } from '../serialization/validate.js';
-export const ORCA_TRACE_READER_POLICY_VERSION = 2 as const;
-export const ORCA_TRACE_INLINE_PAYLOAD_BYTES = TRACE_LIMITS.context;
-export const ORCA_TRACE_MAX_WARNINGS = TRACE_LIMITS.warnings;
-export const ORCA_TRACE_EVENT_TYPES = [
+export const AGENTICREPLAY_TRACE_READER_POLICY_VERSION = 2 as const;
+export const AGENTICREPLAY_TRACE_INLINE_PAYLOAD_BYTES = TRACE_LIMITS.context;
+export const AGENTICREPLAY_TRACE_MAX_WARNINGS = TRACE_LIMITS.warnings;
+export const AGENTICREPLAY_TRACE_EVENT_TYPES = [
     'run.start',
     'run.end',
     'model.request',
@@ -22,6 +22,12 @@ export const ORCA_TRACE_EVENT_TYPES = [
     'fs.change',
     'net.request',
     'net.response',
+    'retrieval.context',
+    'agent.start',
+    'agent.handoff',
+    'agent.guardrail',
+    'graph.node.start',
+    'graph.node.end',
     'session.snapshot',
     'error',
     'divergence',
@@ -30,23 +36,23 @@ export const ORCA_TRACE_EVENT_TYPES = [
     'route.decision',
     'note',
 ] as const;
-export type OrcaTraceEventType = (typeof ORCA_TRACE_EVENT_TYPES)[number];
+export type AgenticReplayTraceEventType = (typeof AGENTICREPLAY_TRACE_EVENT_TYPES)[number];
 const SUPPORTED_SCHEMA_PATTERN = /^0\.[0-9]+\.[0-9]+$/u;
-export const ORCA_TRACE_RUN_ID_PATTERN = /^run_[0-9a-f]{6,32}$/u;
+export const AGENTICREPLAY_TRACE_RUN_ID_PATTERN = /^run_[0-9a-f]{6,32}$/u;
 const BLOB_DIGEST_PATTERN = /^sha256:([0-9a-f]{64})$/u;
 const RFC3339_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/u;
-export type OrcaTraceWarningCode = 'truncated_final_line' | 'invalid_event' | 'unknown_event_type' | 'seq_gap' | 'blob_unresolved' | 'events_too_large' | 'event_line_too_large';
-export interface OrcaTraceWarning {
-    readonly code: OrcaTraceWarningCode;
+export type AgenticReplayTraceWarningCode = 'truncated_final_line' | 'invalid_event' | 'unknown_event_type' | 'seq_gap' | 'blob_unresolved' | 'events_too_large' | 'event_line_too_large';
+export interface AgenticReplayTraceWarning {
+    readonly code: AgenticReplayTraceWarningCode;
     readonly seq?: number;
     readonly detail?: string;
 }
-export interface OrcaTraceBlobDescriptor {
+export interface AgenticReplayTraceBlobDescriptor {
     readonly blobDigest: string;
     readonly bytes: number;
     readonly mediaType?: string;
 }
-export interface OrcaTraceEvent {
+export interface AgenticReplayTraceEvent {
     readonly seq: number;
     readonly ts: string;
     readonly monoUs: number;
@@ -55,11 +61,11 @@ export interface OrcaTraceEvent {
     readonly actor: string;
     readonly causes?: readonly number[];
     readonly attrs?: JsonObject;
-    readonly payload?: JsonValue | OrcaTraceBlobDescriptor;
+    readonly payload?: JsonValue | AgenticReplayTraceBlobDescriptor;
     readonly redacted?: readonly string[];
     readonly unknownType: boolean;
 }
-export interface OrcaTraceManifestView {
+export interface AgenticReplayTraceManifestView {
     readonly schemaVersion: string;
     readonly runId: string;
     readonly countsEvents?: number;
@@ -68,15 +74,15 @@ export interface OrcaTraceManifestView {
     readonly endedAt?: string;
     readonly derived?: boolean;
 }
-export type OrcaTraceReadStatus = 'ready' | 'unsupported_schema' | 'missing_manifest' | 'missing_events' | 'invalid_manifest' | 'missing_run_directory';
-export type OrcaTraceIntegrity = 'verified' | 'mismatch' | 'unavailable';
-export interface OrcaTraceRunRead {
-    readonly status: OrcaTraceReadStatus;
-    readonly integrity: OrcaTraceIntegrity;
-    readonly manifest?: OrcaTraceManifestView;
-    readonly events: readonly OrcaTraceEvent[];
+export type AgenticReplayTraceReadStatus = 'ready' | 'unsupported_schema' | 'missing_manifest' | 'missing_events' | 'invalid_manifest' | 'missing_run_directory';
+export type AgenticReplayTraceIntegrity = 'verified' | 'mismatch' | 'unavailable';
+export interface AgenticReplayTraceRunRead {
+    readonly status: AgenticReplayTraceReadStatus;
+    readonly integrity: AgenticReplayTraceIntegrity;
+    readonly manifest?: AgenticReplayTraceManifestView;
+    readonly events: readonly AgenticReplayTraceEvent[];
     readonly maxSeq: number;
-    readonly warnings: readonly OrcaTraceWarning[];
+    readonly warnings: readonly AgenticReplayTraceWarning[];
 }
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
     if (typeof value !== 'object' || value === null || Array.isArray(value))
@@ -86,11 +92,11 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
 function isSafeInteger(value: unknown): value is number {
     return typeof value === 'number' && Number.isSafeInteger(value);
 }
-function pushWarning(warnings: OrcaTraceWarning[], warning: OrcaTraceWarning): void {
-    if (warnings.length < ORCA_TRACE_MAX_WARNINGS)
+function pushWarning(warnings: AgenticReplayTraceWarning[], warning: AgenticReplayTraceWarning): void {
+    if (warnings.length < AGENTICREPLAY_TRACE_MAX_WARNINGS)
         warnings.push(warning);
 }
-export interface ParsedOrcaTraceManifest {
+export interface ParsedAgenticReplayTraceManifest {
     readonly schemaVersion: string;
     readonly runId: string;
     readonly countsEvents: number | undefined;
@@ -99,16 +105,16 @@ export interface ParsedOrcaTraceManifest {
     readonly endedAt?: string;
     readonly derived?: boolean;
 }
-export type OrcaTraceManifestRead = {
+export type AgenticReplayTraceManifestRead = {
     readonly ok: true;
-    readonly manifest: ParsedOrcaTraceManifest;
+    readonly manifest: ParsedAgenticReplayTraceManifest;
     readonly fingerprint: string;
 } | {
     readonly ok: false;
     readonly reason: 'missing_manifest' | 'invalid_manifest' | 'unsupported_schema';
     readonly schemaVersion?: string;
 };
-function parseManifest(raw: string, traceRunId: string): ParsedOrcaTraceManifest | undefined {
+function parseManifest(raw: string, traceRunId: string): ParsedAgenticReplayTraceManifest | undefined {
     let parsed: unknown;
     try {
         parsed = parseTraceJson(raw);
@@ -122,7 +128,7 @@ function parseManifest(raw: string, traceRunId: string): ParsedOrcaTraceManifest
     const runId = parsed.run_id;
     if (typeof schemaVersion !== 'string' || schemaVersion.length === 0 || schemaVersion.length > 64)
         return undefined;
-    if (typeof runId !== 'string' || !ORCA_TRACE_RUN_ID_PATTERN.test(runId) || runId !== traceRunId)
+    if (typeof runId !== 'string' || !AGENTICREPLAY_TRACE_RUN_ID_PATTERN.test(runId) || runId !== traceRunId)
         return undefined;
     const counts = isPlainRecord(parsed.counts) ? parsed.counts : undefined;
     const countsEvents = counts !== undefined && isSafeInteger(counts.events) && counts.events >= 0
@@ -148,12 +154,12 @@ function parseManifest(raw: string, traceRunId: string): ParsedOrcaTraceManifest
         derived: parsed.parent_run_id != null || parsed.fork != null || parsed.parent != null,
     };
 }
-export async function readOrcaTraceManifest(runsDirectory: string, traceRunId: string): Promise<OrcaTraceManifestRead> {
+export async function readAgenticReplayTraceManifest(runsDirectory: string, traceRunId: string): Promise<AgenticReplayTraceManifestRead> {
     if (typeof runsDirectory !== 'string' || !path.isAbsolute(runsDirectory) || runsDirectory.length > 4096) {
-        throw new KiokukoError('VALIDATION_ERROR', 'OrcaReplay runs directory must be a bounded absolute path');
+        throw new KiokukoError('VALIDATION_ERROR', 'AgenticReplay runs directory must be a bounded absolute path');
     }
-    if (typeof traceRunId !== 'string' || !ORCA_TRACE_RUN_ID_PATTERN.test(traceRunId)) {
-        throw new KiokukoError('VALIDATION_ERROR', 'OrcaReplay trace run ID is invalid');
+    if (typeof traceRunId !== 'string' || !AGENTICREPLAY_TRACE_RUN_ID_PATTERN.test(traceRunId)) {
+        throw new KiokukoError('VALIDATION_ERROR', 'AgenticReplay trace run ID is invalid');
     }
     const runDirectory = path.join(runsDirectory, traceRunId);
     let raw: string;
@@ -182,14 +188,14 @@ export async function readOrcaTraceManifest(runsDirectory: string, traceRunId: s
     }
     return { ok: true, manifest, fingerprint: createHash('sha256').update(raw).digest('hex') };
 }
-function descriptor(hex: string, bytes: number, mediaType: string | undefined): OrcaTraceBlobDescriptor {
+function descriptor(hex: string, bytes: number, mediaType: string | undefined): AgenticReplayTraceBlobDescriptor {
     return mediaType === undefined
         ? { blobDigest: hex, bytes }
         : { blobDigest: hex, bytes, mediaType };
 }
 type BlobResolution = {
     readonly ok: true;
-    readonly value?: JsonValue | OrcaTraceBlobDescriptor;
+    readonly value?: JsonValue | AgenticReplayTraceBlobDescriptor;
 } | {
     readonly ok: false;
     readonly detail: string;
@@ -213,7 +219,7 @@ export async function resolveBlobPayload(runDirectory: string, reference: Record
     const blobPath = path.join(runDirectory, 'blobs', hex.slice(0, 2), hex);
     let bytes: Buffer;
     try {
-        bytes = await readBoundedTraceFile(blobPath, traceCaptureRoot(path.dirname(runDirectory)), ORCA_TRACE_INLINE_PAYLOAD_BYTES);
+        bytes = await readBoundedTraceFile(blobPath, traceCaptureRoot(path.dirname(runDirectory)), AGENTICREPLAY_TRACE_INLINE_PAYLOAD_BYTES);
     }
     catch {
         return { ok: false, detail: `blob ${hex} is missing` };
@@ -222,7 +228,7 @@ export async function resolveBlobPayload(runDirectory: string, reference: Record
         return { ok: false, detail: `blob ${hex} does not match its digest` };
     }
     const mediaType = typeof reference.media_type === 'string' ? reference.media_type : undefined;
-    if (bytes.byteLength <= ORCA_TRACE_INLINE_PAYLOAD_BYTES) {
+    if (bytes.byteLength <= AGENTICREPLAY_TRACE_INLINE_PAYLOAD_BYTES) {
         try {
             return { ok: true, value: JSON.parse(bytes.toString('utf8')) as JsonValue };
         }
@@ -237,14 +243,14 @@ function requiresString(value: unknown): value is string {
 }
 type TraceLineParse = {
     readonly kind: 'event';
-    readonly event: OrcaTraceEvent;
+    readonly event: AgenticReplayTraceEvent;
     readonly seqGap: boolean;
 } | {
     readonly kind: 'skip';
-    readonly warning: OrcaTraceWarning;
+    readonly warning: AgenticReplayTraceWarning;
 } | {
     readonly kind: 'skipAfterSeq';
-    readonly warning: OrcaTraceWarning;
+    readonly warning: AgenticReplayTraceWarning;
     readonly seq: number;
 };
 function parseTraceLine(runDirectory: string, line: string, previousSeq: number, expandBlobs = false): Promise<TraceLineParse> {
@@ -336,7 +342,7 @@ function parseTraceLine(runDirectory: string, line: string, previousSeq: number,
         if (!resolution.ok) {
             return {
                 kind: 'event' as const,
-                event: { seq, ts, monoUs, turn, type, actor, unknownType: !ORCA_TRACE_EVENT_TYPES.includes(type as OrcaTraceEventType), ...(attrs === undefined ? {} : { attrs: attrs as JsonObject }), payload: { unresolved: true } },
+                event: { seq, ts, monoUs, turn, type, actor, unknownType: !AGENTICREPLAY_TRACE_EVENT_TYPES.includes(type as AgenticReplayTraceEventType), ...(attrs === undefined ? {} : { attrs: attrs as JsonObject }), payload: { unresolved: true } },
                 seqGap: previousSeq >= 0 && seq > previousSeq + 1,
             };
         }
@@ -350,7 +356,7 @@ function parseTraceLine(runDirectory: string, line: string, previousSeq: number,
             unknownType: boolean;
             causes?: readonly number[];
             attrs?: JsonObject;
-            payload?: JsonValue | OrcaTraceBlobDescriptor;
+            payload?: JsonValue | AgenticReplayTraceBlobDescriptor;
             redacted?: readonly string[];
         } = {
             seq,
@@ -359,7 +365,7 @@ function parseTraceLine(runDirectory: string, line: string, previousSeq: number,
             turn,
             type,
             actor,
-            unknownType: !ORCA_TRACE_EVENT_TYPES.includes(type as OrcaTraceEventType),
+            unknownType: !AGENTICREPLAY_TRACE_EVENT_TYPES.includes(type as AgenticReplayTraceEventType),
         };
         if (causes !== undefined)
             event.causes = causes as number[];
@@ -391,13 +397,13 @@ export interface TraceReadBatch {
     hasMore: boolean;
     waitingForCompleteLine: boolean;
     fileIdentity: TraceFileIdentity;
-    events: OrcaTraceEvent[];
-    warnings: OrcaTraceWarning[];
+    events: AgenticReplayTraceEvent[];
+    warnings: AgenticReplayTraceWarning[];
     warningCount: number;
     skippedEventCount: number;
 }
 export async function readTraceBatch(runs: string, id: string, options: TraceBatchOptions = {}): Promise<TraceReadBatch> {
-    if (!ORCA_TRACE_RUN_ID_PATTERN.test(id))
+    if (!AGENTICREPLAY_TRACE_RUN_ID_PATTERN.test(id))
         throw new TraceInputError('invalid_run_id');
     const target = path.join(runs, id, 'events.jsonl');
     const root = traceCaptureRoot(runs);
@@ -411,13 +417,13 @@ export async function readTraceBatch(runs: string, id: string, options: TraceBat
         await handle.close();
         throw new TraceInputError('invalid_read_bounds');
     }
-    const events: OrcaTraceEvent[] = [];
-    const warnings: OrcaTraceWarning[] = [];
+    const events: AgenticReplayTraceEvent[] = [];
+    const warnings: AgenticReplayTraceWarning[] = [];
     let warningCount = 0;
     let skippedEventCount = 0;
     let pending = Buffer.alloc(0);
     let waiting = false;
-    const warn = (warning: OrcaTraceWarning) => { warningCount++; if (warnings.length < TRACE_LIMITS.warnings)
+    const warn = (warning: AgenticReplayTraceWarning) => { warningCount++; if (warnings.length < TRACE_LIMITS.warnings)
         warnings.push({ code: warning.code }); };
     const consume = async (line: Buffer, raw: Buffer) => {
         options.signal?.throwIfAborted();
@@ -498,8 +504,8 @@ export async function readTraceBatch(runs: string, id: string, options: TraceBat
     }
 }
 /** Bounded inspection API. Ingestion uses the resumable batch API. */
-export async function readOrcaTraceRun(runsDirectory: string, traceRunId: string): Promise<OrcaTraceRunRead> {
-    const read = await readOrcaTraceManifest(runsDirectory, traceRunId);
+export async function readAgenticReplayTraceRun(runsDirectory: string, traceRunId: string): Promise<AgenticReplayTraceRunRead> {
+    const read = await readAgenticReplayTraceManifest(runsDirectory, traceRunId);
     if (!read.ok)
         return { status: read.reason, integrity: 'unavailable', events: [], maxSeq: -1, warnings: [] };
     const hash = createHash('sha256');
@@ -509,7 +515,7 @@ export async function readOrcaTraceRun(runsDirectory: string, traceRunId: string
     return { status: 'ready', integrity, manifest: manifestView(read.manifest), events: batch.events, maxSeq: batch.lastSeq,
         warnings: [...batch.warnings, ...(batch.waitingForCompleteLine ? [{ code: 'truncated_final_line' as const }] : [])] };
 }
-function manifestView(manifest: ParsedOrcaTraceManifest): OrcaTraceManifestView {
+function manifestView(manifest: ParsedAgenticReplayTraceManifest): AgenticReplayTraceManifestView {
     return { schemaVersion: manifest.schemaVersion, runId: manifest.runId,
         ...(manifest.countsEvents === undefined ? {} : { countsEvents: manifest.countsEvents }),
         ...(manifest.eventsSha256 === undefined ? {} : { eventsSha256: manifest.eventsSha256 }),

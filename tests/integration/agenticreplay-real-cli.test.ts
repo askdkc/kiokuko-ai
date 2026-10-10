@@ -10,11 +10,11 @@ import { syncTraceStore } from '../../src/trace/sync.js';
 import { findSecretInValue } from '../../src/memory/secrets.js';
 import { readTraceCursor } from '../../src/trace/ingest.js';
 // Explicit opt-in: never download or update the user's global installation.
-const executable = process.env.KIOKUKO_TEST_ORCA;
-const pinnedVersion = '0.2.1';
-test('real OrcaReplay 0.2.1 output seals a fake OpenCode run and imports with verified integrity', { skip: !executable ? 'Set KIOKUKO_TEST_ORCA to an installed OrcaReplay 0.2.1 executable' : false }, async (t) => {
+const executable = process.env.KIOKUKO_TEST_AGENTICREPLAY;
+const pinnedVersion = '0.1.2';
+test('real AgenticReplay 0.1.2 output seals a fake OpenCode run and imports with verified integrity', { skip: !executable ? 'Set KIOKUKO_TEST_AGENTICREPLAY to an installed AgenticReplay 0.1.2 executable' : false }, async (t) => {
     assert.equal(execFileSync(executable!, ['--version'], { encoding: 'utf8', timeout: 5000 }).trim(), pinnedVersion);
-    const root = await realpath(await mkdtemp(path.join(tmpdir(), 'orca-real-contract-')));
+    const root = await realpath(await mkdtemp(path.join(tmpdir(), 'agenticreplay-real-contract-')));
     t.after(() => rm(root, { recursive: true, force: true }));
     execFileSync('git', ['init', '-q', root]);
     const bin = path.join(root, 'bin');
@@ -27,11 +27,11 @@ test('real OrcaReplay 0.2.1 output seals a fake OpenCode run and imports with ve
     const timer = setTimeout(() => child.kill('SIGKILL'), 30000);
     const exit = await new Promise<number | null>((resolve, reject) => { child.once('error', reject); child.once('close', resolve); });
     clearTimeout(timer);
-    const runs = path.join(root, '.orca/runs');
+    const runs = path.join(root, '.agenticreplay/runs');
     const ids = (await readdir(runs)).filter(x => /^run_[0-9a-f]+$/.test(x));
     assert.equal(ids.length, 1, output);
     const manifest = JSON.parse(await readFile(path.join(runs, ids[0]!, 'manifest.json'), 'utf8'));
-    assert.ok(manifest.ended_at);
+    assert.ok(manifest.ended_at, output);
     const events = (await readFile(path.join(runs, ids[0]!, 'events.jsonl'), 'utf8')).trim().split('\n').map(x => JSON.parse(x));
     for (const event of events) {
         for (const [key, value] of Object.entries(event.attrs ?? {})) {
@@ -49,5 +49,5 @@ test('real OrcaReplay 0.2.1 output seals a fake OpenCode run and imports with ve
     assert.equal(cursor.finalization, 'finalized');
     assert.equal(cursor.integrity, 'verified');
     assert.equal(cursor.aggregate?.exitCode, 7);
-    t.diagnostic(`Orca ${pinnedVersion}: child exit=7, Orca CLI exit=${exit}, events=${cursor.aggregate?.events}, seq=${cursor.lastSeq}`);
+    t.diagnostic(`AgenticReplay ${pinnedVersion}: child exit=7, AgenticReplay CLI exit=${exit}, events=${cursor.aggregate?.events}, seq=${cursor.lastSeq}`);
 });

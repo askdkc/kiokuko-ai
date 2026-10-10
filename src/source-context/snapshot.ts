@@ -8,7 +8,7 @@ import { findSecret } from '../memory/secrets.js';
 import { runSourceProcess, SourceFailure } from './process.js';
 
 const SOURCE_EXTENSIONS = new Set(['.ts', '.mts', '.cts', '.tsx', '.js', '.mjs', '.cjs', '.jsx', '.py', '.pyi', '.go', '.rs', '.c', '.h', '.cpp', '.hpp', '.cc', '.cs', '.swift', '.java', '.rb', '.php', '.lua', '.ex', '.exs', '.sh', '.bash', '.md', '.markdown', '.json', '.toml', '.yaml', '.yml']);
-const EXCLUDED = new Set(['.git', 'node_modules', 'dist', 'coverage', '.codex', '.agents', '.orca', '.kiokuko.json', '.ripwire_notes']);
+const EXCLUDED = new Set(['.git', 'node_modules', 'dist', 'coverage', '.codex', '.agents', '.orca', '.agenticreplay', '.kiokuko.json', '.ripwire_notes']);
 export interface SourceSnapshot { root: string; digest: string; files: Map<string, Buffer>; excluded: number }
 export async function canonicalSourceRoot(cwd: string, signal: AbortSignal): Promise<string> {
   if (!path.isAbsolute(cwd) || /[\p{Cc}\p{Cf}]/u.test(cwd)) throw new KiokukoError('VALIDATION_ERROR', 'Source cwd must be an absolute directory');

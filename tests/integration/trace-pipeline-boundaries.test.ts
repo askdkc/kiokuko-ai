@@ -10,23 +10,23 @@ import { migrateDatabase } from '../../src/db/migrate.js';
 import { recordEntry } from '../../src/memory/entries.js';
 import { recordTaskContextRevision } from '../../src/context/revisions.js';
 import { ingestTraceRun, readTraceCursor, readStoredTraceContext } from '../../src/trace/ingest.js';
-import { readTraceBatch, readOrcaTraceManifest, resolveBlobPayload } from '../../src/trace/orca-trace.js';
+import { readTraceBatch, readAgenticReplayTraceManifest, resolveBlobPayload } from '../../src/trace/agentic-trace.js';
 import { TraceInputError, TRACE_LIMITS, parseTraceJson } from '../../src/trace/bounded-read.js';
 import { applyTraceEvents, buildTraceContext } from '../../src/trace/aggregate.js';
-import { TraceScanSession, scanOrcaTraceStore } from '../../src/trace/scan.js';
+import { TraceScanSession, scanAgenticReplayTraceStore } from '../../src/trace/scan.js';
 import { TraceDiscoveryCoordinator } from '../../src/trace/discovery.js';
 import { syncTraceStore } from '../../src/trace/sync.js';
 import { resolveTraceStoreLocation, registerTraceStore } from '../../src/trace/store-location.js';
 import { canonicalContentHash } from '../../src/serialization/validate.js';
 import { enqueueOrchestrationJob, claimOrchestrationJobs } from '../../src/orchestration/jobs.js';
-import { traceId, traceLine, writeTrace } from '../fixtures/orca-trace.js';
+import { traceId, traceLine, writeTrace } from '../fixtures/agentic-trace.js';
 async function fixture(t: test.TestContext) {
     const root = await realpath(await mkdtemp(path.join(tmpdir(), 'trace-bounds-')));
     const dbpath = path.join(root, 'db.sqlite');
     const db = openConnection(dbpath);
     migrateDatabase(db);
     t.after(async () => { db.close(); await rm(root, { recursive: true, force: true }); });
-    return { root, db, dbpath, runs: path.join(root, '.orca/runs') };
+    return { root, db, dbpath, runs: path.join(root, '.agenticreplay/runs') };
 }
 const completed = [traceLine(0, 'run.start'), traceLine(1, 'error', { kind: 'compile' }), traceLine(2, 'note', { rule: 'demo' }), traceLine(3, 'run.end')];
 test('tiny batches advance byte offsets and retain a Unicode line until LF arrives', async (t) => {
@@ -83,9 +83,9 @@ test('manifest-only finalization and unsupported manifest recovery do not depend
     assert.equal(out.finalization, 'finalized');
     assert.equal((await stat(path.join(runs, traceId, 'events.jsonl'))).mtimeMs, before.mtimeMs);
     await writeFile(file, '{"schema_version":');
-    assert.equal((await readOrcaTraceManifest(runs, traceId)).ok, false);
+    assert.equal((await readAgenticReplayTraceManifest(runs, traceId)).ok, false);
     await writeFile(file, JSON.stringify(manifest));
-    assert.equal((await readOrcaTraceManifest(runs, traceId)).ok, true);
+    assert.equal((await readAgenticReplayTraceManifest(runs, traceId)).ok, true);
 });
 test('two SQLite connections reject stale commit and preserve exactly one aggregate', async (t) => {
     const { db, runs, dbpath } = await fixture(t);
@@ -130,7 +130,7 @@ test('11 runs progress in batches of three while a hot run changes', async (t) =
         await writeTrace(runs, [traceLine(0, 'run.start')], '0.1.0', `run_${i.toString(16).padStart(6, '0')}`);
     for (let i = 0; i < 4; i++) {
         await writeTrace(runs, [traceLine(0, 'run.start'), traceLine(1, 'note', { rule: `hot${i}` })], '0.1.0', 'run_000000');
-        const out = await scanOrcaTraceStore(db, runs, { session, maxRuns: 3 });
+        const out = await scanAgenticReplayTraceStore(db, runs, { session, maxRuns: 3 });
         assert.ok(out.scanned <= 3);
     }
     const rows = db.prepare("SELECT DISTINCT json_extract(payload_json,'$.traceRunId') AS id FROM orchestration_jobs WHERE kind='trace_ingestion'").all();
@@ -169,7 +169,7 @@ for (const kind of ['manifest', 'events', 'run', 'fifo'] as const)
             execFileSync('mkfifo', [target]);
         else
             await symlink(saved, target);
-        await assert.rejects(() => kind === 'manifest' || kind === 'run' ? readOrcaTraceManifest(runs, traceId) : readTraceBatch(runs, traceId), e => e instanceof TraceInputError);
+        await assert.rejects(() => kind === 'manifest' || kind === 'run' ? readAgenticReplayTraceManifest(runs, traceId) : readTraceBatch(runs, traceId), e => e instanceof TraceInputError);
         assert.ok(await stat(saved));
     });
 test('manifest line JSON and explicit blob budgets reject before unbounded allocation', async (t) => {
@@ -177,7 +177,7 @@ test('manifest line JSON and explicit blob budgets reject before unbounded alloc
     await writeTrace(runs, completed);
     const dir = path.join(runs, traceId);
     await writeFile(path.join(dir, 'manifest.json'), 'x'.repeat(TRACE_LIMITS.manifest + 1));
-    await assert.rejects(() => readOrcaTraceManifest(runs, traceId), e => e instanceof TraceInputError);
+    await assert.rejects(() => readAgenticReplayTraceManifest(runs, traceId), e => e instanceof TraceInputError);
     await writeTrace(runs, [traceLine(0, 'note', { detail: 'x'.repeat(TRACE_LIMITS.line) })]);
     await assert.rejects(() => readTraceBatch(runs, traceId), e => e instanceof TraceInputError);
     assert.throws(() => parseTraceJson('{"a":1,"a":2}'));
@@ -371,7 +371,7 @@ test('off and failed optional skill enrichment leave finalized context and candi
     }>()!.n, 0);
     const cursor = readTraceCursor(db, runs, traceId)!;
     const context = readStoredTraceContext(db, runs, traceId)!;
-    enqueueOrchestrationJob(db, { kind: 'skill_discovery', payload: { source: 'orcareplay', directory: runs, traceRunId: traceId, generation: cursor.generation, readerPolicyVersion: 2, sourceDigest: context.context.sourceDigest!, mode: 'official', queries: ['typescript'] } });
+    enqueueOrchestrationJob(db, { kind: 'skill_discovery', payload: { source: 'agenticreplay', directory: runs, traceRunId: traceId, generation: cursor.generation, readerPolicyVersion: 2, sourceDigest: context.context.sourceDigest!, mode: 'official', queries: ['typescript'] } });
     const [job] = claimOrchestrationJobs(db, { owner: 'enrich', kinds: ['skill_discovery'], limit: 1 });
     const { enrichTraceSkills } = await import('../../src/trace/enrichment.js');
     await enrichTraceSkills(db, job!, async () => { throw Error('offline'); });
@@ -450,7 +450,7 @@ test('aggregate budget also holds for maximum details with heavily escaped strin
 test('sync timeout preserves a different owner lease and reports partial completion', async (t) => {
     const { db, runs, root } = await fixture(t);
     await writeTrace(runs, completed);
-    await scanOrcaTraceStore(db, runs);
+    await scanAgenticReplayTraceStore(db, runs);
     const [job] = claimOrchestrationJobs(db, { owner: 'external-worker', kinds: ['trace_ingestion'], leaseMs: 120000 });
     assert.ok(job);
     const result = await syncTraceStore(db, { captureCwd: root, timeoutMs: 20 });
@@ -469,7 +469,7 @@ test('canonical capture aliases deduplicate one registration', async (t) => {
     assert.deepEqual(a, b);
     registerTraceStore(db, a);
     registerTraceStore(db, b);
-    assert.equal(db.prepare('SELECT COUNT(*) AS n FROM orcareplay_trace_stores').get<{
+    assert.equal(db.prepare('SELECT COUNT(*) AS n FROM agenticreplay_trace_stores').get<{
         n: number;
     }>()!.n, 1);
 });

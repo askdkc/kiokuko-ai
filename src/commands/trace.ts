@@ -6,7 +6,7 @@ import type { Command } from 'commander';
 import type { SqliteDatabase } from '../db/adapter.js';
 import { KiokukoError } from '../errors.js';
 import { successEnvelope } from '../serialization/envelope.js';
-import { ORCA_TRACE_SCAN_MAX_RUNS, orcaRunsDirectory, scanOrcaTraceStore, } from '../trace/scan.js';
+import { AGENTICREPLAY_TRACE_SCAN_MAX_RUNS, agenticreplayRunsDirectory, scanAgenticReplayTraceStore, } from '../trace/scan.js';
 export interface TraceCommandDependencies {
     readonly cwd?: () => string;
     readonly output?: NodeJS.WritableStream;
@@ -28,11 +28,11 @@ export function registerTraceCommands(cli: Command, dependencies: TraceCommandDe
         process.exitCode = code; };
     const emit = (name: string, json: boolean | undefined, data: unknown) => output.write(json ? `${JSON.stringify(successEnvelope(name, data))}\n` : `${JSON.stringify(data)}\n`);
     const cwd = () => dependencies.cwd?.() ?? process.cwd();
-    const trace = cli.command('trace').description('Inspect the read-only OrcaReplay trace store');
+    const trace = cli.command('trace').description('Inspect the read-only AgenticReplay trace store');
     trace.command('scan')
-        .description('Probe .orca/runs and enqueue bounded trace ingestion jobs')
-        .option('--project-root <path>', 'Project root containing .orca/runs', process.cwd())
-        .option('--max-runs <number>', 'Maximum runs to inspect', String(ORCA_TRACE_SCAN_MAX_RUNS))
+        .description('Probe .agenticreplay/runs and enqueue bounded trace ingestion jobs')
+        .option('--project-root <path>', 'Project root containing .agenticreplay/runs', process.cwd())
+        .option('--max-runs <number>', 'Maximum runs to inspect', String(AGENTICREPLAY_TRACE_SCAN_MAX_RUNS))
         .option('--json', 'Emit a JSON response')
         .action(async (options: {
         projectRoot: string;
@@ -43,7 +43,7 @@ export function registerTraceCommands(cli: Command, dependencies: TraceCommandDe
         const location = await resolveTraceStoreLocation(projectRoot);
         const data = await dependencies.withDatabase((database) => {
             registerTraceStore(database, location);
-            return scanOrcaTraceStore(database, location.runsDirectory, { maxRuns: parseRunLimit(options.maxRuns) });
+            return scanAgenticReplayTraceStore(database, location.runsDirectory, { maxRuns: parseRunLimit(options.maxRuns) });
         });
         emit('trace.scan', options.json, data);
     });
@@ -64,7 +64,7 @@ export function registerTraceCommands(cli: Command, dependencies: TraceCommandDe
         const data = await dependencies.withDatabase(db => traceStatus(db, location));
         emit('trace.status', options.json, data);
     });
-    trace.command('record').description('Record OpenCode and synchronize after Orca exits')
+    trace.command('record').description('Record OpenCode and synchronize after AgenticReplay exits')
         .option('--sync-timeout-ms <number>', 'Post-recording deadline', '120000').argument('[args...]', 'OpenCode arguments after --')
         .action(async (args: string[], options: {
         syncTimeoutMs: string;

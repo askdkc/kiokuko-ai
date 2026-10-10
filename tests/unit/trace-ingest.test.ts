@@ -8,7 +8,7 @@ import { openConnection } from '../../src/db/connection.js';
 import { migrateDatabase } from '../../src/db/migrate.js';
 import { KiokukoError } from '../../src/errors.js';
 import {
-  ORCA_TRACE_CONTEXT_MAX_BYTES,
+  AGENTICREPLAY_TRACE_CONTEXT_MAX_BYTES,
   ingestTraceRun,
   readStoredTraceContext,
   readTraceCursor,
@@ -17,7 +17,7 @@ import {
 } from '../../src/trace/ingest.js';
 
 const RUN_ID = 'run_abcdef123456';
-const RUNS_DIRECTORY = '/tmp/orca-replay';
+const RUNS_DIRECTORY = '/tmp/agentic-replay';
 
 function eventLine(seq: number, type: string, attrs: Record<string, unknown> = {}): string {
   return JSON.stringify({
@@ -143,7 +143,7 @@ test('ingests a ready run exactly once and advances the cursor', async () => {
 
     const stored = readStoredTraceContext(db, base, RUN_ID);
     assert.ok(stored !== undefined);
-    assert.equal(stored.context.source, 'orcareplay');
+    assert.equal(stored.context.source, 'agenticreplay');
     assert.equal((stored.context.summary as { events: number }).events, 7);
     assert.equal((stored.context.summary as { runEnded: boolean }).runEnded, true);
 
@@ -154,7 +154,7 @@ test('ingests a ready run exactly once and advances the cursor', async () => {
     const second = await ingestTraceRun(db, { runsDirectory: base, traceRunId: RUN_ID, fromSeq: 0, fetchImpl });
     assert.equal(second.ingested, false);
     assert.equal(second.reason, 'already_ingested');
-    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM orcareplay_trace_context").get<{ count: number }>()?.count, 1);
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM agenticreplay_trace_context").get<{ count: number }>()?.count, 1);
   } finally {
     db.close();
     await rm(base, { recursive: true, force: true });
@@ -175,8 +175,8 @@ test('rejects secret-shaped trace context and persists nothing', async () => {
       () => ingestTraceRun(db, { runsDirectory: base, traceRunId: RUN_ID, fromSeq: 0 }),
       (error: unknown) => (error as KiokukoError).code === 'SECURITY_REJECTION',
     );
-    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM orcareplay_trace_context").get<{ count: number }>()?.count, 0);
-    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM orcareplay_trace_cursors").get<{ count: number }>()?.count, 0);
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM agenticreplay_trace_context").get<{ count: number }>()?.count, 0);
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM agenticreplay_trace_cursors").get<{ count: number }>()?.count, 0);
     assert.equal(db.prepare("SELECT COUNT(*) AS count FROM orchestration_jobs WHERE kind = 'memory_promotion'").get<{ count: number }>()?.count, 0);
   } finally {
     db.close();
@@ -198,7 +198,7 @@ test('bounds the stored context to the configured maximum', async () => {
     assert.equal(outcome.ingested, true);
     const stored = readStoredTraceContext(db, base, RUN_ID);
     assert.ok(stored !== undefined);
-    assert.ok(Buffer.byteLength(JSON.stringify(stored.context), 'utf8') <= ORCA_TRACE_CONTEXT_MAX_BYTES);
+    assert.ok(Buffer.byteLength(JSON.stringify(stored.context), 'utf8') <= AGENTICREPLAY_TRACE_CONTEXT_MAX_BYTES);
     const notes = (stored.context.summary as { notes: unknown[] }).notes;
     assert.ok(notes.length < 40);
   } finally {
@@ -236,7 +236,7 @@ test('enqueues memory promotion only when the run ended with candidates', async 
     const jobs = db.prepare("SELECT payload_json AS payload FROM orchestration_jobs WHERE kind = 'memory_promotion'").all<{ payload: string }>();
     assert.equal(jobs.length, 1);
     const payload = JSON.parse(jobs[0]!.payload) as { source: string; candidates: unknown[] };
-    assert.equal(payload.source, 'orcareplay');
+    assert.equal(payload.source, 'agenticreplay');
     assert.equal(payload.candidates.length, 3);
   } finally {
     db.close();
@@ -265,8 +265,8 @@ test('rejects an invalid stored context with an integrity error', async () => {
   const db = await database();
   try {
     db.prepare(`
-      INSERT INTO orcareplay_trace_context (directory, trace_run_id, digest, context_json, source, created_at, updated_at)
-      VALUES (?, ?, ?, ?, 'orcareplay', ?, ?)
+      INSERT INTO agenticreplay_trace_context (directory, trace_run_id, digest, context_json, source, created_at, updated_at)
+      VALUES (?, ?, ?, ?, 'agenticreplay', ?, ?)
     `).run(RUNS_DIRECTORY, RUN_ID, 'a'.repeat(64), '[1,2,3]', '2026-09-06T08:00:00.000Z', '2026-09-06T08:00:00.000Z');
     assert.throws(
       () => readStoredTraceContext(db, RUNS_DIRECTORY, RUN_ID),

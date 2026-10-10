@@ -5,7 +5,7 @@ export const traceId = 'run_abcdef123456';
 export function traceLine(seq: number, type: string, attrs = {}): string {
     return JSON.stringify({ seq, type, attrs, ts: '2026-09-07T00:00:00Z', mono_us: seq, turn: 0, actor: 'host' });
 }
-export async function writeTrace(runs: string, lines: string[], schema = '0.1.0', id = traceId): Promise<void> {
+export async function writeTrace(runs: string, lines: string[], schema = '0.4.0', id = traceId): Promise<void> {
     const directory = path.join(runs, id);
     await mkdir(directory, { recursive: true });
     const raw = `${lines.join('\n')}\n`;

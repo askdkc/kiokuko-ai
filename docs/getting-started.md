@@ -44,7 +44,7 @@ Setup refreshes only supported Kiokuko project instructions. Valid newer templat
 and DSH-owned blocks are reported as preserved, without rewriting their files or
 bindings. Malformed markers, unreadable paths, and identity mismatches remain errors.
 Repeated setup keeps the configured discovery mode and recognizes an already
-installed OrcaReplay integration with its managed alias.
+installed AgenticReplay integration with its managed alias.
 
 Restart OpenCode after setup. Use `kiokuko-ai doctor --json` for static checks and
 `kiokuko-ai doctor --opencode-url http://127.0.0.1:4096 --json` for an explicit

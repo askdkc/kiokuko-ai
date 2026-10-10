@@ -1,9 +1,12 @@
-# OrcaReplay integration
+# AgenticReplay integration
 
-Kiokuko treats `.orca` as untrusted, read-only input.
+The recorder is [AgenticReplay](https://github.com/askdkc/AgenticReplay).
+Install it with `npm install --global agenticreplay`.
+
+Kiokuko treats `.agenticreplay` as untrusted, read-only input.
 
 Use the Kiokuko wrapper to record OpenCode and import the final events after
-OrcaReplay exits:
+AgenticReplay exits:
 
 ```sh
 kiokuko-ai trace record --
@@ -12,20 +15,25 @@ kiokuko-ai trace record --sync-timeout-ms 120000 -- run 'Run the tests'
 ```
 
 The wrapper preserves the capture working directory, passes arguments as an
-array to `orca record opencode -- ...`, inserts OpenCode v2's `--standalone`
+array to `agenticreplay record opencode -- ...`, inserts OpenCode v2's `--standalone`
 after `run` (or at the top level for an interactive launch), and inherits the
 terminal streams. It rejects `--server` and external server environment settings
 before recording so the trace cannot silently attach to a shared service.
 The ordinary recording has no time limit; the timeout applies to synchronization
-after Orca exits. No model configuration is changed by Kiokuko.
+after AgenticReplay exits. No model configuration is changed by Kiokuko.
+
+AgenticReplay 0.1.2 creates a run-local plugin overlay for OpenCode 2 and rejects
+an existing `OPENCODE_CONFIG` override. Use normal config-file discovery or
+`OPENCODE_CONFIG_CONTENT` for a supported recording; Kiokuko preserves the
+environment and does not silently discard that override.
 
 ## Setup
 
-Interactive `kiokuko-ai setup` offers OrcaReplay installation and separately asks
+Interactive `kiokuko-ai setup` offers AgenticReplay installation and separately asks
 before editing the displayed absolute shell configuration path. The shorthand is:
 
 ```sh
-alias orca-opencode='kiokuko-ai trace record --'
+alias agenticreplay-opencode='kiokuko-ai trace record --'
 ```
 
 For zsh, the target is `$ZDOTDIR/.zshrc` when ZDOTDIR is set to an absolute path,
@@ -51,14 +59,14 @@ The coordinator closes its timers and directory handles before the worker and DB
 
 A store belongs to a canonical repository location and a canonical capture CWD.
 The default root store and explicitly registered subdirectory stores are checked.
-A pending registration can precede Orca creating `.orca/runs`. No recursive search
+A pending registration can precede AgenticReplay creating `.agenticreplay/runs`. No recursive search
 for stores is performed, and a manifest's `cwd` does not authorize registration.
 Other worktrees do not inherit trace references through a shared repository ID.
 
 Live ingestion starts once the MCP database runtime has initialized. Direct
-`orca record opencode` also works, but its final events are collected by a later
+`agenticreplay record opencode` also works, but its final events are collected by a later
 MCP scan or explicit sync; an OpenCode shutdown hook cannot collect writes that
-Orca performs after OpenCode exits.
+AgenticReplay performs after OpenCode exits.
 
 ## Scan, sync and status
 
@@ -90,7 +98,7 @@ Curator/user approval is still required, never automatic global promotion.
 
 Sync exits with 0 for completion (including a live snapshot), 3 for partial
 completion, interruption or rejected input. Argument/configuration failures use
-the CLI error envelope. The wrapper preserves Orca's nonzero exit code. POSIX
+the CLI error envelope. The wrapper preserves AgenticReplay's nonzero exit code. POSIX
 SIGINT/SIGTERM are forwarded and map to 130/143 when the child exits successfully
 after interception. A further interruption during sync aborts it. Windows has no
 POSIX foreground-group guarantee.
@@ -125,7 +133,7 @@ are explicit. The displayed list is not a claim of exact top tools after overflo
 
 The ordinary reader validates blob references but never opens their bodies.
 The optional small-blob API checks actual bytes and digest under its limit.
-Manifest/events and all `.orca` components reject symlinks and nonregular files,
+Manifest/events and all `.agenticreplay` components reject symlinks and nonregular files,
 including FIFOs. Reads bind file descriptors to checked identities and reject
 observed replacement, truncation and mutation. Filesystem syscalls on a stalled
 mount cannot be forcibly cancelled by a JavaScript timer. Portable Node checks do
@@ -169,33 +177,44 @@ validated before returning `referenceOnly: true`, `autoInstall: false`,
 are not hidden. With no trace there is no extra field, warning or network request.
 Delivered references remain immutable snapshots in task-context revisions.
 
-Migration 004 preserves normal memory and task history. Old trace contexts stay
-at policy 1 and are excluded from new delivery; their progress restarts at byte 0
-in a new generation. Missing originals are not reconstructed from old summaries.
+Migration 004 is retained as immutable historical migration history. Migration
+010 preserves normal memory and task history, retains legacy trace rows separately,
+and creates empty active AgenticReplay tables. Missing originals are not
+reconstructed from old summaries.
 `--rebuild` only resets derived progress and starts a generation; neither migration
-nor recovery deletes, repairs or writes the `.orca` original.
+nor recovery deletes, repairs or writes the `.agenticreplay` original.
 
 ## Verification
 
 The v2 live capture check needs a pinned OpenCode 2.0.18 binary and an installed
-Orca executable. It runs both under a temporary HOME, routes a local fixture
-provider through Orca's proxy, and checks that model request/response events are
+AgenticReplay executable. It runs both under a temporary HOME, routes a local fixture
+provider through AgenticReplay's proxy, and checks that model request/response events are
 sealed and ingested:
 
 ```sh
 OPENCODE_BIN=/absolute/path/to/opencode \
-KIOKUKO_TEST_ORCA=/absolute/path/to/orca \
-npm run test:e2e:opencode:orca
+KIOKUKO_TEST_AGENTICREPLAY=/absolute/path/to/agenticreplay \
+npm run test:e2e:opencode:agenticreplay
 ```
 
-See [the earlier implementation verification record](orcareplay-verification.md)
-for the historical 0.2.1 contract. Its opt-in test uses a fake OpenCode
+See [the verification recipe](agenticreplay-verification.md).
+The opt-in test uses a fake OpenCode
 executable and no paid model API:
 
 ```sh
-KIOKUKO_TEST_ORCA=/absolute/path/to/orca node scripts/run-tests.mjs tests/integration/orcareplay-real-cli.test.ts
+KIOKUKO_TEST_AGENTICREPLAY=/absolute/path/to/agenticreplay node scripts/run-tests.mjs tests/integration/agenticreplay-real-cli.test.ts
 ```
 
-That historical test pins OrcaReplay 0.2.1 and otherwise reports an explicit
+That test pins AgenticReplay 0.1.2 and otherwise reports an explicit
 skip. Foreground process-group Ctrl-C in an interactive TUI requires a separate
 PTY check; the signal fixture checks the wrapper's forwarding and final sync.
+
+## Migration from OrcaReplay
+
+Migration 010 creates independent `agenticreplay_trace_*` tables. Historical
+`orcareplay_trace_*` rows and released migration checksums are preserved, but
+legacy stores are not scanned or delivered and pending legacy jobs are retired.
+Existing user memories and immutable task snapshots are retained.
+Setup upgrades only the exact managed `orca-opencode` block to
+`agenticreplay-opencode`; custom aliases and mixed blocks require manual editing.
+The old executable and `.orca` stores are no longer supported by the active pipeline.

@@ -7,23 +7,25 @@ import { atomicReplaceTextWithGuard, assertAtomicCleanupComplete } from '../agen
 import type { PathEnvironment } from '../config/paths.js';
 import { basename, dirname, join, isAbsolute } from 'node:path';
 import { createInterface } from 'node:readline/promises';
-const ORCA_PACKAGE = 'orcareplay';
-const ORCA_ALIAS_MARKER = '# managed by kiokuko-ai setup: orca-opencode';
-const ORCA_ALIAS_LINE = `alias orca-opencode='kiokuko-ai trace record --'`;
-const ORCA_ALIAS_BLOCK = `${ORCA_ALIAS_MARKER}\n${ORCA_ALIAS_LINE}\n`;
+const AGENTICREPLAY_PACKAGE = 'agenticreplay';
+const AGENTICREPLAY_ALIAS_MARKER = '# managed by kiokuko-ai setup: agenticreplay-opencode';
+const AGENTICREPLAY_ALIAS_LINE = `alias agenticreplay-opencode='kiokuko-ai trace record --'`;
+const AGENTICREPLAY_ALIAS_BLOCK = `${AGENTICREPLAY_ALIAS_MARKER}\n${AGENTICREPLAY_ALIAS_LINE}\n`;
+const LEGACY_ALIAS_MARKER = '# managed by kiokuko-ai setup: orca-opencode';
+const LEGACY_ALIAS_LINES = ["alias orca-opencode='orca record opencode'", "alias orca-opencode='kiokuko-ai trace record --'"];
 const MAX_RC_BYTES = 1024 * 1024;
 const YES_ANSWER = /^(?:y|yes|はい)$/iu;
-export interface OrcaReplayInstallInvocation {
+export interface AgenticReplayInstallInvocation {
     readonly command: 'npm' | 'sudo';
     readonly args: readonly string[];
 }
 /** Select the global install invocation without assuming every Unix prefix needs root. */
-export function orcaReplayInstallInvocation(platform: NodeJS.Platform = process.platform): OrcaReplayInstallInvocation {
-    const args = ['install', '--global', ORCA_PACKAGE];
+export function agenticReplayInstallInvocation(platform: NodeJS.Platform = process.platform): AgenticReplayInstallInvocation {
+    const args = ['install', '--global', AGENTICREPLAY_PACKAGE];
     return { command: 'npm', args };
 }
-export type OrcaReplaySpawner = (command: string, args: readonly string[]) => Promise<void>;
-export const spawnOrcaReplayInstall: OrcaReplaySpawner = (command, args) => new Promise<void>((resolve, reject) => {
+export type AgenticReplaySpawner = (command: string, args: readonly string[]) => Promise<void>;
+export const spawnAgenticReplayInstall: AgenticReplaySpawner = (command, args) => new Promise<void>((resolve, reject) => {
     const child = spawn(command, args, { stdio: 'inherit' });
     child.once('error', reject);
     child.once('exit', (code, signal) => {
@@ -34,18 +36,18 @@ export const spawnOrcaReplayInstall: OrcaReplaySpawner = (command, args) => new 
         reject(new Error(signal === null ? `exit code ${code ?? 'unknown'}` : `signal ${signal}`));
     });
 });
-/** Probe the `orca` CLI so an existing installation is reused instead of reinstalled. */
-export const checkOrcaInstalled: OrcaReplaySpawner = (command, args) => new Promise<void>((resolve, reject) => {
+/** Probe the `agenticreplay` CLI so an existing installation is reused instead of reinstalled. */
+export const checkAgenticReplayInstalled: AgenticReplaySpawner = (command, args) => new Promise<void>((resolve, reject) => {
     const child = spawn(command, args, { stdio: 'ignore', shell: false });
     const timer = setTimeout(() => { child.kill('SIGKILL'); }, 3000);
     child.once('error', error => { clearTimeout(timer); reject(error); });
     child.once('close', code => { clearTimeout(timer); if (code === 0)
         resolve();
     else
-        reject(new Error('Orca probe failed')); });
+        reject(new Error('AgenticReplay probe failed')); });
 });
-export function orcaAliasBlock(): string {
-    return ORCA_ALIAS_BLOCK;
+export function agenticreplayAliasBlock(): string {
+    return AGENTICREPLAY_ALIAS_BLOCK;
 }
 export function shellRcPath(platform: NodeJS.Platform = process.platform, environment: NodeJS.ProcessEnv = process.env): string | undefined {
     if (platform === 'win32')
@@ -61,13 +63,13 @@ export function shellRcPath(platform: NodeJS.Platform = process.platform, enviro
         return undefined;
     return join(base, name === 'zsh' ? '.zshrc' : '.bashrc');
 }
-export type OrcaAliasAppendResult = {
+export type AgenticReplayAliasAppendResult = {
     readonly appended: true;
 } | {
     readonly appended: false;
     readonly reason: 'already_present' | 'rc_unresolved' | 'alias_conflict';
 };
-export async function appendOrcaAlias(rcPath: string | undefined, environment: PathEnvironment = {}): Promise<OrcaAliasAppendResult> {
+export async function appendAgenticReplayAlias(rcPath: string | undefined, environment: PathEnvironment = {}): Promise<AgenticReplayAliasAppendResult> {
     if (rcPath === undefined || !isAbsolute(rcPath))
         return { appended: false, reason: 'rc_unresolved' };
     try {
@@ -90,15 +92,23 @@ export async function appendOrcaAlias(rcPath: string | undefined, environment: P
             const existing = expected?.content ?? '';
             const newline = existing.includes('\r\n') ? '\r\n' : '\n';
             const lines = existing.split(/\r?\n/u);
-            const marker = lines.indexOf(ORCA_ALIAS_MARKER);
-            const aliases = lines.map((line, index) => ({ line, index })).filter(x => /^\s*(?:alias\s+orca-opencode=|function\s+orca-opencode\b|orca-opencode\s*\(\))/u.test(x.line));
-            const old = "alias orca-opencode='orca record opencode'";
-            if (aliases.some(x => marker < 0 || x.index !== marker + 1 || ![old, ORCA_ALIAS_LINE].includes(x.line)) || (marker >= 0 && (aliases.length !== 1 || lines.lastIndexOf(ORCA_ALIAS_MARKER) !== marker)))
+            const marker = lines.indexOf(AGENTICREPLAY_ALIAS_MARKER);
+            const legacyMarker = lines.indexOf(LEGACY_ALIAS_MARKER);
+            const aliases = lines.map((line, index) => ({ line, index })).filter(x => /^\s*(?:alias\s+agenticreplay-opencode=|function\s+agenticreplay-opencode\b|agenticreplay-opencode\s*\(\))/u.test(x.line));
+            const legacyAliases = lines.map((line, index) => ({ line, index })).filter(x => /^\s*(?:alias\s+orca-opencode=|function\s+orca-opencode\b|orca-opencode\s*\(\))/u.test(x.line));
+            const old = "alias agenticreplay-opencode='agenticreplay record opencode'";
+            if (legacyMarker >= 0 && (marker >= 0 || aliases.length > 0 || lines.lastIndexOf(LEGACY_ALIAS_MARKER) !== legacyMarker
+                || legacyAliases.length !== 1 || legacyAliases[0]!.index !== legacyMarker + 1 || !LEGACY_ALIAS_LINES.includes(legacyAliases[0]!.line)))
                 return { appended: false, reason: 'alias_conflict' } as const;
-            if (marker >= 0 && lines[marker + 1] === ORCA_ALIAS_LINE)
+            if (legacyMarker < 0 && legacyAliases.length > 0)
+                return { appended: false, reason: 'alias_conflict' } as const;
+            if (aliases.some(x => marker < 0 || x.index !== marker + 1 || ![old, AGENTICREPLAY_ALIAS_LINE].includes(x.line)) || (marker >= 0 && (aliases.length !== 1 || lines.lastIndexOf(AGENTICREPLAY_ALIAS_MARKER) !== marker)))
+                return { appended: false, reason: 'alias_conflict' } as const;
+            if (marker >= 0 && lines[marker + 1] === AGENTICREPLAY_ALIAS_LINE)
                 return { appended: false, reason: 'already_present' } as const;
-            const content = marker >= 0 ? existing.replace(`${ORCA_ALIAS_MARKER}${newline}${old}`, `${ORCA_ALIAS_MARKER}${newline}${ORCA_ALIAS_LINE}`)
-                : `${existing}${existing && !existing.endsWith('\n') ? newline : ''}${ORCA_ALIAS_MARKER}${newline}${ORCA_ALIAS_LINE}${newline}`;
+            const content = legacyMarker >= 0 ? existing.replace(`${LEGACY_ALIAS_MARKER}${newline}${lines[legacyMarker + 1]}`, `${AGENTICREPLAY_ALIAS_MARKER}${newline}${AGENTICREPLAY_ALIAS_LINE}`)
+                : marker >= 0 ? existing.replace(`${AGENTICREPLAY_ALIAS_MARKER}${newline}${old}`, `${AGENTICREPLAY_ALIAS_MARKER}${newline}${AGENTICREPLAY_ALIAS_LINE}`)
+                : `${existing}${existing && !existing.endsWith('\n') ? newline : ''}${AGENTICREPLAY_ALIAS_MARKER}${newline}${AGENTICREPLAY_ALIAS_LINE}${newline}`;
             const result = await atomicReplaceTextWithGuard(target, content, guard, expected, { device: BigInt(parentStat.dev), inode: BigInt(parentStat.ino) }, expected?.mode ?? 0o644, undefined, MAX_RC_BYTES);
             assertAtomicCleanupComplete(result);
             return { appended: true } as const;
@@ -108,48 +118,48 @@ export async function appendOrcaAlias(rcPath: string | undefined, environment: P
         return { appended: false, reason: 'rc_unresolved' };
     }
 }
-export interface OrcaReplayPromptOptions {
+export interface AgenticReplayPromptOptions {
     readonly input: NodeJS.ReadableStream;
     readonly output: NodeJS.WritableStream;
 }
-interface OrcaReplayQuestion {
+interface AgenticReplayQuestion {
     question(query: string): Promise<string>;
 }
-async function askOrcaOptIn(prompt: OrcaReplayQuestion, output: NodeJS.WritableStream): Promise<boolean> {
-    output.write('OrcaReplay can record OpenCode sessions so kiokuko can deliver replay context as advisory data.\n');
-    output.write('This installs the orcareplay package globally and does not change how the opencode command runs.\n');
-    const answer = (await prompt.question('Enable OrcaReplay recording support? [y/N] ')).trim();
+async function askAgenticReplayOptIn(prompt: AgenticReplayQuestion, output: NodeJS.WritableStream): Promise<boolean> {
+    output.write('AgenticReplay can record OpenCode sessions so kiokuko can deliver replay context as advisory data.\n');
+    output.write('This installs the agenticreplay package globally and does not change how the opencode command runs.\n');
+    const answer = (await prompt.question('Enable AgenticReplay recording support? [y/N] ')).trim();
     return YES_ANSWER.test(answer);
 }
-export interface OrcaReplayEnableOptions {
+export interface AgenticReplayEnableOptions {
     readonly input: NodeJS.ReadableStream;
     readonly output: NodeJS.WritableStream;
     readonly platform?: NodeJS.Platform;
     readonly environment?: NodeJS.ProcessEnv;
-    readonly spawnInstall?: OrcaReplaySpawner;
-    readonly checkInstalled?: OrcaReplaySpawner;
+    readonly spawnInstall?: AgenticReplaySpawner;
+    readonly checkInstalled?: AgenticReplaySpawner;
     readonly interactive?: boolean;
     readonly dryRun?: boolean;
     readonly cwd?: string;
 }
-export interface OrcaReplayEnableSummary {
+export interface AgenticReplayEnableSummary {
     readonly accepted: boolean;
     readonly installed: 'installed' | 'already_installed' | 'failed' | 'skipped';
     readonly alias: 'alias_conflict' | 'appended' | 'already_present' | 'rc_unresolved' | 'skipped';
 }
-interface OrcaReplayQuestion {
+interface AgenticReplayQuestion {
     question(query: string): Promise<string>;
 }
-async function askAliasConfirmation(prompt: OrcaReplayQuestion, output: NodeJS.WritableStream, rcPath: string): Promise<boolean> {
-    const answer = (await prompt.question(`Add the orca-opencode alias to ${rcPath}? [y/N] `)).trim();
+async function askAliasConfirmation(prompt: AgenticReplayQuestion, output: NodeJS.WritableStream, rcPath: string): Promise<boolean> {
+    const answer = (await prompt.question(`Add the agenticreplay-opencode alias to ${rcPath}? [y/N] `)).trim();
     return YES_ANSWER.test(answer);
 }
-async function reportManualFallback(output: NodeJS.WritableStream, install: OrcaReplayInstallInvocation, rcPath: string | undefined): Promise<void> {
-    output.write(`OrcaReplay installation failed. Run it manually: ${install.command} ${install.args.join(' ')}\n`);
-    output.write(`Then add this line to ${rcPath ?? 'your shell configuration'}:\n${ORCA_ALIAS_LINE}\n`);
+async function reportManualFallback(output: NodeJS.WritableStream, install: AgenticReplayInstallInvocation, rcPath: string | undefined): Promise<void> {
+    output.write(`AgenticReplay installation failed. Run it manually: ${install.command} ${install.args.join(' ')}\n`);
+    output.write(`Then add this line to ${rcPath ?? 'your shell configuration'}:\n${AGENTICREPLAY_ALIAS_LINE}\n`);
 }
 /** A completed managed alias is evidence that this optional integration was already enabled. */
-async function hasCurrentOrcaAlias(rcPath: string | undefined): Promise<boolean> {
+async function hasCurrentAgenticReplayAlias(rcPath: string | undefined): Promise<boolean> {
     if (rcPath === undefined) return false;
     try {
         const stat = await lstat(rcPath);
@@ -157,18 +167,19 @@ async function hasCurrentOrcaAlias(rcPath: string | undefined): Promise<boolean>
         const parent = await realpath(dirname(rcPath));
         const content = (await readBoundedTraceFile(join(parent, basename(rcPath)), parent, MAX_RC_BYTES)).toString('utf8');
         const lines = content.split(/\r?\n/u);
-        const marker = lines.indexOf(ORCA_ALIAS_MARKER);
-        const aliases = lines.filter(line => /^\s*(?:alias\s+orca-opencode=|function\s+orca-opencode\b|orca-opencode\s*\(\))/u.test(line));
-        return marker >= 0 && lines.lastIndexOf(ORCA_ALIAS_MARKER) === marker
-            && lines[marker + 1] === ORCA_ALIAS_LINE && aliases.length === 1;
+        const marker = lines.indexOf(AGENTICREPLAY_ALIAS_MARKER);
+        const aliases = lines.filter(line => /^\s*(?:alias\s+agenticreplay-opencode=|function\s+agenticreplay-opencode\b|agenticreplay-opencode\s*\(\))/u.test(line));
+        return marker >= 0 && lines.lastIndexOf(AGENTICREPLAY_ALIAS_MARKER) === marker
+            && lines[marker + 1] === AGENTICREPLAY_ALIAS_LINE && aliases.length === 1
+            && !lines.some(line => line === LEGACY_ALIAS_MARKER || /^\s*(?:alias\s+orca-opencode=|function\s+orca-opencode\b|orca-opencode\s*\(\))/u.test(line));
     } catch {
         // An unreadable or ambiguous file is not evidence of completed setup.
         return false;
     }
 }
 
-/** Run the opt-in OrcaReplay enablement flow after a successful setup. */
-export async function enableOrcaReplayIntegration(options: OrcaReplayEnableOptions): Promise<OrcaReplayEnableSummary> {
+/** Run the opt-in AgenticReplay enablement flow after a successful setup. */
+export async function enableAgenticReplayIntegration(options: AgenticReplayEnableOptions): Promise<AgenticReplayEnableSummary> {
     const output = options.output;
     const input = options.input;
     if (options.dryRun || options.interactive === false || (options.interactive !== true && !(input as {
@@ -178,32 +189,32 @@ export async function enableOrcaReplayIntegration(options: OrcaReplayEnableOptio
     }).readableEnded === true) {
         return { accepted: false, installed: 'skipped', alias: 'skipped' };
     }
-    const check = options.checkInstalled ?? checkOrcaInstalled;
+    const check = options.checkInstalled ?? checkAgenticReplayInstalled;
     let alreadyInstalled = false;
     try {
-        await check('orca', ['--version']);
+        await check('agenticreplay', ['--version']);
         alreadyInstalled = true;
     } catch {
         // Absent or broken CLI still needs the ordinary opt-in install flow.
     }
-    if (alreadyInstalled && await hasCurrentOrcaAlias(shellRcPath(options.platform, options.environment))) {
+    if (alreadyInstalled && await hasCurrentAgenticReplayAlias(shellRcPath(options.platform, options.environment))) {
         return { accepted: true, installed: 'already_installed', alias: 'already_present' };
     }
     const prompt = createInterface({ input, output });
     try {
-        const accepted = await askOrcaOptIn(prompt, output);
+        const accepted = await askAgenticReplayOptIn(prompt, output);
         if (!accepted) {
             return { accepted: false, installed: 'skipped', alias: 'skipped' };
         }
-        const install = orcaReplayInstallInvocation(options.platform);
+        const install = agenticReplayInstallInvocation(options.platform);
         if (!alreadyInstalled) {
             try {
-                await (options.spawnInstall ?? spawnOrcaReplayInstall)(install.command, install.args);
-                await check('orca', ['--version']);
+                await (options.spawnInstall ?? spawnAgenticReplayInstall)(install.command, install.args);
+                await check('agenticreplay', ['--version']);
             }
             catch (error) {
                 const cause = error instanceof Error ? `: ${error.message}` : '';
-                output.write(`OrcaReplay installation failed${cause}\n`);
+                output.write(`AgenticReplay installation failed${cause}\n`);
                 await reportManualFallback(output, install, shellRcPath(options.platform, options.environment));
                 return { accepted: true, installed: 'failed', alias: 'skipped' };
             }
@@ -215,21 +226,21 @@ export async function enableOrcaReplayIntegration(options: OrcaReplayEnableOptio
                 try {
                     const root = await realpath(dirname(legacy));
                     const bytes = await readBoundedTraceFile(join(root, basename(legacy)), root, MAX_RC_BYTES);
-                    if (bytes.toString('utf8').includes(ORCA_ALIAS_MARKER))
+                    if ([AGENTICREPLAY_ALIAS_MARKER, LEGACY_ALIAS_MARKER].some(marker => bytes.toString('utf8').includes(marker)))
                         output.write(`Legacy managed alias found at ${legacy}; inspect it manually.\n`);
                 }
                 catch { /* An absent or unreadable legacy rc never authorizes a mutation. */ }
         }
         if (rcPath === undefined) {
-            output.write(`Add this line to your shell configuration to enable the shorthand:\n${ORCA_ALIAS_LINE}\n`);
+            output.write(`Add this line to your shell configuration to enable the shorthand:\n${AGENTICREPLAY_ALIAS_LINE}\n`);
             return { accepted: true, installed: alreadyInstalled ? 'already_installed' : 'installed', alias: 'rc_unresolved' };
         }
         const confirmAlias = await askAliasConfirmation(prompt, output, rcPath);
         if (!confirmAlias) {
-            output.write(`Skipped. Add this line manually if you want the shorthand:\n${ORCA_ALIAS_LINE}\n`);
+            output.write(`Skipped. Add this line manually if you want the shorthand:\n${AGENTICREPLAY_ALIAS_LINE}\n`);
             return { accepted: true, installed: alreadyInstalled ? 'already_installed' : 'installed', alias: 'skipped' };
         }
-        const aliasResult = await appendOrcaAlias(rcPath, { ...(options.environment ? { env: options.environment } : {}), ...(options.platform ? { platform: options.platform } : {}) });
+        const aliasResult = await appendAgenticReplayAlias(rcPath, { ...(options.environment ? { env: options.environment } : {}), ...(options.platform ? { platform: options.platform } : {}) });
         if (!aliasResult.appended && aliasResult.reason !== 'already_present')
             output.write(`Alias update could not be confirmed (${aliasResult.reason}); inspect ${rcPath} manually.\n`);
         return {

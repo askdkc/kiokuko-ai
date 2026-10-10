@@ -39,7 +39,7 @@ JSON・非対話・dry-runでは`CONFLICT`を返して変更しません。
 
 setupは対応する形式のプロジェクトinstructionsだけを更新します。新しいtemplateやDSH管理のblockは、
 ファイルとbindingを変更せず、保持したことを表示します。不正なmarker、読めないpath、identity不一致は引き続きエラーです。
-再実行時は設定済みのdiscovery modeを維持し、OrcaReplayと管理対象aliasが導入済みなら再確認しません。
+再実行時は設定済みのdiscovery modeを維持し、AgenticReplayと管理対象aliasが導入済みなら再確認しません。
 
 設定後はOpenCodeを再読込または再起動してください。`kiokuko-ai doctor --json`は静的設定を検査します。
 実行中の接続先は`kiokuko-ai doctor --opencode-url http://127.0.0.1:4096 --json`で明示して確認します。

@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
-const DOCUMENT = readFileSync(fileURLToPath(new URL('../../docs/orcareplay-integration.md', import.meta.url)), 'utf8');
+const DOCUMENT = readFileSync(fileURLToPath(new URL('../../docs/agenticreplay-integration.md', import.meta.url)), 'utf8');
 
 const REQUIRED_SECTIONS = [
   '## Setup', '## Ownership and locations', '## Scan, sync and status',
@@ -35,7 +35,7 @@ const FOREIGN_AGENTS = [
   ['cop', 'ilot'].join(''),
 ];
 
-test('the OrcaReplay integration document exists and covers the required contract', () => {
+test('the AgenticReplay integration document exists and covers the required contract', () => {
   for (const section of REQUIRED_SECTIONS) {
     assert.ok(DOCUMENT.includes(section), `missing section ${section}`);
   }
@@ -44,7 +44,7 @@ test('the OrcaReplay integration document exists and covers the required contrac
   }
 });
 
-test('the OrcaReplay integration document stays inside the OpenCode-only boundary', () => {
+test('the AgenticReplay integration document stays inside the OpenCode-only boundary', () => {
   for (const phrase of FORBIDDEN_PHRASES) {
     assert.equal(DOCUMENT.includes(phrase), false, `forbidden phrase ${phrase}`);
   }

@@ -4,7 +4,7 @@ import { canonicalContentHash, type JsonObject } from '../serialization/validate
 import { findSecretInValue } from '../memory/secrets.js';
 import { parseTraceJson, TRACE_LIMITS, TraceInputError } from './bounded-read.js';
 const count = z.number().int().nonnegative();
-const contextSchema = z.object({ source: z.literal('orcareplay'), traceRunId: z.string().regex(/^run_[0-9a-f]{6,32}$/u),
+const contextSchema = z.object({ source: z.literal('agenticreplay'), traceRunId: z.string().regex(/^run_[0-9a-f]{6,32}$/u),
     schemaVersion: z.string().regex(/^0\.\d+\.\d+$/u), readerPolicyVersion: z.literal(2), generation: z.number().int().positive(),
     throughSeq: z.number().int().min(-1), referenceOnly: z.literal(true), autoInstall: z.literal(false), autoExecute: z.literal(false),
     finalization: z.enum(['recording', 'ended_pending_manifest', 'ended_unverified', 'finalized', 'blocked']),
@@ -17,7 +17,7 @@ const contextSchema = z.object({ source: z.literal('orcareplay'), traceRunId: z.
         fsChanges: z.array(z.object({ path: z.string(), status: z.string() })).max(8), notes: z.array(z.object({ rule: z.string(), detail: z.string().optional() })).max(4) }).strict(),
 }).strict();
 export interface TraceAdvisory {
-    source: 'orcareplay';
+    source: 'agenticreplay';
     referenceOnly: true;
     autoInstall: false;
     autoExecute: false;
@@ -32,8 +32,8 @@ export function readTraceAdvisory(database: SqliteDatabase, root: string, captur
     rejected: boolean;
 } {
     const rows = database.prepare(`SELECT c.context_json AS json,c.digest,c.trace_run_id AS id,c.generation,c.finalization,s.capture_cwd AS captureCwd,p.finalization AS progressState
-  FROM orcareplay_trace_context c JOIN orcareplay_trace_stores s ON s.directory=c.directory
-  JOIN orcareplay_trace_cursors p ON p.directory=c.directory AND p.trace_run_id=c.trace_run_id AND p.generation=c.generation
+  FROM agenticreplay_trace_context c JOIN agenticreplay_trace_stores s ON s.directory=c.directory
+  JOIN agenticreplay_trace_cursors p ON p.directory=c.directory AND p.trace_run_id=c.trace_run_id AND p.generation=c.generation
   WHERE s.repository_root=? AND s.state='present' AND c.reader_policy_version=2 AND p.reader_policy_version=2
   ORDER BY (c.finalization='finalized') DESC,(s.capture_cwd=?) DESC,c.trace_created_at DESC,c.trace_run_id DESC LIMIT 16`).all<{
         json: string;
@@ -62,10 +62,10 @@ export function readTraceAdvisory(database: SqliteDatabase, root: string, captur
                 throw new TraceInputError('context_source_rejected');
             if (context.derived)
                 continue;
-            const wrapper: TraceAdvisory = { source: 'orcareplay', referenceOnly: true, autoInstall: false, autoExecute: false, traceRunId: row.id, digest: row.digest, context: context as JsonObject };
+            const wrapper: TraceAdvisory = { source: 'agenticreplay', referenceOnly: true, autoInstall: false, autoExecute: false, traceRunId: row.id, digest: row.digest, context: context as JsonObject };
             if (row.progressState === 'source_missing')
                 wrapper.sourceAvailable = false;
-            const enrichment = database.prepare('SELECT result_json AS json FROM orcareplay_trace_enrichment WHERE directory=(SELECT directory FROM orcareplay_trace_stores WHERE capture_cwd=? AND repository_root=?) AND trace_run_id=? AND generation=? AND source_digest=?').get<{
+            const enrichment = database.prepare('SELECT result_json AS json FROM agenticreplay_trace_enrichment WHERE directory=(SELECT directory FROM agenticreplay_trace_stores WHERE capture_cwd=? AND repository_root=?) AND trace_run_id=? AND generation=? AND source_digest=?').get<{
                 json: string;
             }>(row.captureCwd, root, row.id, row.generation, context.sourceDigest);
             if (enrichment) {

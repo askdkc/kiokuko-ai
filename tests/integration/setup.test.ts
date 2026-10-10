@@ -331,6 +331,6 @@ test('interactive cleanup retry preserves migrations applied by the first setup 
     output,
   });
 
-  assert.deepEqual(result.appliedMigrations, [9]);
+  assert.deepEqual(result.appliedMigrations, snapshot.migrations.filter(migration => migration.version > 8).map(migration => migration.version));
   assert.equal(result.ledgerCleanup.status, 'declined');
 });

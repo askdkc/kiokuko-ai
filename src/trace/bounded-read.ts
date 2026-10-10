@@ -35,8 +35,8 @@ export async function assertTracePath(target: string, root: string): Promise<voi
 }
 export function traceCaptureRoot(runs: string): string {
     // Test adapters can use a dedicated arbitrary store; production registration
-    // always supplies captureCwd/.orca/runs.
-    return path.basename(runs) === 'runs' && path.basename(path.dirname(runs)) === '.orca'
+    // always supplies captureCwd/.agenticreplay/runs.
+    return path.basename(runs) === 'runs' && path.basename(path.dirname(runs)) === '.agenticreplay'
         ? path.dirname(path.dirname(runs)) : path.dirname(runs);
 }
 export async function openTraceFile(target: string, root: string): Promise<{
