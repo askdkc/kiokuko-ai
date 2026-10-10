@@ -1,7 +1,35 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { execFileSync } from 'node:child_process';
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { KiokukoPlugin } from '../../src/opencode/plugin.js';
 import { pluginContextFixture } from '../fixtures/opencode-v2-plugin.js';
+
+test('plugin startup creates an ignore file when the project has none', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'plugin-trace-ignore-new-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const cleanup = await KiokukoPlugin.setup(pluginContextFixture(root).ctx);
+  await cleanup?.();
+  assert.equal(await readFile(path.join(root, '.gitignore'), 'utf8'), '.agenticreplay/\n');
+});
+
+test('plugin startup ignores AgenticReplay data and preserves existing rules on reload', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'plugin-trace-ignore-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  execFileSync('git', ['init', '-q', root]);
+  const file = path.join(root, '.gitignore');
+  await writeFile(file, 'node_modules/\r\n.env', { mode: 0o640 });
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const fixture = pluginContextFixture(root);
+    const cleanup = await KiokukoPlugin.setup(fixture.ctx);
+    await cleanup?.();
+    assert.equal(await readFile(file, 'utf8'), 'node_modules/\r\n.env\r\n.agenticreplay/\r\n');
+    assert.equal((await stat(file)).mode & 0o777, 0o640);
+    assert.equal(execFileSync('git', ['check-ignore', '.agenticreplay/runs/api.json'], { cwd: root, encoding: 'utf8' }).trim(), '.agenticreplay/runs/api.json');
+  }
+});
 
 test('v2 compaction hook does not trust observed run identity without a DB binding', async () => {
   const fixture = pluginContextFixture();

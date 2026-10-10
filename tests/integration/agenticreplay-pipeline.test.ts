@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
-import { mkdtemp, mkdir, rm, writeFile, readFile, realpath, stat } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, writeFile, readFile, realpath, stat, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -35,6 +35,8 @@ test('generated shell shortcut waits for AgenticReplay final writes and delivers
     const cwd = path.join(root, 'nested');
     const bin = path.join(root, 'bin');
     await mkdir(cwd);
+    await writeFile(path.join(root, '.gitignore'), 'node_modules/\n');
+    await writeFile(path.join(cwd, '.gitignore'), '!.agenticreplay/\n');
     await mkdir(bin);
     const data = path.join(root, 'data');
     await mkdir(data);
@@ -42,6 +44,7 @@ test('generated shell shortcut waits for AgenticReplay final writes and delivers
     const fake = path.join(bin, 'agenticreplay');
     await writeFile(fake, `#!${process.execPath}
 const fs=require('node:fs');const p=require('node:path');const crypto=require('node:crypto');const cp=require('node:child_process');
+cp.execFileSync('git',['check-ignore','.agenticreplay/runs/${traceId}/events.jsonl']);
 const cwd=process.cwd(),dir=p.join(cwd,'.agenticreplay/runs/${traceId}');fs.mkdirSync(dir,{recursive:true});
 fs.writeFileSync(p.join(cwd,'args.json'),JSON.stringify(process.argv.slice(2)));
 const line=(seq,type,attrs={})=>JSON.stringify({seq,type,attrs,ts:'2026-09-07T00:00:00Z',mono_us:seq,turn:0,actor:'host'});
@@ -80,6 +83,8 @@ raw+=line(4,'shell.result',{exit_code:1})+'\\n'+line(5,'run.end',{exit_code:0})+
     await worker.close();
     await writeFile(path.join(cwd, 'continue'), '1');
     assert.equal(await closed, 0, stderr);
+    assert.equal(await readFile(path.join(root, '.gitignore'), 'utf8'), 'node_modules/\n.agenticreplay/\n');
+    assert.equal(await readFile(path.join(cwd, '.gitignore'), 'utf8'), '!.agenticreplay/\n.agenticreplay/\n');
     assert.deepEqual(JSON.parse(await readFile(path.join(cwd, 'args.json'), 'utf8')), ['record', 'opencode', '--', 'run', '--standalone', ...args.slice(1)]);
     const stored = readStoredTraceContext(db, runs, traceId)!;
     const summary = stored.context.summary as Record<string, any>;
@@ -195,4 +200,20 @@ test('wrapper preserves nonzero exit and distinguishes executable startup failur
     const missing = await recordTrace(db, { cwd: root, args: [], executable: path.join(root, 'missing'), stderr });
     assert.equal(missing.exitCode, 1);
     assert.match(text, /could not be started/);
+});
+
+test('recording rejects an unsafe ignore file before spawning or registering a trace', async (t) => {
+    const { recordTrace } = await import('../../src/trace/record.js');
+    const root = await realpath(await mkdtemp(path.join(tmpdir(), 'trace-record-ignore-failure-')));
+    t.after(() => rm(root, { recursive: true, force: true }));
+    await writeFile(path.join(root, 'user-ignore'), 'user content\n');
+    await symlink(path.join(root, 'user-ignore'), path.join(root, '.gitignore'));
+    const db = openConnection(path.join(root, 'db.sqlite'));
+    migrateDatabase(db);
+    t.after(() => db.close());
+    let spawned = false;
+    await assert.rejects(recordTrace(db, { cwd: root, args: [], spawnImpl: (() => { spawned = true; throw Error('unexpected spawn'); }) as typeof spawn }), { code: 'SECURITY_REJECTION' });
+    assert.equal(spawned, false);
+    assert.equal(db.prepare('SELECT COUNT(*) AS n FROM agenticreplay_trace_stores').get<{ n: number }>()!.n, 0);
+    assert.equal(await readFile(path.join(root, 'user-ignore'), 'utf8'), 'user content\n');
 });

@@ -3,6 +3,7 @@ import type { SqliteDatabase } from '../db/adapter.js';
 import { resolveTraceStoreLocation, registerTraceStore } from './store-location.js';
 import { syncTraceStore, type TraceSyncResult } from './sync.js';
 import { KiokukoError } from '../errors.js';
+import { ensureAgenticReplayIgnored } from '../repository/gitignore.js';
 export interface TraceRecordOptions {
     cwd: string;
     args: readonly string[];
@@ -23,6 +24,7 @@ export async function recordTrace(database: SqliteDatabase, options: TraceRecord
         throw new KiokukoError('VALIDATION_ERROR', 'AgenticReplay recording requires a private OpenCode server; remove external server settings');
     }
     const location = await resolveTraceStoreLocation(options.cwd);
+    await ensureAgenticReplayIgnored(location.repositoryRoot, location.captureCwd);
     registerTraceStore(database, location);
     const abort = new AbortController();
     let child: ReturnType<typeof spawn> | undefined;

@@ -5,6 +5,16 @@ Install it with `npm install --global agenticreplay`.
 
 Kiokuko treats `.agenticreplay` as untrusted, read-only input.
 
+The OpenCode plugin adds `.agenticreplay/` to the project's `.gitignore` on
+startup. `kiokuko-ai trace record` ensures this rule before launching the recorder
+and also protects a nested capture directory against local ignore overrides.
+Existing rules, line endings and permissions are preserved; repeated use adds
+no duplicate rule. The wrapper refuses to record if the ignore files cannot be
+safely updated (including symlink files). Plugin startup reports a warning in
+that case. Direct AgenticReplay recording without Kiokuko must be protected
+manually before it starts. Ignore rules do not remove already tracked captures
+from Git or erase data previously pushed to a remote.
+
 Use the Kiokuko wrapper to record OpenCode and import the final events after
 AgenticReplay exits:
 

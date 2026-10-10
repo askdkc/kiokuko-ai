@@ -7,6 +7,8 @@ import { readKiokukoTrackedSessions, runKiokukoCompactionHook, type HookEffectDe
 import { registerExecutionHooks } from './execution.js';
 import { OpenCodeV2Continuation } from './v2-continuation.js';
 import { v2EventSession } from './v2-adapter.js';
+import { ensureAgenticReplayIgnored } from '../repository/gitignore.js';
+import { resolveTraceStoreLocation } from '../trace/store-location.js';
 
 const MAX_SUMMARY_CHARS = 64 * 1024;
 type CompletedCompaction = { id: string; summary: string };
@@ -38,6 +40,12 @@ export const KiokukoPlugin = Plugin.define({
       ? { runtime, signal: lifecycle.signal, timeoutMs: 10_000 }
       : { runtimeFailure: 'version_mismatch', signal: lifecycle.signal, timeoutMs: 10_000 };
     const warn = (reason: string) => { console.warn(`kiokuko-ai: ${reason}`); };
+    try {
+      const location = await resolveTraceStoreLocation(directory);
+      await ensureAgenticReplayIgnored(location.repositoryRoot, location.captureCwd);
+    } catch {
+      warn('Could not protect AgenticReplay data. Add .agenticreplay/ to the project .gitignore before recording.');
+    }
     if (!trackingAvailable) warn('runtime_unavailable');
     const continuation = new OpenCodeV2Continuation(ctx, directory, ctx.location.project.id, dependencies, () => lifecycle.isActive(), warn);
     const tracked = async (sessionID: string) => trackingAvailable
