@@ -29,7 +29,7 @@ import { inspectOpenCodeIntegration } from '../setup/opencode-config.js';
 import { isSetupOpenCodeMcpIdentityConflict } from '../setup/mcp-conflict.js';
 import { loadBundledStandardSkillFiles } from '../setup/standard-skills.js';
 import { resolveManagedOpenCodeRuntime } from '../opencode/runtime-invocation.js';
-import { OpenCode } from '@opencode/client';
+import type { McpApi, PluginApi } from '@opencode/client/promise/api';
 import { orchestrationJobDiagnostics } from '../orchestration/jobs.js';
 
 export interface DoctorCheck {
@@ -85,6 +85,23 @@ export interface DoctorOptions {
   opencodeUrl?: string;
 }
 
+/** Read the two host status endpoints without loading the host's runtime SDK. */
+async function readOpenCodeHostList<T>(
+  baseUrl: URL, endpoint: 'plugin' | 'mcp', directory: string, headers: Headers, signal: AbortSignal,
+): Promise<T> {
+  const base = new URL(baseUrl);
+  if (!base.pathname.endsWith('/')) base.pathname += '/';
+  const url = new URL(`api/${endpoint}`, base);
+  url.searchParams.set('location[directory]', directory);
+  const response = await fetch(url, { method: 'GET', headers, signal });
+  const contentType = response.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase();
+  if (response.status !== 200 || !(contentType === 'application/json' || contentType?.endsWith('+json'))) {
+    await response.body?.cancel();
+    throw new Error('OpenCode host status unavailable');
+  }
+  return await response.json() as T;
+}
+
 async function openCodeHostCheck(url: string | undefined): Promise<DoctorCheck> {
   if (url === undefined) return { ok: true, count: 0, detail: 'runtime=unverified; specify --opencode-url' };
   let parsed: URL;
@@ -95,17 +112,17 @@ async function openCodeHostCheck(url: string | undefined): Promise<DoctorCheck> 
   }
   try {
     const password = process.env.OPENCODE_PASSWORD;
-    const client = OpenCode.make({ baseUrl: parsed.toString(),
-      ...(password ? { headers: { Authorization: `Basic ${Buffer.from(`opencode:${password}`).toString('base64')}` } } : {}),
-    });
+    const headers = new Headers(password
+      ? { Authorization: `Basic ${Buffer.from(`opencode:${password}`).toString('base64')}` } : {});
     const location = { directory: process.cwd() };
     const signal = AbortSignal.timeout(5_000);
-    let plugins = await client.plugin.list({ location }, { signal });
+    const listPlugins = () => readOpenCodeHostList<Awaited<ReturnType<PluginApi['list']>>>(parsed, 'plugin', location.directory, headers, signal);
+    let plugins = await listPlugins();
     for (let attempt = 0; attempt < 20 && !plugins.data.some(item => item.id === 'kiokuko-ai'); attempt++) {
       await new Promise(resolve => setTimeout(resolve, 100));
-      plugins = await client.plugin.list({ location }, { signal });
+      plugins = await listPlugins();
     }
-    const servers = await client.mcp.list({ location }, { signal });
+    const servers = await readOpenCodeHostList<Awaited<ReturnType<McpApi['list']>>>(parsed, 'mcp', location.directory, headers, signal);
     const plugin = plugins.data.find(item => item.id === 'kiokuko-ai');
     const mcp = servers.data.find(item => item.name === 'kiokuko');
     const locationMatches = plugins.location.directory === location.directory

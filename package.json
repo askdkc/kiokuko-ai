@@ -60,8 +60,6 @@
     "test:benchmark:akinator": "npm run build && node scripts/run-akinator-memory-benchmark.mjs"
   },
   "dependencies": {
-    "@opencode/client": "2.0.18",
-    "@opencode/plugin": "2.0.18",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "commander": "^14.0.1",
     "jsonc-parser": "^3.3.1",
@@ -95,6 +93,8 @@
     }
   },
   "devDependencies": {
+    "@opencode/client": "2.0.18",
+    "@opencode/plugin": "2.0.18",
     "@huggingface/hub": "2.16.1",
     "@huggingface/transformers": "4.2.0",
     "@types/node": "^24.0.0",

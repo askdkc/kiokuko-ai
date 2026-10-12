@@ -1,4 +1,4 @@
-import { Plugin } from '@opencode/plugin';
+import type { Plugin } from '@opencode/plugin';
 import { canonicalContentHash } from '../serialization/validate.js';
 import { parseOpenCodePluginOptions } from './runtime-invocation.js';
 import { OpenCodeCompactionState } from './compaction.js';
@@ -28,7 +28,7 @@ export function extractOpenCodeCompactionSummary(messages: unknown): CompletedCo
   return null;
 }
 
-export const KiokukoPlugin = Plugin.define({
+export const KiokukoPlugin: Plugin.Plugin = {
   id: 'kiokuko-ai',
   async setup(ctx) {
     const directory = ctx.location.directory;
@@ -159,6 +159,6 @@ export const KiokukoPlugin = Plugin.define({
       subscribeController.abort();
     });
   },
-});
+};
 
 export default KiokukoPlugin;

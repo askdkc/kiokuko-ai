@@ -18,10 +18,10 @@ test('v2 plugin registers domain hooks and cleanup closes the subscription', asy
   assert.equal(fixture.subscriptionClosed, true);
 });
 
-test('package entrypoint retains CLI identity and pins v2 dependencies', async () => {
+test('package entrypoint retains CLI identity and pins v2 development types', async () => {
   const packageJson = JSON.parse(await readFile(path.resolve('package.json'), 'utf8')) as {
     name: string; version: string; main: string; types: string; bin: Record<string, string>;
-    engines: Record<string, string>; dependencies: Record<string, string>; exports: Record<string, unknown>;
+    engines: Record<string, string>; dependencies: Record<string, string>; devDependencies: Record<string, string>; exports: Record<string, unknown>;
   };
   assert.equal(packageJson.name, 'kiokuko-ai');
   assert.equal(packageJson.version, PACKAGE_VERSION);
@@ -29,8 +29,10 @@ test('package entrypoint retains CLI identity and pins v2 dependencies', async (
   assert.equal(packageJson.types, './dist/opencode/plugin.d.ts');
   assert.equal(packageJson.bin['kiokuko-ai'], 'dist/bin/kiokuko.js');
   assert.equal(packageJson.engines.opencode, undefined);
-  assert.equal(packageJson.dependencies['@opencode/plugin'], '2.0.18');
-  assert.equal(packageJson.dependencies['@opencode/client'], '2.0.18');
+  assert.equal(packageJson.dependencies['@opencode/plugin'], undefined);
+  assert.equal(packageJson.dependencies['@opencode/client'], undefined);
+  assert.equal(packageJson.devDependencies['@opencode/plugin'], '2.0.18');
+  assert.equal(packageJson.devDependencies['@opencode/client'], '2.0.18');
   assert.equal(packageJson.dependencies['@opencode-ai/plugin'], undefined);
   assert.equal(packageJson.dependencies['@opencode-ai/sdk'], undefined);
 });
