@@ -50,7 +50,7 @@ managed MCP blockと登録済みプロジェクトのinstructionsを更新しま
 
 ## 対応クライアント
 
-対応範囲はOpenCode `>=2.0.18 <2.1.0`です。設定、再起動、Web UIは
+OpenCodeの実行バージョンは固定せず、必要なプラグイン・MCP機能で互換性を確認します。設定、再起動、Web UIは
 [導入ガイド](docs/getting-started.ja.md)にまとめています。
 OpenCode v1を使い続ける場合は`kiokuko-ai@0.1.25`に固定してください。v1へ戻す際は保存したv1設定も復元します。
 

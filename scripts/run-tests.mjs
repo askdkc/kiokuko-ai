@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { mkdtemp, readdir, rm, stat } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -43,13 +43,20 @@ function runNodeTests(testFiles, testTempRoot) {
   return new Promise((resolve, reject) => {
     const childEnvironment = {
       ...process.env,
+      HOME: path.join(testTempRoot, 'home'),
+      USERPROFILE: path.join(testTempRoot, 'home'),
+      XDG_CONFIG_HOME: path.join(testTempRoot, 'config'),
+      XDG_DATA_HOME: path.join(testTempRoot, 'data'),
+      XDG_CACHE_HOME: path.join(testTempRoot, 'cache'),
+      XDG_STATE_HOME: path.join(testTempRoot, 'state'),
+      KIOKUKO_DATA_DIR: path.join(testTempRoot, 'kiokuko-data'),
       TEMP: testTempRoot,
       TMP: testTempRoot,
       TMPDIR: testTempRoot,
     };
     delete childEnvironment.NODE_TEST_CONTEXT;
 
-    const child = spawn(process.execPath, ['--import', 'tsx', '--test', ...testFiles], {
+    const child = spawn(process.execPath, ['--import', 'tsx', '--test', '--test-concurrency=4', ...testFiles], {
       cwd: process.cwd(),
       env: childEnvironment,
       stdio: 'inherit',
@@ -72,6 +79,7 @@ async function run() {
   const testTempRoot = await mkdtemp(path.join(tmpdir(), 'kiokuko-test-run-'));
 
   try {
+    await mkdir(path.join(testTempRoot, 'home'), { recursive: true });
     return await runNodeTests(testFiles, testTempRoot);
   } finally {
     await rm(testTempRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });

@@ -94,21 +94,21 @@ test('installer rejects checksum mismatch before writing or extracting, without 
   const root = await mkdtemp(path.join(tmpdir(), 'kiokuko-release-checksum-'));
   try {
     const preload = path.join(root, 'fetch.mjs');
-    await writeFile(preload, "globalThis.fetch = async () => { process.stderr.write('fixture-fetch\\n'); return new Response('corrupt archive'); };\n");
+    await writeFile(preload, "globalThis.fetch = async (url) => { process.stderr.write('fixture-fetch\\n'); return url.endsWith('/latest') ? Response.json({name:'@opencode/cli-darwin-x64',version:'99.0.0',dist:{tarball:'https://registry.npmjs.org/fixture.tgz',integrity:'sha512-invalid'}}) : new Response('corrupt archive'); };\n");
     const output = path.join(root, 'opencode');
     await assert.rejects(promisify(execFile)(process.execPath, [
       '--import', preload,
       new URL('../../scripts/install-opencode-release.mjs', import.meta.url).pathname,
-      '--version', '2.0.18', '--platform', 'macos-x64', '--output', output,
+      '--platform', 'macos-x64', '--output', output,
     ]), (error: unknown) => {
       const result = error as { code: number; stderr: string };
       assert.equal(result.code, 1);
       assert.match(result.stderr, /OpenCode native package integrity mismatch/u);
-      assert.equal(result.stderr.match(/fixture-fetch/gu)?.length, 1);
+      assert.equal(result.stderr.match(/fixture-fetch/gu)?.length, 2);
       return true;
     });
     await assert.rejects(access(output), { code: 'ENOENT' });
-    await assert.rejects(access(path.join(root, 'opencode-2.0.18-cli-darwin-x64.tgz')), { code: 'ENOENT' });
+    await assert.rejects(access(path.join(root, 'opencode-99.0.0-macos-x64.tgz')), { code: 'ENOENT' });
   } finally {
     await rm(root, { recursive: true, force: true });
   }

@@ -130,6 +130,9 @@ await withManagedFileLock(target, async (guard) => {
     }
     const exit = await waitForExit(child);
     assert.equal(exit.code, 0, stderr);
+    // Exit may arrive after an in-flight read opened the old inode. Observe the
+    // final version after the writer has completed, as well as every raced read.
+    observed.add(await readFile(target, 'utf8'));
   } finally {
     child.kill();
   }

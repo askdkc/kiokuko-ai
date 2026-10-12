@@ -704,6 +704,16 @@ test('Enno identifies OpenCode and rejects unknown or contradictory client ident
   }
 });
 
+test('MCP cli identity is version-independent without accepting explicit cli hints', () => {
+  for (const version of ['fixture-current', 'fixture-future']) {
+    assert.deepEqual(resolveTaskPrepareClient({ kind: 'opencode', sessionId: 'session' }, { name: 'cli', version }),
+      { kind: 'opencode', version, sessionId: 'session' });
+  }
+  assert.equal(identifyEnnoClientKind('cli'), null);
+  assert.throws(() => resolveTaskPrepareClient({ kind: 'cli' }, { name: 'cli', version: 'fixture' }),
+    (error: unknown) => error instanceof KiokukoError && error.code === 'UNSUPPORTED_CLIENT');
+});
+
 test('mandatory SOUL assignment is deterministic and does not duplicate requirements', () => {
   const requirements = completeRequiredSkillList({
     requested: [

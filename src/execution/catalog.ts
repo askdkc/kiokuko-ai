@@ -82,6 +82,25 @@ export function roleRegistrations(options: OrchestrationOptions): Array<{ role: 
   ])].map(agent => ({ role, agent })));
 }
 
+const permissionDenialSchema = z.object({
+  action: z.string().min(1), resource: z.string().min(1), effect: z.literal('deny'),
+}).strict();
+
+function effectiveRolePermissions(permissions: unknown, role: ExecutionRole): unknown[] | null {
+  if (!Array.isArray(permissions)) return null;
+  const expected = rolePermission(role);
+  const expectedHash = canonicalContentHash(expected);
+  // The role's wildcard denial resets inherited defaults. OpenCode may repeat
+  // the block and append restrictions; no later grant may expand this envelope.
+  for (let index = permissions.length - expected.length; index >= 0; index -= 1) {
+    if (canonicalContentHash(permissions.slice(index, index + expected.length)) !== expectedHash) continue;
+    const restrictions = permissions.slice(index + expected.length);
+    return restrictions.every(rule => permissionDenialSchema.safeParse(rule).success)
+      ? permissions.slice(index) : null;
+  }
+  return null;
+}
+
 /** Project only V2 routing fields; never retain credentials, endpoints or headers. */
 export function buildExecutionCatalog(input: {
   agents: readonly unknown[];
@@ -102,12 +121,8 @@ export function buildExecutionCatalog(input: {
     const modelId = String(reference.id ?? '');
     const availableModel = models.find(item => item.providerID === provider && (item.modelID === modelId || item.id === modelId)) ?? {};
     const permissions = definition.permissions;
-    const expected = rolePermission(role);
-    // OpenCode prepends its defaults and can append the same configured agent
-    // more than once when several config sources contribute it. The final
-    // complete Kiokuko rule block determines the effective ordered policy.
-    const effectivePermissions = Array.isArray(permissions) ? permissions.slice(-expected.length) : [];
-    const validPermissions = canonicalContentHash(effectivePermissions) === canonicalContentHash(expected);
+    const effectivePermissions = effectiveRolePermissions(permissions, role);
+    const validPermissions = effectivePermissions !== null;
     const unavailable: ExecutionCandidate['unavailable'] = Object.keys(definition).length === 0 || definition.mode !== 'subagent' ? 'agent_missing'
       : model === 'unavailable/model' ? 'model_missing'
       : !validPermissions ? 'permissions_invalid'

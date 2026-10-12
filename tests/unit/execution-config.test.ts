@@ -35,6 +35,26 @@ test('custom candidates require registration, a connected tool-capable model and
   assert.equal(buildExecutionCatalog(fixtureCatalogInput(agents), options).candidates.find(c => c.agent === 'my-worker')?.unavailable, 'permissions_invalid');
 });
 
+test('runtime permission inheritance accepts additional denials but rejects grants after the role envelope', () => {
+  const custom = agentDefinition('ideal', 'private/custom-model');
+  const options = orchestrationOptionsSchema.parse({ customAgents: { ideal: ['my-ideal'] } });
+  const candidate = (permissions: typeof custom.permissions) => buildExecutionCatalog(
+    fixtureCatalogInput({ 'my-ideal': { ...custom, permissions } }), options,
+  ).candidates.find(item => item.agent === 'my-ideal')!;
+  const original = candidate(custom.permissions);
+  const inherited = [
+    { action: '*', resource: '*', effect: 'allow' as const },
+    ...custom.permissions, ...custom.permissions,
+    { action: 'browser', resource: '*', effect: 'deny' as const },
+  ];
+  const restricted = candidate(inherited);
+  assert.equal(restricted.unavailable, null);
+  assert.notEqual(restricted.configurationDigest, original.configurationDigest);
+  assert.equal(candidate([...inherited, { action: 'shell', resource: '*', effect: 'allow' }]).unavailable, 'permissions_invalid');
+  assert.equal(candidate([...inherited, { action: 'shell', resource: '*', effect: 'ask' }]).unavailable, 'permissions_invalid');
+  assert.equal(candidate(custom.permissions.slice(1)).unavailable, 'permissions_invalid');
+});
+
 test('all localized README examples define a valid explicitly registered custom worker', async () => {
   const { readFile } = await import('node:fs/promises');
   let canonical: unknown;

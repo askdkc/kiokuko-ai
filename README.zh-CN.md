@@ -45,7 +45,7 @@ kiokuko-ai setup
 
 ## 支持的客户端
 
-支持 OpenCode `>=2.0.18 <2.1.0`。设置、重启和 Web UI 的说明请参阅[英文 Getting started](docs/getting-started.md)。
+不固定 OpenCode 的运行版本，通过所需的插件和 MCP 功能检查兼容性。设置、重启和 Web UI 的说明请参阅[英文 Getting started](docs/getting-started.md)。
 如需继续使用 OpenCode v1，请固定 `kiokuko-ai@0.1.25`；回退时还需恢复备份的 v1 配置。
 
 ## 安全性与限制

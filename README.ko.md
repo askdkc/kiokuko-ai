@@ -45,7 +45,7 @@ managed MCP block과 프로젝트 instructions를 갱신합니다. unmanaged ide
 
 ## 지원 클라이언트
 
-지원 범위는 OpenCode `>=2.0.18 <2.1.0`입니다. 설정, 재시작, Web UI 안내는
+OpenCode 실행 버전은 고정하지 않으며 필요한 플러그인 및 MCP 기능으로 호환성을 확인합니다. 설정, 재시작, Web UI 안내는
 [영문 Getting started](docs/getting-started.md)에 정리되어 있습니다.
 OpenCode v1을 유지하려면 `kiokuko-ai@0.1.25`로 고정하세요. v1으로 되돌릴 때는 백업한 v1 설정도 복원해야 합니다.
 

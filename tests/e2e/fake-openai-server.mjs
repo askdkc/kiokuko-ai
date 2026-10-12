@@ -175,13 +175,21 @@ export async function startFakeOpenAiServer(options = {}) {
       return;
     }
     sequence += 1;
+    if (options.failFirstStream && sequence === 1) {
+      response.writeHead(200, { 'content-type': 'text/event-stream' });
+      response.write('data: {"id":"partial","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}\n\n');
+      setTimeout(() => response.destroy(), 50);
+      return;
+    }
     const continuation = continuationPayload(Array.isArray(body.messages) ? body.messages : []);
     if (continuation !== undefined) {
       stats.continuationRequests += 1;
       if (typeof onContinuation === 'function') await onContinuation(continuation);
     }
     stats.sentModels.push(body.model);
-    const override = typeof options.respond === 'function' ? await options.respond(body, sequence) : undefined;
+    let override;
+    try { override = typeof options.respond === 'function' ? await options.respond(body, sequence) : undefined; }
+    catch (error) { stats.fixtureError = String(error); response.writeHead(500, { 'content-type': 'application/json' }); response.end(JSON.stringify({ error: { message: String(error) } })); return; }
     if (override?.status) {
       response.writeHead(override.status, { 'content-type': 'application/json' });
       response.end(JSON.stringify({ error: { message: 'fixture provider rejected model', type: 'invalid_request_error', code: 'model_not_found' } }));

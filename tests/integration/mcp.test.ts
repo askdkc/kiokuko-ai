@@ -648,7 +648,7 @@ test('task_prepare identifies OpenCode before Oduno derives the ideal', async ()
   const data = await mkdtemp(path.join(tmpdir(), 'kiokuko-mcp-opencode-data-'));
   const databasePath = path.join(data, 'kiokuko-ai.sqlite');
   const server = createKiokukoMcpServer({ databasePath, cwd: () => root });
-  const client = new Client({ name: 'opencode', version: 'fixture-version' });
+  const client = new Client({ name: 'cli', version: 'fixture-version' });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   await client.connect(clientTransport);

@@ -2,7 +2,7 @@
 
 Kiokuko for OpenCode supports OpenCode only. There is no multi-client detection,
 configuration, cleanup, or migration compatibility layer.
-This release targets OpenCode `>=2.0.18 <2.1.0` only. To remain on OpenCode v1,
+The runtime OpenCode is used without a version range. CI resolves the latest stable release and verifies the required plugin and MCP contracts. To remain on OpenCode v1,
 pin `kiokuko-ai@0.1.25` and retain a backup of the matching v1 configuration.
 
 For a v1-to-v2 migration, save the existing configuration, install OpenCode v2,

@@ -28,7 +28,7 @@ test('package entrypoint retains CLI identity and pins v2 dependencies', async (
   assert.equal(packageJson.main, './dist/opencode/plugin.js');
   assert.equal(packageJson.types, './dist/opencode/plugin.d.ts');
   assert.equal(packageJson.bin['kiokuko-ai'], 'dist/bin/kiokuko.js');
-  assert.equal(packageJson.engines.opencode, '>=2.0.18 <2.1.0');
+  assert.equal(packageJson.engines.opencode, undefined);
   assert.equal(packageJson.dependencies['@opencode/plugin'], '2.0.18');
   assert.equal(packageJson.dependencies['@opencode/client'], '2.0.18');
   assert.equal(packageJson.dependencies['@opencode-ai/plugin'], undefined);

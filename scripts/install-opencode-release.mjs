@@ -77,14 +77,17 @@ async function extractArchive(archive, destination) {
 }
 
 async function main() {
-  const version = argument('--version');
   const platform = argument('--platform');
   const output = path.resolve(argument('--output'));
-  const { manifest, definition } = await platformDefinition(platform);
-  if (manifest.schemaVersion !== 2 || definition.version !== version
-    || !/^https:\/\/registry\.npmjs\.org\/@opencode\/cli-[a-z0-9-]+\/-\/cli-[a-z0-9-]+-2\.0\.18\.tgz$/u.test(definition.tarball)
+  const { definition: platformEntry } = await platformDefinition(platform);
+  const metadataBytes = await downloadRelease(`https://registry.npmjs.org/${platformEntry.package}/latest`);
+  const release = JSON.parse(metadataBytes.toString('utf8'));
+  const version = release.version;
+  const definition = { ...platformEntry, version, tarball: release.dist?.tarball, integrity: release.dist?.integrity };
+  if (release.name !== definition.package || typeof version !== 'string'
+    || typeof definition.tarball !== 'string' || new URL(definition.tarball).origin !== 'https://registry.npmjs.org'
     || typeof definition.integrity !== 'string' || !definition.integrity.startsWith('sha512-')) {
-    throw new Error('version is not pinned to a verified native npm package');
+    throw new Error('OpenCode native package metadata is invalid');
   }
   const bytes = await downloadRelease(definition.tarball);
   const digest = `sha512-${createHash('sha512').update(bytes).digest('base64')}`;

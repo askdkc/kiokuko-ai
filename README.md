@@ -55,7 +55,7 @@ fallback behavior.
 
 ## Supported client
 
-OpenCode `>=2.0.18 <2.1.0` is the supported client range. Setup, Web UI, and restart instructions
+The runtime OpenCode is used without a version range; compatibility is checked through the required plugin and MCP capabilities. Setup, Web UI, and restart instructions
 are in [Getting started](docs/getting-started.md). The [documentation index](docs/README.md)
 links to conceptual and operational guides.
 For OpenCode v1, pin `kiokuko-ai@0.1.25`; a rollback also requires restoring the saved v1 configuration.

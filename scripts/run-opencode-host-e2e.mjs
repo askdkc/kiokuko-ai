@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { createServer as createNetServer } from 'node:net';
-import { access, lstat, mkdtemp, mkdir, readFile, readdir, realpath, writeFile } from 'node:fs/promises';
+import { access, stat, mkdtemp, mkdir, readFile, readdir, realpath, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
@@ -56,9 +56,9 @@ function parseJson(value, label) {
   }
 }
 
-function append(current, chunk) {
-  if (current.byteLength >= maxOutputBytes) return current;
-  return Buffer.concat([current, Buffer.from(chunk).subarray(0, maxOutputBytes - current.byteLength)]);
+function append(current, chunk, limit = maxOutputBytes) {
+  if (current.byteLength >= limit) return current;
+  return Buffer.concat([current, Buffer.from(chunk).subarray(0, limit - current.byteLength)]);
 }
 
 function execute(command, args, options = {}) {
@@ -67,8 +67,8 @@ function execute(command, args, options = {}) {
     let stdout = Buffer.alloc(0);
     let stderr = Buffer.alloc(0);
     let timedOut = false;
-    child.stdout.on('data', (chunk) => { stdout = append(stdout, chunk); });
-    child.stderr.on('data', (chunk) => { stderr = append(stderr, chunk); });
+    child.stdout.on('data', (chunk) => { stdout = append(stdout, chunk, options.maxOutputBytes); });
+    child.stderr.on('data', (chunk) => { stderr = append(stderr, chunk, options.maxOutputBytes); });
     if (options.input !== undefined) {
       child.stdin.end(options.input);
     } else {
@@ -126,8 +126,8 @@ async function installedPackagePath(prefix) {
 
 export async function resolveOpenCodeBinary(value) {
   if (!path.isAbsolute(value)) throw new Error('OPENCODE_BIN must be an absolute path');
-  const status = await lstat(value).catch(() => undefined);
-  if (status?.isFile()) return value;
+  const status = await stat(value).catch(() => undefined);
+  if (status?.isFile()) return realpath(value);
   if (!status?.isDirectory()) throw new Error('OPENCODE_BIN does not exist');
   const expected = process.platform === 'win32' ? 'opencode.exe' : 'opencode';
   const queue = [value];
@@ -297,7 +297,7 @@ export async function runHostContract(options = {}) {
   const server = await startOpenCode(opencode, environment, project);
   try {
     const health = await server.client.server.info();
-    if (health.version !== '2.0.18') throw new Error('OpenCode version contract failed');
+    if (typeof health.version !== 'string' || !health.version) throw new Error('OpenCode server version metadata is missing');
     const location = { directory: projectRoot };
     const session = await server.client.session.create({ location, model: { providerID: 'fixture', id: 'fixture-model' } });
     // A cold npm cache makes package installation substantially slower on the
@@ -437,7 +437,7 @@ export async function runHostContract(options = {}) {
       const roleSession = await server.client.session.create({ location, model: { providerID: 'fixture', id: 'fixture-model' } });
       const rolePrepare = await mcpToolCall(cliScript, environment, project, 'task_prepare', {
         soulRead: true, requestId: 'host-role-execution',
-        task: 'Verify native subagent role dispatch through OpenCode 2.0.18.', cwd: project,
+        task: 'Verify native subagent role dispatch through the runtime OpenCode.', cwd: project,
         profileHints: { taskType: 'build', target: 'native subagent', expected: 'one verified dispatch' },
         capabilities, client: { kind: 'opencode', version: health.version, sessionId: roleSession.id },
         executionCatalog: buildExecutionCatalog({ agents: agentCatalog.data,

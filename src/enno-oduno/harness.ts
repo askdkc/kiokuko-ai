@@ -102,7 +102,7 @@ export function identifyEnnoClientKind(value: unknown): EnnoClientKind | null {
 
 export function identifyMcpClientKind(client: McpClientImplementation | undefined): EnnoClientKind | null {
   if (client === undefined) return null;
-  const fromName = identifyEnnoClientKind(client.name);
+  const fromName = normalizedClientName(client.name) === 'cli' ? 'opencode' : identifyEnnoClientKind(client.name);
   const fromTitle = identifyEnnoClientKind(client.title);
   if (fromName !== null && fromTitle !== null && fromName !== fromTitle) {
     throw new KiokukoError('CONFLICT', 'MCP client identity is contradictory');

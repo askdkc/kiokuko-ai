@@ -97,8 +97,8 @@ jobs:
       - name: Verify pinned local embedding manifest
         run: node scripts/run-local-embedding-smoke.mjs --offline
 
-      - name: Install pinned OpenCode release
-        run: node scripts/install-opencode-release.mjs --version 2.0.18 --platform ${{ matrix.platform }} --output "${{ runner.temp }}/opencode"
+      - name: Install latest stable OpenCode
+        run: node scripts/install-opencode-release.mjs --platform ${{ matrix.platform }} --output "${{ runner.temp }}/opencode"
 
       - name: Run OpenCode platform host smoke
         run: npm run test:e2e:opencode:host
@@ -110,7 +110,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        opencode: [2.0.18]
+        opencode: [latest]
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
@@ -126,8 +126,8 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Install exact OpenCode release
-        run: node scripts/install-opencode-release.mjs --version "${{ matrix.opencode }}" --platform linux-x64 --output "${{ runner.temp }}/opencode"
+      - name: Install latest stable OpenCode
+        run: node scripts/install-opencode-release.mjs --platform linux-x64 --output "${{ runner.temp }}/opencode"
 
       - name: Run required host contract
         run: npm run test:e2e:opencode:host
@@ -138,3 +138,38 @@ jobs:
         run: node scripts/run-opencode-execution-e2e.mjs
         env:
           OPENCODE_BIN: ${{ runner.temp }}/opencode/package/bin/opencode
+
+      - name: Check out AgenticReplay source for wrapped contract
+        uses: actions/checkout@v6
+        with:
+          repository: askdkc/AgenticReplay
+          path: agenticreplay-source
+
+      - name: Build and pack AgenticReplay for wrapped contract
+        working-directory: agenticreplay-source
+        run: |
+          npm ci
+          npm pack --json --pack-destination "${{ runner.temp }}" > "${{ runner.temp }}/agenticreplay-pack.json"
+          node -e 'const fs = require("node:fs"); const p = JSON.parse(fs.readFileSync(process.argv[1], "utf8"))[0]; console.log(JSON.stringify({id:p.id,filename:p.filename,integrity:p.integrity}))' "${{ runner.temp }}/agenticreplay-pack.json"
+          git rev-parse HEAD
+
+      - name: Install the packed AgenticReplay
+        run: |
+          archive=$(node -e 'const fs = require("node:fs"); process.stdout.write(JSON.parse(fs.readFileSync(process.argv[1], "utf8"))[0].filename)' "${{ runner.temp }}/agenticreplay-pack.json")
+          npm install --prefix "${{ runner.temp }}/agenticreplay" "${{ runner.temp }}/$archive"
+
+      - name: Verify wrapped MCP and interrupted stream recovery
+        run: npm run test:e2e:opencode:agenticreplay | tee "${{ runner.temp }}/wrapped-contract.log"
+        env:
+          OPENCODE_BIN: ${{ runner.temp }}/opencode/package/bin/opencode
+          KIOKUKO_TEST_AGENTICREPLAY: ${{ runner.temp }}/agenticreplay/node_modules/.bin/agenticreplay
+
+      - name: Retain wrapped contract evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: opencode-wrapped-contract
+          path: |
+            ${{ runner.temp }}/agenticreplay-pack.json
+            ${{ runner.temp }}/wrapped-contract.log
+          if-no-files-found: ignore
