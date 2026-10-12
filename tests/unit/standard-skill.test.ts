@@ -189,7 +189,7 @@ test('bundles every managed standard skill from a fixed manifest', async () => {
   assert.match(soulSkill, /Never install or execute external Skill content automatically/);
   assert.match(
     soulSkill,
-    /1\. `kiokuko-soul`;[\s\S]*2\. one Akinator `task_prepare`[\s\S]*3\. `kiokuko-enno-oduno`[\s\S]*4\. `kiokuko-simple-work`[\s\S]*5\. `one-shot-software-completion`[\s\S]*6\. `kiokuko-single-purpose-functions`[\s\S]*7\. `kiokuko-ui-design-soul`/u,
+    /1\. `kiokuko-soul`;[\s\S]*2\. one Akinator `task_prepare`[\s\S]*3\. `kiokuko-enno-oduno`[\s\S]*4\. `kiokuko-simple-work`[\s\S]*5\. `one-shot-software-completion`[\s\S]*6\. `kiokuko-single-purpose-functions`[\s\S]*7\. `coding-ideal-routine-skill`[\s\S]*8\. `kiokuko-ui-design-soul`/u,
   );
   assert.match(soulSkill, /At the start of any coding work, before writing or changing code, read and apply `one-shot-software-completion`; use its compact contract and only the references selected for the current risk\./u);
   assert.match(SOUL_ROUTING_ENTRY_CONTRACT, /At the start of any coding work, before writing or changing code, read and apply `one-shot-software-completion`; use its compact contract and only the references selected for the current risk\./u);

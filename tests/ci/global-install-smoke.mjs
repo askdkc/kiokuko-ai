@@ -21,13 +21,14 @@ const forbiddenPackages = new Set([
 ]);
 let npmCacheDirectory;
 
-async function run(command, args, cwd) {
+async function run(command, args, cwd, environment = {}) {
   try {
     return await execFileAsync(command, args, {
       cwd,
       maxBuffer: 4 * 1024 * 1024,
       env: {
         ...process.env,
+        ...environment,
         npm_config_loglevel: 'warn',
         ...(npmCacheDirectory === undefined ? {} : { npm_config_cache: npmCacheDirectory }),
       },
@@ -108,6 +109,26 @@ try {
   const cliPath = path.join(prefixDirectory, 'bin', 'kiokuko-ai');
   const version = await run(cliPath, ['--version'], repositoryRoot);
   assert.equal(version.stdout.trim(), packageJson.version, 'installed CLI version must match package.json');
+
+  const isolatedEnvironment = {
+    HOME: path.join(temporaryRoot, 'home'),
+    XDG_CONFIG_HOME: path.join(temporaryRoot, 'config'),
+    XDG_DATA_HOME: path.join(temporaryRoot, 'data'),
+    KIOKUKO_DATA_DIR: path.join(temporaryRoot, 'memory'),
+  };
+  await mkdir(isolatedEnvironment.HOME, { recursive: true });
+  const setup = await run(cliPath, ['setup', '--no-embeddings', '--json'], temporaryRoot, isolatedEnvironment);
+  const setupResult = JSON.parse(setup.stdout).data;
+  const routineFiles = setupResult.files.filter(file => file.path.includes('/coding-ideal-routine-skill/'));
+  assert.equal(routineFiles.length, 3, 'normal installed setup must deliver the coding routine and references');
+  for (const file of routineFiles) {
+    const content = await readFile(file.path, 'utf8');
+    assert.match(content, /<!-- KIOKUKO MANAGED STANDARD SKILL: coding-ideal-routine-skill -->/u);
+  }
+  const instructions = setupResult.files.find(file => file.purpose === 'instructions');
+  assert.match(await readFile(instructions.path, 'utf8'), /before writing or changing code, read and apply `coding-ideal-routine-skill`/u);
+  const repeated = await run(cliPath, ['setup', '--no-embeddings', '--json'], temporaryRoot, isolatedEnvironment);
+  assert.equal(JSON.parse(repeated.stdout).data.files.every(file => file.action === 'unchanged'), true);
 
   const installedNames = await installedPackageNames(path.join(prefixDirectory, 'lib', 'node_modules'));
   assert.equal(installedNames.has(packageJson.name), true, 'the minimal install must contain the published package');

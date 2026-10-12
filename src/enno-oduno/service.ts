@@ -125,6 +125,7 @@ import {
 } from './sanitize.js';
 import type * as z from 'zod/v4';
 import {
+  STANDARD_CODING_ROUTINE_SKILL_NAME,
   STANDARD_COMPLETION_SKILL_NAME,
   STANDARD_FUNCTION_SKILL_NAME,
   STANDARD_SOUL_SKILL_NAME,
@@ -983,7 +984,7 @@ export async function submitEnnoPlan(
       skillNames: orderedUniqueSkillNames([
         STANDARD_SOUL_SKILL_NAME,
         ...(unit.routes.includes('code') || unit.routes.includes('ui')
-          ? [STANDARD_COMPLETION_SKILL_NAME, STANDARD_FUNCTION_SKILL_NAME]
+          ? [STANDARD_COMPLETION_SKILL_NAME, STANDARD_CODING_ROUTINE_SKILL_NAME, STANDARD_FUNCTION_SKILL_NAME]
           : []),
         ...(unit.routes.includes('ui') ? [STANDARD_UI_SKILL_NAME] : []),
       ], unit.skillNames),

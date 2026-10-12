@@ -183,6 +183,11 @@ test('reports Akinator skill recommendations as unknown without a client catalog
     source: 'akinator_policy',
   }, {
     kind: 'skill',
+    name: 'coding-ideal-routine-skill',
+    availability: 'unknown',
+    source: 'akinator_policy',
+  }, {
+    kind: 'skill',
     name: 'kiokuko-single-purpose-functions',
     availability: 'unknown',
     source: 'akinator_policy',

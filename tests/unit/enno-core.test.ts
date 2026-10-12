@@ -21,7 +21,7 @@ import {
   orderedUniqueSkillNames,
   unavailableRequiredSkills,
 } from '../../src/enno-oduno/skills.js';
-import { STANDARD_COMPLETION_SKILL_NAME, STANDARD_FUNCTION_SKILL_NAME, STANDARD_SOUL_SKILL_NAME } from '../../src/setup/standard-skills.js';
+import { STANDARD_CODING_ROUTINE_SKILL_NAME, STANDARD_COMPLETION_SKILL_NAME, STANDARD_FUNCTION_SKILL_NAME, STANDARD_SOUL_SKILL_NAME } from '../../src/setup/standard-skills.js';
 import { parseEnnoContract, parseIdealSubmission, parsePlanSubmission } from '../../src/enno-oduno/schemas.js';
 import { sanitizePlanSubmission } from '../../src/enno-oduno/sanitize.js';
 import type { EnnoRequestHandoff } from '../../src/enno-oduno/types.js';
@@ -125,12 +125,15 @@ test('role scripts reject revision conflicts and generate only the role owning t
       objective: 'Fix add',
       units: [{
         id: 'fix-add', objective: 'Fix add', scope: ['src/add.js'], dependencies: [],
-        routes: ['code'], skillNames: [STANDARD_COMPLETION_SKILL_NAME, STANDARD_FUNCTION_SKILL_NAME], acceptanceCriteria: ['Tests pass'], focusedVerifiers: [],
+        routes: ['code'], skillNames: [STANDARD_COMPLETION_SKILL_NAME, STANDARD_CODING_ROUTINE_SKILL_NAME, STANDARD_FUNCTION_SKILL_NAME], acceptanceCriteria: ['Tests pass'], focusedVerifiers: [],
       }],
     },
     skillSet: {
       entries: [{
         name: STANDARD_COMPLETION_SKILL_NAME, purposes: ['planning', 'implementation', 'testing', 'review'], required: true,
+        availability: 'local', referenceId: null,
+      }, {
+        name: STANDARD_CODING_ROUTINE_SKILL_NAME, purposes: ['planning', 'implementation', 'testing', 'review'], required: true,
         availability: 'local', referenceId: null,
       }, {
         name: STANDARD_FUNCTION_SKILL_NAME, purposes: ['implementation'], required: true,
@@ -173,6 +176,7 @@ test('role scripts reject revision conflicts and generate only the role owning t
   assert.deepEqual(directive.requiredSkills, [
     STANDARD_SOUL_SKILL_NAME,
     STANDARD_COMPLETION_SKILL_NAME,
+    STANDARD_CODING_ROUTINE_SKILL_NAME,
     STANDARD_FUNCTION_SKILL_NAME,
   ]);
   assert.equal((directive.reportSchema.required as string[]).includes('leaseToken'), true);
@@ -211,6 +215,7 @@ test('role scripts reject revision conflicts and generate only the role owning t
     STANDARD_SOUL_SKILL_NAME,
     'kiokuko-enno-oduno',
     STANDARD_COMPLETION_SKILL_NAME,
+    STANDARD_CODING_ROUTINE_SKILL_NAME,
     STANDARD_FUNCTION_SKILL_NAME,
   ]);
   assert.ok(review.harness.instructions.some((instruction) => /Read and apply kiokuko-soul first, then kiokuko-enno-oduno/u.test(instruction)));
@@ -335,6 +340,7 @@ test('Zenki directive binds Akinator, repository, local capability, and referenc
   assert.match(directive.objective, /one to three versioned expertRefs/iu);
   assert.deepEqual(directive.requiredSkills, [
     STANDARD_SOUL_SKILL_NAME,
+    STANDARD_CODING_ROUTINE_SKILL_NAME,
     STANDARD_FUNCTION_SKILL_NAME,
   ]);
   assert.ok(directive.harness.instructions.some((instruction) => /read and apply kiokuko-soul first/iu.test(instruction)));
@@ -726,6 +732,7 @@ test('mandatory SOUL assignment is deterministic and does not duplicate requirem
   assert.deepEqual(requirements.map((item) => item.name), [
     STANDARD_SOUL_SKILL_NAME,
     STANDARD_COMPLETION_SKILL_NAME,
+    STANDARD_CODING_ROUTINE_SKILL_NAME,
     STANDARD_FUNCTION_SKILL_NAME,
     'kiokuko-ui-design-soul',
   ]);

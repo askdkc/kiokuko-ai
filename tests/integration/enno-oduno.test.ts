@@ -44,6 +44,7 @@ import { createHash } from 'node:crypto';
 
 const capabilities = [
   { kind: 'skill', name: 'kiokuko-soul', description: 'Routes work to every applicable Kiokuko Skill.' },
+  { kind: 'skill', name: 'coding-ideal-routine-skill', description: 'Coding delivery routine.' },
   { kind: 'skill', name: 'one-shot-software-completion', description: 'Complete code changes with traced scope and verification.' },
   { kind: 'skill', name: 'kiokuko-single-purpose-functions', description: 'Focused code contracts and tests.' },
   { kind: 'skill', name: 'kiokuko-ui-design-soul', description: 'UI interaction and accessibility guidance.' },
@@ -260,8 +261,8 @@ test('task_prepare derives the Oduno ideal before handing the request to harness
     assert.equal(claimed.directive?.role, 'goki');
     assert.match(claimed.reason ?? '', /"contextRevision":2/u);
     assert.match(claimed.reason ?? '', /"late-skill"/u);
-    assert.deepEqual(claimed.directive?.requiredSkills, ['kiokuko-soul', 'one-shot-software-completion', 'kiokuko-single-purpose-functions']);
-    assert.deepEqual(claimed.directive?.workUnit?.skillNames, ['kiokuko-soul', 'one-shot-software-completion', 'kiokuko-single-purpose-functions']);
+    assert.deepEqual(claimed.directive?.requiredSkills, ['kiokuko-soul', 'one-shot-software-completion', 'coding-ideal-routine-skill', 'kiokuko-single-purpose-functions']);
+    assert.deepEqual(claimed.directive?.workUnit?.skillNames, ['kiokuko-soul', 'one-shot-software-completion', 'coding-ideal-routine-skill', 'kiokuko-single-purpose-functions']);
     assert.deepEqual(claimed.directive?.workUnit?.expertRefs, [{
       id: 'code.verification.v1',
       reason: 'Repair the reported regression with matching evidence',
@@ -1323,6 +1324,7 @@ test('fake agent completes the Enno-Zenki-Goki loop in ledger order with fresh v
     assert.deepEqual(plan.ennoOduno.directive?.requiredSkills, [
       'kiokuko-soul',
       'one-shot-software-completion',
+      'coding-ideal-routine-skill',
       'kiokuko-single-purpose-functions',
     ]);
 
@@ -1331,7 +1333,7 @@ test('fake agent completes the Enno-Zenki-Goki loop in ledger order with fresh v
     const hook = decideAdapterContinuation(database, 'opencode', { session_id: 'opencode-session-1', cwd: root });
     assert.equal(hook.continue, true);
     assert.equal(hook.directive?.role, 'goki');
-    assert.deepEqual(hook.directive?.requiredSkills, ['kiokuko-soul', 'one-shot-software-completion', 'kiokuko-single-purpose-functions']);
+    assert.deepEqual(hook.directive?.requiredSkills, ['kiokuko-soul', 'one-shot-software-completion', 'coding-ideal-routine-skill', 'kiokuko-single-purpose-functions']);
 
     const worked = await reportEnnoWork(database, {
       ...identity, ...executionCredentials(hook), expectedRevision: 2, idempotencyKey: 'work-1', workUnitId: 'repair-add',
@@ -1347,6 +1349,7 @@ test('fake agent completes the Enno-Zenki-Goki loop in ledger order with fresh v
       'kiokuko-soul',
       'kiokuko-enno-oduno',
       'one-shot-software-completion',
+      'coding-ideal-routine-skill',
       'kiokuko-single-purpose-functions',
     ]);
     assert.equal(worked.verifierResults?.[0]?.status, 'passed');
@@ -1703,12 +1706,14 @@ test('mixed UI, code, test, docs, and operations WorkUnits route experts and Ski
     assert.deepEqual(plan.ennoOduno.directive?.requiredSkills, [
       'kiokuko-soul',
       'one-shot-software-completion',
+      'coding-ideal-routine-skill',
       'kiokuko-single-purpose-functions',
       'kiokuko-ui-design-soul',
     ]);
     assert.deepEqual(plan.ennoOduno.directive?.workUnit?.skillNames, [
       'kiokuko-soul',
       'one-shot-software-completion',
+      'coding-ideal-routine-skill',
       'kiokuko-single-purpose-functions',
       'kiokuko-ui-design-soul',
     ]);
@@ -1725,6 +1730,7 @@ test('mixed UI, code, test, docs, and operations WorkUnits route experts and Ski
     assert.deepEqual(catalog.ennoOduno.directive?.requiredSkills, [
       'kiokuko-soul',
       'one-shot-software-completion',
+      'coding-ideal-routine-skill',
       'kiokuko-single-purpose-functions',
     ]);
     const tests = await reportEnnoWork(database, {
@@ -1754,6 +1760,7 @@ test('mixed UI, code, test, docs, and operations WorkUnits route experts and Ski
       'kiokuko-soul',
       'kiokuko-enno-oduno',
       'one-shot-software-completion',
+      'coding-ideal-routine-skill',
       'kiokuko-single-purpose-functions',
       'kiokuko-ui-design-soul',
     ]);

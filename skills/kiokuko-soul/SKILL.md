@@ -105,6 +105,8 @@ This route minimizes the solution; it does not replace the code contract below o
 
 At the start of any coding work, before writing or changing code, read and apply `one-shot-software-completion`; use its compact contract and only the references selected for the current risk.
 
+For every coding request, before writing or changing code, read and apply `coding-ideal-routine-skill`. Read the complete core, reuse the current plan and evidence, and load references only for applicable risks. This includes tests, UI, refactoring, and behavior-affecting configuration or distribution changes. Explanation-only requests do not start implementation. Skill discovery by metadata similarity is not a substitute for this route.
+
 Read and apply the `kiokuko-single-purpose-functions` index before writing, modifying, debugging, refactoring, or reviewing code, and before decomposing a code-changing WorkPlan. Select one to three `code.*` expert fragments for each cohesive function or WorkUnit.
 
 ### Interactive UI work
@@ -123,7 +125,8 @@ Use this order:
 4. `kiokuko-simple-work` when the finalized intake satisfies the simple-code activation boundary;
 5. `one-shot-software-completion` at the start of coding work and before writing or changing code;
 6. `kiokuko-single-purpose-functions` for code planning or code work;
-7. `kiokuko-ui-design-soul` for interactive UI work.
+7. `coding-ideal-routine-skill` for every coding request before changes;
+8. `kiokuko-ui-design-soul` for interactive UI work.
 
 The current revision-bound directive may narrow which routes the active role performs. Do not let a later route cross a role boundary or expand an approved WorkUnit.
 
