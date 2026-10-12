@@ -7,17 +7,18 @@ import {
 } from '../enno-oduno/instructions.js';
 import { SOUL_ROUTING_ENTRY_CONTRACT } from './standard-skills.js';
 
-export const GLOBAL_INSTRUCTIONS_BEGIN = '<!-- BEGIN KIOKUKO GLOBAL MEMORY -->';
-export const GLOBAL_INSTRUCTIONS_END = '<!-- END KIOKUKO GLOBAL MEMORY -->';
+export const GLOBAL_INSTRUCTIONS_BEGIN = '<!-- BEGIN KIOKUKO-AI GLOBAL MEMORY -->';
+export const GLOBAL_INSTRUCTIONS_END = '<!-- END KIOKUKO-AI GLOBAL MEMORY -->';
 
 export function renderGlobalInstructions(existing = ''): DelimitedBlockResult {
   const block = [
     GLOBAL_INSTRUCTIONS_BEGIN,
     '<!-- Managed by `kiokuko-ai setup`. Edit outside these markers. -->',
+    '<!-- Only kiokuko-ai may read or update this section. Other Kiokuko products must use their own sections. -->',
     '',
-    '## Kiokuko global memory',
+    '## kiokuko-ai global memory for OpenCode',
     '',
-    'When the Kiokuko MCP tools are available:',
+    'Apply this section only to the Kiokuko MCP server launched by `kiokuko-ai`. Do not apply it to `kiokuko` or `kiokuko-dsh`, or mix their instruction blocks and template versions.',
     '',
     ENNO_ADVISORY_ROUND_CONTRACT,
     '',

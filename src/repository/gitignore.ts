@@ -2,7 +2,7 @@ import path from 'node:path';
 import { assertAtomicCleanupComplete, assertFileExpectation, atomicWriteTextIfUnchanged, readRegularFile } from '../agent-file/atomic-write.js';
 import { KiokukoError } from '../errors.js';
 
-export const PROJECT_BINDING_IGNORE_ENTRY = '.kiokuko.json';
+export const PROJECT_BINDING_IGNORE_ENTRY = '.kiokuko-ai.json';
 export const AGENTICREPLAY_IGNORE_ENTRY = '.agenticreplay/';
 
 export interface RenderedProjectGitignore {

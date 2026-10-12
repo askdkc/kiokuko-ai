@@ -36,7 +36,7 @@ export type ProjectAgentRefreshResult = RegisteredProjectLocation & (
   | {
       status: 'failed';
       agentFile: null;
-      reason: 'inaccessible_root' | 'use_rejected' | 'verification_failed';
+      reason: 'inaccessible_root' | 'use_rejected' | 'verification_failed' | 'confirmation_required';
       finding?: ProjectAgentFinding;
       errorCode: ErrorCode | 'FILESYSTEM_ERROR';
     }
@@ -55,6 +55,7 @@ export interface RefreshRegisteredProjectOptions {
   databasePath: string;
   migrationsDirectory?: string;
   dryRun?: boolean;
+  confirmRecreateAgentFile?: (finding: ProjectAgentFinding) => Promise<boolean>;
 }
 
 export interface RefreshRegisteredProjectDependencies {
@@ -163,6 +164,15 @@ async function refreshRegisteredProject(
     return { ...location, status: 'preserved', agentFile: health.finding.agentFile, finding: health.finding };
   }
 
+  let recreateAgentFile: string | undefined;
+  if (!health.ok && health.finding.reason === 'agent_file_missing') {
+    if (options.dryRun === true || !await options.confirmRecreateAgentFile?.(health.finding)) {
+      return { ...location, status: 'failed', agentFile: null, reason: 'confirmation_required',
+        errorCode: 'VALIDATION_ERROR', finding: health.finding };
+    }
+    recreateAgentFile = path.relative(location.repositoryRoot, health.finding.agentFile!);
+  }
+
   const useOptions: UseOptions = {
     root: location.repositoryRoot,
     repositoryId: location.repositoryId,
@@ -171,6 +181,8 @@ async function refreshRegisteredProject(
     databasePath: options.databasePath,
     dryRun: options.dryRun === true,
     ensureNewBindingIgnored: true,
+    requireExistingAgentFile: true,
+    ...(recreateAgentFile === undefined ? {} : { recreateAgentFile }),
     ...(options.managedFileEnvironment === undefined ? {} : { managedFileEnvironment: options.managedFileEnvironment }),
     ...(options.migrationsDirectory === undefined
       ? {}

@@ -85,18 +85,18 @@ test('use creates binding and AGENTS.md, then is unchanged on repeat', async () 
   const first = await useRepository({ root, databasePath });
   assert.equal(first.agentFileAction, 'created');
   assert.equal(first.bindingAction, 'created');
-  const bindingBefore = await readFile(path.join(root, '.kiokuko.json'), 'utf8');
+  const bindingBefore = await readFile(path.join(root, '.kiokuko-ai.json'), 'utf8');
   const agentBefore = await readFile(path.join(root, 'AGENTS.md'), 'utf8');
   const second = await useRepository({ root, databasePath });
   assert.equal(second.agentFileAction, 'unchanged');
   assert.equal(second.bindingAction, 'unchanged');
-  assert.equal(await readFile(path.join(root, '.kiokuko.json'), 'utf8'), bindingBefore);
+  assert.equal(await readFile(path.join(root, '.kiokuko-ai.json'), 'utf8'), bindingBefore);
   assert.equal(await readFile(path.join(root, 'AGENTS.md'), 'utf8'), agentBefore);
   await assert.rejects(access(path.join(root, '.gitignore')));
   await access(databasePath);
 });
 
-test('new-binding ignore policy appends .kiokuko.json while preserving content, line endings, and mode', async () => {
+test('new-binding ignore policy appends .kiokuko-ai.json while preserving content, line endings, and mode', async () => {
   const root = await repository('gitignore-create');
   const data = await mkdtemp(path.join(tmpdir(), 'kiokuko-data-'));
   const databasePath = path.join(data, 'kiokuko-ai.sqlite');
@@ -107,7 +107,7 @@ test('new-binding ignore policy appends .kiokuko.json while preserving content, 
 
   assert.equal(
     await readFile(gitignorePath, 'utf8'),
-    'node_modules/\r\n.env\r\n.kiokuko.json\r\n',
+    'node_modules/\r\n.env\r\n.kiokuko-ai.json\r\n',
   );
   assert.equal((await stat(gitignorePath)).mode & 0o777, 0o640);
 
@@ -134,7 +134,7 @@ test('new-binding ignore failure restores the binding and leaves user gitignore 
   );
 
   assert.equal(await readFile(gitignorePath, 'utf8'), 'dist/\n');
-  await assert.rejects(access(path.join(root, '.kiokuko.json')));
+  await assert.rejects(access(path.join(root, '.kiokuko-ai.json')));
   await assert.rejects(access(path.join(root, 'AGENTS.md')));
 });
 
@@ -156,7 +156,7 @@ test('new-binding ignore update is restored when the later agent-file write fail
   );
 
   assert.equal(await readFile(gitignorePath, 'utf8'), 'dist/\n');
-  await assert.rejects(access(path.join(root, '.kiokuko.json')));
+  await assert.rejects(access(path.join(root, '.kiokuko-ai.json')));
   await assert.rejects(access(path.join(root, 'AGENTS.md')));
 });
 
@@ -164,7 +164,7 @@ test('use adopts one exact concurrent binding and converges on an exact agent-fi
   const root = await repository('concurrent-convergence');
   const data = await mkdtemp(path.join(tmpdir(), 'kiokuko-data-'));
   const databasePath = path.join(data, 'kiokuko-ai.sqlite');
-  const bindingPath = path.join(root, '.kiokuko.json');
+  const bindingPath = path.join(root, '.kiokuko-ai.json');
   const agentPath = path.join(root, 'AGENTS.md');
   await writeFile(agentPath, 'human header\n');
   let bindingAttempts = 0;
@@ -173,7 +173,7 @@ test('use adopts one exact concurrent binding and converges on an exact agent-fi
   const result = await useRepository({ root, databasePath }, {
     atomicWriteTextIfUnchanged: async (filePath, content, expectation, mode) => {
       if (mode === undefined) assert.fail('use must provide an explicit file mode');
-      if (path.basename(filePath) === '.kiokuko.json') {
+      if (path.basename(filePath) === '.kiokuko-ai.json') {
         bindingAttempts += 1;
         const proposed = JSON.parse(content) as Record<string, unknown>;
         await writeFile(filePath, `${JSON.stringify({
@@ -205,8 +205,8 @@ test('use adopts one exact concurrent binding and converges on an exact agent-fi
   assert.equal(binding.workspace, 'project:concurrent-winner');
   const agent = await readFile(agentPath, 'utf8');
   assert.match(agent, /^human header\n/);
-  assert.equal((agent.match(/BEGIN KIOKUKO MANAGED BLOCK/g) ?? []).length, 1);
-  assert.equal((agent.match(/END KIOKUKO MANAGED BLOCK/g) ?? []).length, 1);
+  assert.equal((agent.match(/BEGIN KIOKUKO-AI MANAGED BLOCK/g) ?? []).length, 1);
+  assert.equal((agent.match(/END KIOKUKO-AI MANAGED BLOCK/g) ?? []).length, 1);
 
   const database = openConnection(databasePath);
   try {
@@ -221,7 +221,7 @@ test('binding convergence retries when the intended agent result replaces a stal
   const root = await repository('concurrent-observation-retry');
   const data = await mkdtemp(path.join(tmpdir(), 'kiokuko-data-'));
   const databasePath = path.join(data, 'kiokuko-ai.sqlite');
-  const bindingPath = path.join(root, '.kiokuko.json');
+  const bindingPath = path.join(root, '.kiokuko-ai.json');
   const agentPath = path.join(root, 'AGENTS.md');
   const canonicalRoot = await realpath(root);
   await writeFile(agentPath, 'human header\n');
@@ -237,7 +237,7 @@ test('binding convergence retries when the intended agent result replaces a stal
 
   const result = await useRepository({ root, databasePath }, {
     atomicWriteTextIfUnchanged: async (filePath, content, expectation, mode) => {
-      if (!bindingInjected && path.basename(filePath) === '.kiokuko.json') {
+      if (!bindingInjected && path.basename(filePath) === '.kiokuko-ai.json') {
         bindingInjected = true;
         const proposed = JSON.parse(content) as Record<string, unknown>;
         await writeFile(filePath, `${JSON.stringify({
@@ -290,7 +290,7 @@ test('initial agent planning adopts a concurrent winner before binding convergen
   const root = await repository('concurrent-agent-before-binding');
   const data = await mkdtemp(path.join(tmpdir(), 'kiokuko-data-'));
   const databasePath = path.join(data, 'kiokuko-ai.sqlite');
-  const bindingPath = path.join(root, '.kiokuko.json');
+  const bindingPath = path.join(root, '.kiokuko-ai.json');
   const agentPath = path.join(root, 'AGENTS.md');
   const originalAgent = 'human header\n';
   await writeFile(agentPath, originalAgent);
@@ -446,7 +446,7 @@ test('use rejects desired agent bytes written in place on the planned inode', as
   const root = await repository('concurrent-in-place-agent');
   const data = await mkdtemp(path.join(tmpdir(), 'kiokuko-data-'));
   const databasePath = path.join(data, 'kiokuko-ai.sqlite');
-  const bindingPath = path.join(root, '.kiokuko.json');
+  const bindingPath = path.join(root, '.kiokuko-ai.json');
   const agentPath = path.join(root, 'AGENTS.md');
   await writeFile(agentPath, 'human header\n');
   const plannedInode = (await stat(agentPath)).ino;
@@ -473,7 +473,7 @@ test('use rejects desired agent bytes written in place on the planned inode', as
 
   assert.equal(injected, true);
   assert.equal((await stat(agentPath)).ino, plannedInode);
-  assert.match(await readFile(agentPath, 'utf8'), /BEGIN KIOKUKO MANAGED BLOCK/u);
+  assert.match(await readFile(agentPath, 'utf8'), /BEGIN KIOKUKO-AI MANAGED BLOCK/u);
   await assert.rejects(access(bindingPath));
   const database = openConnection(databasePath);
   try {
@@ -488,7 +488,7 @@ test('use waits for a concurrent binding to shed its temporary hard link before 
   const root = await repository('concurrent-binding-link-transition');
   const data = await mkdtemp(path.join(tmpdir(), 'kiokuko-data-'));
   const databasePath = path.join(data, 'kiokuko-ai.sqlite');
-  const bindingPath = path.join(root, '.kiokuko.json');
+  const bindingPath = path.join(root, '.kiokuko-ai.json');
   await writeFile(path.join(root, 'AGENTS.md'), 'human header\n');
   const linkedTargetReached = deferred();
   const releasePeer = deferred();
@@ -497,7 +497,7 @@ test('use waits for a concurrent binding to shed its temporary hard link before 
 
   const result = await useRepository({ root, databasePath }, {
     atomicWriteTextIfUnchanged: async (filePath, content, expectation, mode) => {
-      if (!injected && path.basename(filePath) === '.kiokuko.json') {
+      if (!injected && path.basename(filePath) === '.kiokuko-ai.json') {
         injected = true;
         const proposed = JSON.parse(content) as Record<string, unknown>;
         const winner = `${JSON.stringify({
@@ -546,7 +546,7 @@ test('use starting after a concurrent binding link waits for its cleanup boundar
   const root = await repository('initial-binding-link-transition');
   const data = await mkdtemp(path.join(tmpdir(), 'kiokuko-data-'));
   const databasePath = path.join(data, 'kiokuko-ai.sqlite');
-  const bindingPath = path.join(root, '.kiokuko.json');
+  const bindingPath = path.join(root, '.kiokuko-ai.json');
   await writeFile(path.join(root, 'AGENTS.md'), 'human header\n');
   const parent = await stat(root, { bigint: true });
   const winner = `${JSON.stringify({
@@ -595,7 +595,7 @@ test('use retries when a concurrent setup installs the binding after the initial
   const root = await repository('initial-binding-observation-race');
   const data = await mkdtemp(path.join(tmpdir(), 'kiokuko-data-'));
   const databasePath = path.join(data, 'kiokuko-ai.sqlite');
-  const bindingPath = path.join(root, '.kiokuko.json');
+  const bindingPath = path.join(root, '.kiokuko-ai.json');
   const agentPath = path.join(root, 'AGENTS.md');
   const originalAgent = 'human header\n';
   await writeFile(agentPath, originalAgent);
@@ -672,7 +672,7 @@ test('use never adopts an existing binding with retained quarantine cleanup', as
     workspace: 'project:binding-cleanup-before',
     noAgentFile: true,
   });
-  const bindingPath = path.join(initial.repositoryRoot, '.kiokuko.json');
+  const bindingPath = path.join(initial.repositoryRoot, '.kiokuko-ai.json');
   const planned = await readRegularFile(bindingPath, { containmentRoot: initial.repositoryRoot });
   if (planned === undefined) assert.fail('planned binding is missing');
   const parent = await stat(initial.repositoryRoot, { bigint: true });
@@ -702,7 +702,7 @@ test('use never adopts an existing binding with retained quarantine cleanup', as
   assert.equal(peerOutcome.cleanupFailures.length, 1);
   assert.equal((await stat(bindingPath)).nlink, 1);
   const retained = (await readdir(initial.repositoryRoot))
-    .filter((name) => name.startsWith('...kiokuko.json.') && name.endsWith('.cleanup'));
+    .filter((name) => name.startsWith('...kiokuko-ai.json.') && name.endsWith('.cleanup'));
   assert.equal(retained.length, 1);
   let registrationCalls = 0;
 
@@ -793,7 +793,7 @@ test('use waits for an identical concurrent atomic agent write to leave its quar
   assert.equal(result.workspace, 'project:concurrent-quarantine');
   const agent = await readFile(agentPath, 'utf8');
   assert.match(agent, /^human header\n/u);
-  assert.equal((agent.match(/BEGIN KIOKUKO MANAGED BLOCK/gu) ?? []).length, 1);
+  assert.equal((agent.match(/BEGIN KIOKUKO-AI MANAGED BLOCK/gu) ?? []).length, 1);
   const database = openConnection(databasePath);
   try {
     assert.equal(database.prepare('SELECT COUNT(*) AS count FROM repositories').get<{ count: number }>()?.count, 1);
@@ -994,7 +994,7 @@ test('post-CAS convergence rejects an exact agent result with retained cleanup',
   const root = await repository('post-cas-retained-cleanup');
   const data = await mkdtemp(path.join(tmpdir(), 'kiokuko-data-'));
   const databasePath = path.join(data, 'kiokuko-ai.sqlite');
-  const bindingPath = path.join(root, '.kiokuko.json');
+  const bindingPath = path.join(root, '.kiokuko-ai.json');
   const agentPath = path.join(root, 'AGENTS.md');
   await writeFile(agentPath, 'human header\n');
   let injected = false;
@@ -1065,7 +1065,7 @@ test('use never adopts an exact concurrent agent target while a hard-link alias 
   await assert.rejects(useRepository({ root, databasePath }, {
     atomicWriteTextIfUnchanged: async (filePath, content, expectation, mode) => {
       if (mode === undefined) assert.fail('use must provide an explicit file mode');
-      if (!bindingInjected && path.basename(filePath) === '.kiokuko.json') {
+      if (!bindingInjected && path.basename(filePath) === '.kiokuko-ai.json') {
         bindingInjected = true;
         const proposed = JSON.parse(content) as Record<string, unknown>;
         await writeFile(filePath, `${JSON.stringify({
@@ -1104,7 +1104,7 @@ test('use does not retry disappearance after a create-only agent CAS conflict', 
   const root = await repository('concurrent-create-disappearance');
   const data = await mkdtemp(path.join(tmpdir(), 'kiokuko-data-'));
   const databasePath = path.join(data, 'kiokuko-ai.sqlite');
-  const bindingPath = path.join(root, '.kiokuko.json');
+  const bindingPath = path.join(root, '.kiokuko-ai.json');
   const agentPath = path.join(root, 'AGENTS.md');
   let injected = false;
 
@@ -1157,7 +1157,7 @@ test('initial binding convergence never adopts a replacement repository-root ide
 
   await assert.rejects(useRepository({ root, databasePath }, {
     atomicWriteTextIfUnchanged: async (filePath, content, expectation, mode) => {
-      if (path.basename(filePath) === '.kiokuko.json') {
+      if (path.basename(filePath) === '.kiokuko-ai.json') {
         bindingAttempts += 1;
         replacementRoot = path.dirname(filePath);
         displacedRoot = `${replacementRoot}.displaced`;
@@ -1179,9 +1179,9 @@ test('initial binding convergence never adopts a replacement repository-root ide
     && error.code === 'CONFLICT');
 
   assert.equal(bindingAttempts, 1);
-  assert.equal(await readFile(path.join(replacementRoot, '.kiokuko.json'), 'utf8'), winnerBinding);
+  assert.equal(await readFile(path.join(replacementRoot, '.kiokuko-ai.json'), 'utf8'), winnerBinding);
   await assert.rejects(access(path.join(replacementRoot, 'AGENTS.md')));
-  await assert.rejects(access(path.join(displacedRoot, '.kiokuko.json')));
+  await assert.rejects(access(path.join(displacedRoot, '.kiokuko-ai.json')));
   await assert.rejects(access(path.join(displacedRoot, 'AGENTS.md')));
   const database = openConnection(databasePath);
   try {
@@ -1200,14 +1200,14 @@ test('initial binding convergence pins a custom agent-file parent across the ret
   const databasePath = path.join(data, 'kiokuko-ai.sqlite');
   const parentPath = path.join(root, 'nested');
   const displacedParent = path.join(root, 'nested-displaced');
-  const bindingPath = path.join(root, '.kiokuko.json');
+  const bindingPath = path.join(root, '.kiokuko-ai.json');
   await mkdir(parentPath);
   let bindingAttempts = 0;
   let winnerBinding = '';
 
   await assert.rejects(useRepository({ root, databasePath, agentFile: 'nested/AGENTS.md' }, {
     atomicWriteTextIfUnchanged: async (filePath, content, expectation, mode) => {
-      if (path.basename(filePath) === '.kiokuko.json') {
+      if (path.basename(filePath) === '.kiokuko-ai.json') {
         bindingAttempts += 1;
         const proposed = JSON.parse(content) as Record<string, unknown>;
         winnerBinding = `${JSON.stringify({
@@ -1241,7 +1241,7 @@ test('use fails closed on a non-identical agent CAS after one binding convergenc
   const root = await repository('concurrent-conflict');
   const data = await mkdtemp(path.join(tmpdir(), 'kiokuko-data-'));
   const databasePath = path.join(data, 'kiokuko-ai.sqlite');
-  const bindingPath = path.join(root, '.kiokuko.json');
+  const bindingPath = path.join(root, '.kiokuko-ai.json');
   const agentPath = path.join(root, 'AGENTS.md');
   await writeFile(agentPath, 'human header\n');
   let bindingAttempts = 0;
@@ -1250,7 +1250,7 @@ test('use fails closed on a non-identical agent CAS after one binding convergenc
   await assert.rejects(useRepository({ root, databasePath }, {
     atomicWriteTextIfUnchanged: async (filePath, content, expectation, mode) => {
       if (mode === undefined) assert.fail('use must provide an explicit file mode');
-      if (path.basename(filePath) === '.kiokuko.json') {
+      if (path.basename(filePath) === '.kiokuko-ai.json') {
         bindingAttempts += 1;
         const proposed = JSON.parse(content) as Record<string, unknown>;
         await writeFile(filePath, `${JSON.stringify({
@@ -1285,7 +1285,7 @@ test('use never rolls back exact concurrent binding and agent-file results it do
   const root = await repository('concurrent-unowned');
   const data = await mkdtemp(path.join(tmpdir(), 'kiokuko-data-'));
   const databasePath = path.join(data, 'kiokuko-ai.sqlite');
-  const bindingPath = path.join(root, '.kiokuko.json');
+  const bindingPath = path.join(root, '.kiokuko-ai.json');
   const agentPath = path.join(root, 'AGENTS.md');
   const registrationFailure = new Error('registration failed after exact convergence');
   await writeFile(agentPath, 'human header\n');
@@ -1293,7 +1293,7 @@ test('use never rolls back exact concurrent binding and agent-file results it do
   await assert.rejects(useRepository({ root, databasePath }, {
     atomicWriteTextIfUnchanged: async (filePath, content, expectation, mode) => {
       if (mode === undefined) assert.fail('use must provide an explicit file mode');
-      if (path.basename(filePath) === '.kiokuko.json') {
+      if (path.basename(filePath) === '.kiokuko-ai.json') {
         const proposed = JSON.parse(content) as Record<string, unknown>;
         await writeFile(filePath, `${JSON.stringify({
           ...proposed,
@@ -1319,8 +1319,8 @@ test('use never rolls back exact concurrent binding and agent-file results it do
   assert.equal(binding.repositoryId, 'repo_concurrent_owner');
   const agent = await readFile(agentPath, 'utf8');
   assert.match(agent, /^human header\n/);
-  assert.equal((agent.match(/BEGIN KIOKUKO MANAGED BLOCK/g) ?? []).length, 1);
-  assert.equal((agent.match(/END KIOKUKO MANAGED BLOCK/g) ?? []).length, 1);
+  assert.equal((agent.match(/BEGIN KIOKUKO-AI MANAGED BLOCK/g) ?? []).length, 1);
+  assert.equal((agent.match(/END KIOKUKO-AI MANAGED BLOCK/g) ?? []).length, 1);
 });
 
 test('use rejects noncanonical or broadly-permissioned concurrent bindings', { skip: process.platform === 'win32' }, async () => {
@@ -1328,14 +1328,14 @@ test('use rejects noncanonical or broadly-permissioned concurrent bindings', { s
     const root = await repository(`concurrent-${variant}`);
     const data = await mkdtemp(path.join(tmpdir(), 'kiokuko-data-'));
     const databasePath = path.join(data, 'kiokuko-ai.sqlite');
-    const bindingPath = path.join(root, '.kiokuko.json');
+    const bindingPath = path.join(root, '.kiokuko-ai.json');
     const agentPath = path.join(root, 'AGENTS.md');
     await writeFile(agentPath, 'human header\n');
     let bindingAttempts = 0;
 
     await assert.rejects(useRepository({ root, databasePath }, {
       atomicWriteTextIfUnchanged: async (filePath, content, expectation, mode) => {
-        if (path.basename(filePath) === '.kiokuko.json') {
+        if (path.basename(filePath) === '.kiokuko-ai.json') {
           bindingAttempts += 1;
           const concurrent = {
             ...(JSON.parse(content) as Record<string, unknown>),
@@ -1373,7 +1373,7 @@ test('use creates version-25 binding, result, and repository metadata', async ()
   const data = await mkdtemp(path.join(tmpdir(), 'kiokuko-data-'));
   const databasePath = path.join(data, 'kiokuko-ai.sqlite');
   const result = await useRepository({ root, databasePath });
-  const binding = JSON.parse(await readFile(path.join(root, '.kiokuko.json'), 'utf8')) as { templateVersion: number };
+  const binding = JSON.parse(await readFile(path.join(root, '.kiokuko-ai.json'), 'utf8')) as { templateVersion: number };
   assert.equal(result.templateVersion, 25);
   assert.equal(binding.templateVersion, 25);
 
@@ -1391,14 +1391,14 @@ test('use upgrades a version-1 binding and managed block without changing identi
   const data = await mkdtemp(path.join(tmpdir(), 'kiokuko-data-'));
   const databasePath = path.join(data, 'kiokuko-ai.sqlite');
   const first = await useRepository({ root, databasePath, workspace: 'upgrade-workspace' });
-  const bindingPath = path.join(root, '.kiokuko.json');
+  const bindingPath = path.join(root, '.kiokuko-ai.json');
   const binding = JSON.parse(await readFile(bindingPath, 'utf8')) as Record<string, unknown>;
   await writeFile(bindingPath, `${JSON.stringify({ ...binding, templateVersion: 1 }, null, 2)}\n`);
   const oldManagedBlock = [
-    '<!-- BEGIN KIOKUKO MANAGED BLOCK -->',
-    '<!-- kiokuko-template-version: 1 -->',
+    '<!-- BEGIN KIOKUKO-AI MANAGED BLOCK -->',
+    '<!-- kiokuko-ai-template-version: 1 -->',
     'legacy managed content',
-    '<!-- END KIOKUKO MANAGED BLOCK -->',
+    '<!-- END KIOKUKO-AI MANAGED BLOCK -->',
   ].join('\r\n');
   await writeFile(path.join(root, 'AGENTS.md'), `human before\r\n${oldManagedBlock}\r\nhuman after\r\n`);
 
@@ -1412,7 +1412,7 @@ test('use upgrades a version-1 binding and managed block without changing identi
   assert.equal(upgradedBinding.workspace, 'upgrade-workspace');
   assert.equal(upgradedBinding.templateVersion, 25);
   assert.match(upgradedAgent, /^human before\r\n/);
-  assert.match(upgradedAgent, /<!-- kiokuko-template-version: 25 -->/);
+  assert.match(upgradedAgent, /<!-- kiokuko-ai-template-version: 25 -->/);
   assert.match(upgradedAgent, /\r\nhuman after\r\n$/);
 
   const repeatedAgent = await readFile(path.join(root, 'AGENTS.md'), 'utf8');
@@ -1437,7 +1437,7 @@ test('use rejects a future binding version before mutating files or repository m
   const data = await mkdtemp(path.join(tmpdir(), 'kiokuko-data-'));
   const databasePath = path.join(data, 'kiokuko-ai.sqlite');
   const initial = await useRepository({ root, databasePath });
-  const bindingPath = path.join(root, '.kiokuko.json');
+  const bindingPath = path.join(root, '.kiokuko-ai.json');
   const agentPath = path.join(root, 'AGENTS.md');
   const binding = JSON.parse(await readFile(bindingPath, 'utf8')) as Record<string, unknown>;
   const futureBinding = `${JSON.stringify({ ...binding, templateVersion: 26 }, null, 2)}\n`;
@@ -1474,7 +1474,7 @@ test('C06 use rejects template downgrade and future managed-block versions witho
     const data = await mkdtemp(path.join(tmpdir(), 'kiokuko-data-'));
     const databasePath = path.join(data, 'kiokuko-ai.sqlite');
     const initial = await useRepository({ root, databasePath });
-    const bindingPath = path.join(root, '.kiokuko.json');
+    const bindingPath = path.join(root, '.kiokuko-ai.json');
     const oldAgentPath = path.join(root, 'AGENTS.md');
     const newAgentPath = path.join(root, 'nested', 'AGENTS.md');
     const futureAgent = renderManagedBlock({
@@ -1522,11 +1522,11 @@ test('use rejects a managed block with no version declaration without partial mu
   const data = await mkdtemp(path.join(tmpdir(), 'kiokuko-data-'));
   const databasePath = path.join(data, 'kiokuko-ai.sqlite');
   const initial = await useRepository({ root, databasePath });
-  const bindingPath = path.join(root, '.kiokuko.json');
+  const bindingPath = path.join(root, '.kiokuko-ai.json');
   const agentPath = path.join(root, 'AGENTS.md');
   const bindingBefore = await readFile(bindingPath, 'utf8');
   const unversionedAgent = (await readFile(agentPath, 'utf8'))
-    .replace(/^<!-- kiokuko-template-version: [1-9][0-9]* -->\n/mu, '');
+    .replace(/^<!-- kiokuko-ai-template-version: [1-9][0-9]* -->\n/mu, '');
   await writeFile(agentPath, unversionedAgent);
 
   await assert.rejects(useRepository({ root, databasePath }), /missing.*template-version declaration/i);
@@ -1555,7 +1555,7 @@ test('use rejects future database version metadata and restores force-rebind fil
   const data = await mkdtemp(path.join(tmpdir(), 'kiokuko-data-'));
   const databasePath = path.join(data, 'kiokuko-ai.sqlite');
   const initial = await useRepository({ root, databasePath });
-  const bindingPath = path.join(root, '.kiokuko.json');
+  const bindingPath = path.join(root, '.kiokuko-ai.json');
   const agentPath = path.join(root, 'AGENTS.md');
   const bindingBefore = await readFile(bindingPath, 'utf8');
   const agentBefore = await readFile(agentPath, 'utf8');
@@ -1617,7 +1617,7 @@ test('use dry-run does not create database or repository files', async () => {
   assert.equal(result.templateVersion, 25);
   assert.equal(result.bindingAction, 'planned');
   assert.equal(result.agentFileAction, 'created');
-  await assert.rejects(access(path.join(root, '.kiokuko.json')));
+  await assert.rejects(access(path.join(root, '.kiokuko-ai.json')));
   await assert.rejects(access(path.join(root, 'AGENTS.md')));
   await assert.rejects(access(databasePath));
 });
@@ -1627,7 +1627,7 @@ test('no-agent-file still upgrades version metadata without creating AGENTS.md',
   const data = await mkdtemp(path.join(tmpdir(), 'kiokuko-data-'));
   const databasePath = path.join(data, 'kiokuko-ai.sqlite');
   const result = await useRepository({ root, databasePath, noAgentFile: true });
-  const binding = JSON.parse(await readFile(path.join(root, '.kiokuko.json'), 'utf8')) as { templateVersion: number };
+  const binding = JSON.parse(await readFile(path.join(root, '.kiokuko-ai.json'), 'utf8')) as { templateVersion: number };
   assert.equal(result.templateVersion, 25);
   assert.equal(result.agentFile, null);
   assert.equal(result.agentFileAction, 'skipped');
@@ -1651,9 +1651,9 @@ test('C07 use preserves human content and rejects marker mutation', async () => 
   await useRepository({ root, databasePath: path.join(data, 'db.sqlite3') });
   const agent = await readFile(path.join(root, 'AGENTS.md'), 'utf8');
   assert.match(agent, /^human\n/);
-  const bindingPath = path.join(root, '.kiokuko.json');
+  const bindingPath = path.join(root, '.kiokuko-ai.json');
   const bindingBefore = await readFile(bindingPath, 'utf8');
-  const malformed = '<!-- BEGIN KIOKUKO MANAGED BLOCK -->\n';
+  const malformed = '<!-- BEGIN KIOKUKO-AI MANAGED BLOCK -->\n';
   await writeFile(path.join(root, 'AGENTS.md'), malformed);
   await assert.rejects(useRepository({ root, databasePath: path.join(data, 'db.sqlite3') }), /malformed/i);
   assert.equal(await readFile(path.join(root, 'AGENTS.md'), 'utf8'), malformed);
@@ -1684,7 +1684,7 @@ test('use rejects duplicate binding keys before database or agent-file mutation'
   const root = await repository('duplicate-binding');
   const data = await mkdtemp(path.join(tmpdir(), 'kiokuko-data-'));
   const databasePath = path.join(data, 'db.sqlite3');
-  const bindingPath = path.join(root, '.kiokuko.json');
+  const bindingPath = path.join(root, '.kiokuko-ai.json');
   const agentPath = path.join(root, 'AGENTS.md');
   const duplicateBinding = '{"schemaVersion":1,"repositoryId":"repo_first","repositoryId":"repo_second","workspace":"project:duplicate","agentFile":"AGENTS.md","templateVersion":8}\n';
   await writeFile(bindingPath, duplicateBinding);
@@ -1730,7 +1730,7 @@ test('use exposes the initiating failure and every failed restore after attempti
   });
 
   assert.deepEqual(restoreAttempts.map((filePath) => path.basename(filePath)), [
-    '.kiokuko.json',
+    '.kiokuko-ai.json',
   ]);
 });
 
@@ -1738,9 +1738,9 @@ test('use rejects non-canonical or binding-alias agent-file paths before any per
   for (const requested of [
     '../AGENTS.md',
     '/tmp/absolute-agents.md',
-    '.kiokuko.json',
+    '.kiokuko-ai.json',
     '.KIOKUKO.JSON',
-    '.kiokuko.json/AGENTS.md',
+    '.kiokuko-ai.json/AGENTS.md',
     'nested/',
     'nested//AGENTS.md',
   ]) {
@@ -1753,7 +1753,7 @@ test('use rejects non-canonical or binding-alias agent-file paths before any per
         (error: unknown) => error instanceof Error && 'code' in error && error.code === 'VALIDATION_ERROR',
       );
     }
-    await assert.rejects(access(path.join(root, '.kiokuko.json')));
+    await assert.rejects(access(path.join(root, '.kiokuko-ai.json')));
     await assert.rejects(access(databasePath));
   }
 });
@@ -1762,7 +1762,7 @@ test('use requires a nested agent-file parent to preexist in dry-run and live mo
   const root = await repository('missing-agent-parent');
   const data = await mkdtemp(path.join(tmpdir(), 'kiokuko-data-'));
   const databasePath = path.join(data, 'db.sqlite3');
-  const bindingPath = path.join(root, '.kiokuko.json');
+  const bindingPath = path.join(root, '.kiokuko-ai.json');
   const oldAgentPath = path.join(root, 'AGENTS.md');
   const missingParent = path.join(root, 'missing', 'nested');
   const missingAgentPath = path.join(missingParent, 'AGENTS.md');
@@ -1809,7 +1809,7 @@ test('use rejects an intermediate symlink escape before writing outside the repo
     (error: unknown) => error instanceof Error && 'code' in error && error.code === 'SECURITY_REJECTION',
   );
   await assert.rejects(access(path.join(outside, 'AGENTS.md')));
-  await assert.rejects(access(path.join(root, '.kiokuko.json')));
+  await assert.rejects(access(path.join(root, '.kiokuko-ai.json')));
   await assert.rejects(access(databasePath));
 });
 
@@ -1822,7 +1822,7 @@ test('use rejects a replaced or symlinked planned agent parent and rolls back ev
     const outside = await mkdtemp(path.join(tmpdir(), 'kiokuko-agent-parent-outside-'));
     const databasePath = path.join(data, 'db.sqlite3');
     const initial = await useRepository({ root, databasePath });
-    const bindingPath = path.join(initial.repositoryRoot, '.kiokuko.json');
+    const bindingPath = path.join(initial.repositoryRoot, '.kiokuko-ai.json');
     const oldAgentPath = path.join(initial.repositoryRoot, 'AGENTS.md');
     const parentPath = path.join(initial.repositoryRoot, 'nested');
     const displacedParent = path.join(initial.repositoryRoot, 'nested-displaced');
@@ -1874,7 +1874,7 @@ test('use rejects an agentFile hard-link alias of the repository binding', { ski
   const root = await repository('agent-binding-hardlink');
   const data = await mkdtemp(path.join(tmpdir(), 'kiokuko-data-'));
   const databasePath = path.join(data, 'db.sqlite3');
-  const bindingPath = path.join(root, '.kiokuko.json');
+  const bindingPath = path.join(root, '.kiokuko-ai.json');
   const agentPath = path.join(root, 'AGENTS.md');
   const aliasPath = path.join(root, 'BINDING.md');
   await useRepository({ root, databasePath });
@@ -1895,7 +1895,7 @@ test('use rejects a previous agentFile hard-link alias of the repository binding
   const root = await repository('previous-agent-binding-hardlink');
   const data = await mkdtemp(path.join(tmpdir(), 'kiokuko-data-'));
   const databasePath = path.join(data, 'db.sqlite3');
-  const bindingPath = path.join(root, '.kiokuko.json');
+  const bindingPath = path.join(root, '.kiokuko-ai.json');
   const originalAgentPath = path.join(root, 'AGENTS.md');
   const aliasPath = path.join(root, 'BINDING.md');
   const replacementPath = path.join(root, 'replacement', 'AGENTS.md');
@@ -1928,7 +1928,7 @@ test('agent relocation rejects a previous target inside another atomic quarantin
     repositoryId: 'repo_previous_quarantine',
     workspace: 'project:previous-quarantine',
   });
-  const bindingPath = path.join(initial.repositoryRoot, '.kiokuko.json');
+  const bindingPath = path.join(initial.repositoryRoot, '.kiokuko-ai.json');
   const previousPath = path.join(initial.repositoryRoot, 'AGENTS.md');
   const replacementPath = path.join(initial.repositoryRoot, 'NEW.md');
   const bindingBefore = await readFile(bindingPath, 'utf8');
@@ -2006,7 +2006,7 @@ test('use leaves no repository or location rows when agent installation fails', 
   } finally {
     database.close();
   }
-  await assert.rejects(access(path.join(root, '.kiokuko.json')));
+  await assert.rejects(access(path.join(root, '.kiokuko-ai.json')));
 });
 
 test('use preserves committed files when database close fails after registration', async () => {
@@ -2025,7 +2025,7 @@ test('use preserves committed files when database close fails after registration
     return true;
   });
 
-  const bindingPath = path.join(root, '.kiokuko.json');
+  const bindingPath = path.join(root, '.kiokuko-ai.json');
   const agentPath = path.join(root, 'AGENTS.md');
   const binding = JSON.parse(await readFile(bindingPath, 'utf8')) as {
     repositoryId: string;
@@ -2060,7 +2060,7 @@ test('use preserves files when COMMIT succeeds but reports an uncertain transact
     return true;
   });
 
-  const binding = JSON.parse(await readFile(path.join(root, '.kiokuko.json'), 'utf8')) as {
+  const binding = JSON.parse(await readFile(path.join(root, '.kiokuko-ai.json'), 'utf8')) as {
     repositoryId: string;
     workspace: string;
   };
@@ -2106,7 +2106,7 @@ test('use preserves files and aggregates close failure after an uncertain COMMIT
     return true;
   });
 
-  const binding = JSON.parse(await readFile(path.join(root, '.kiokuko.json'), 'utf8')) as {
+  const binding = JSON.parse(await readFile(path.join(root, '.kiokuko-ai.json'), 'utf8')) as {
     repositoryId: string;
     workspace: string;
   };
@@ -2143,7 +2143,7 @@ test('use aggregates registration and close failures before compensating every o
     return true;
   });
 
-  await assert.rejects(access(path.join(root, '.kiokuko.json')));
+  await assert.rejects(access(path.join(root, '.kiokuko-ai.json')));
   await assert.rejects(access(path.join(root, 'AGENTS.md')));
   const database = openConnection(databasePath);
   try {
@@ -2158,7 +2158,7 @@ test('use rollback preserves a byte-identical binding replaced by another actor'
   const root = await repository('rollback-aba');
   const data = await mkdtemp(path.join(tmpdir(), 'kiokuko-data-'));
   const databasePath = path.join(data, 'db.sqlite3');
-  const bindingPath = path.join(root, '.kiokuko.json');
+  const bindingPath = path.join(root, '.kiokuko-ai.json');
   const displacedPath = path.join(root, '.kiokuko.displaced');
   const laterFailure = new Error('later write failed');
 
@@ -2193,10 +2193,10 @@ test('use rejects repository identity injection before database or file mutation
   const data = await mkdtemp(path.join(tmpdir(), 'kiokuko-data-'));
   const databasePath = path.join(data, 'db.sqlite3');
   await assert.rejects(
-    useRepository({ root, databasePath, repositoryId: 'repo`\n<!-- BEGIN KIOKUKO MANAGED BLOCK -->' }),
+    useRepository({ root, databasePath, repositoryId: 'repo`\n<!-- BEGIN KIOKUKO-AI MANAGED BLOCK -->' }),
     (error: unknown) => error instanceof Error && 'code' in error && error.code === 'VALIDATION_ERROR',
   );
-  await assert.rejects(access(path.join(root, '.kiokuko.json')));
+  await assert.rejects(access(path.join(root, '.kiokuko-ai.json')));
   await assert.rejects(access(databasePath));
 });
 
@@ -2220,7 +2220,7 @@ test('use compensates a committed write and exposes post-commit cleanup failure'
     && error.message === 'File mutation committed, but committed-artifact cleanup failed');
 
   assert.equal(injected, true);
-  await assert.rejects(access(path.join(root, '.kiokuko.json')));
+  await assert.rejects(access(path.join(root, '.kiokuko-ai.json')));
   await assert.rejects(access(path.join(root, 'AGENTS.md')));
   const database = openConnection(databasePath);
   try {
@@ -2250,7 +2250,7 @@ test('use compensates a target committed before post-install validation fails', 
   }), (error: unknown) => error instanceof AtomicCommittedMutationError
     && error.operationError === sentinel);
 
-  await assert.rejects(access(path.join(root, '.kiokuko.json')));
+  await assert.rejects(access(path.join(root, '.kiokuko-ai.json')));
   await assert.rejects(access(path.join(root, 'AGENTS.md')));
   const database = openConnection(databasePath);
   try {
@@ -2275,7 +2275,7 @@ test('use rejects either reserved global identity before database or file mutati
         && error.code === 'VALIDATION_ERROR'
         && /reserved global/iu.test(error.message),
     );
-    await assert.rejects(access(path.join(root, '.kiokuko.json')));
+    await assert.rejects(access(path.join(root, '.kiokuko-ai.json')));
     await assert.rejects(access(path.join(root, 'AGENTS.md')));
     await assert.rejects(access(databasePath));
   }
@@ -2290,7 +2290,7 @@ test('force-rebind replaces the exact existing identity and rejects no-op force'
     databasePath,
     workspace: 'project:rebind-before',
   });
-  const bindingPath = path.join(root, '.kiokuko.json');
+  const bindingPath = path.join(root, '.kiokuko-ai.json');
   const agentPath = path.join(root, 'AGENTS.md');
   const bindingBefore = await readFile(bindingPath, 'utf8');
   const agentBefore = await readFile(agentPath, 'utf8');
@@ -2359,7 +2359,7 @@ test('force-rebind replaces the exact existing identity and rejects no-op force'
     useRepository({ root: otherRoot, databasePath, workspace: 'project:rebind-before' }),
     /workspace.*another repository/i,
   );
-  await assert.rejects(access(path.join(otherRoot, '.kiokuko.json')));
+  await assert.rejects(access(path.join(otherRoot, '.kiokuko-ai.json')));
   await assert.rejects(access(path.join(otherRoot, 'AGENTS.md')));
 });
 
@@ -2372,7 +2372,7 @@ test('force-rebind with no-agent-file rejects a stale managed block before any m
     databasePath,
     workspace: 'project:no-agent-before',
   });
-  const bindingPath = path.join(root, '.kiokuko.json');
+  const bindingPath = path.join(root, '.kiokuko-ai.json');
   const agentPath = path.join(root, 'AGENTS.md');
   const bindingBefore = await readFile(bindingPath, 'utf8');
   const agentBefore = await readFile(agentPath, 'utf8');
@@ -2405,7 +2405,7 @@ test('no-agent-file accepts only a managed block already exact for the planned b
   const data = await mkdtemp(path.join(tmpdir(), 'kiokuko-data-'));
   const databasePath = path.join(data, 'db.sqlite3');
   await useRepository({ root, databasePath });
-  const bindingPath = path.join(root, '.kiokuko.json');
+  const bindingPath = path.join(root, '.kiokuko-ai.json');
   const agentPath = path.join(root, 'AGENTS.md');
   const bindingBefore = await readFile(bindingPath, 'utf8');
   const agentBefore = await readFile(agentPath, 'utf8');
@@ -2428,7 +2428,7 @@ test('no-agent-file rejects a stale managed block at a prospective relocation ta
       databasePath,
       workspace: `project:no-agent-relocate-before-${variant}`,
     });
-    const bindingPath = path.join(initial.repositoryRoot, '.kiokuko.json');
+    const bindingPath = path.join(initial.repositoryRoot, '.kiokuko-ai.json');
     const oldAgentPath = path.join(initial.repositoryRoot, 'AGENTS.md');
     const prospectivePath = path.join(initial.repositoryRoot, 'OTHER.md');
     const bindingBefore = await readFile(bindingPath, 'utf8');
@@ -2482,7 +2482,7 @@ test('existing-binding transitions reject byte-identical concurrent agent replac
     databasePath,
     workspace: 'project:exact-agent-before',
   });
-  const bindingPath = path.join(root, '.kiokuko.json');
+  const bindingPath = path.join(root, '.kiokuko-ai.json');
   const agentPath = path.join(root, 'AGENTS.md');
   const plannedAgentPath = path.join(initial.repositoryRoot, 'AGENTS.md');
   const bindingBefore = await readFile(bindingPath, 'utf8');
@@ -2542,7 +2542,7 @@ test('force-rebind rolls repository files back when the exact database rebind co
     databasePath,
     workspace: 'project:occupied-target',
   });
-  const bindingPath = path.join(sourceRoot, '.kiokuko.json');
+  const bindingPath = path.join(sourceRoot, '.kiokuko-ai.json');
   const agentPath = path.join(sourceRoot, 'AGENTS.md');
   const bindingBefore = await readFile(bindingPath, 'utf8');
   const agentBefore = await readFile(agentPath, 'utf8');
@@ -2644,9 +2644,9 @@ test('changing agentFile removes only the old managed block and preserves human 
   assert.doesNotMatch(await readFile(oldPath, 'utf8'), /KIOKUKO MANAGED BLOCK/u);
   assert.match(await readFile(newPath, 'utf8'), /^new-target-human-owned\n/u);
   assert.equal((await stat(newPath)).mode & 0o777, 0o640);
-  assert.equal((await readFile(newPath, 'utf8').then((content) => content.match(/BEGIN KIOKUKO MANAGED BLOCK/g) ?? [])).length, 1);
+  assert.equal((await readFile(newPath, 'utf8').then((content) => content.match(/BEGIN KIOKUKO-AI MANAGED BLOCK/g) ?? [])).length, 1);
   assert.equal(
-    (JSON.parse(await readFile(path.join(root, '.kiokuko.json'), 'utf8')) as { agentFile: string }).agentFile,
+    (JSON.parse(await readFile(path.join(root, '.kiokuko-ai.json'), 'utf8')) as { agentFile: string }).agentFile,
     'config/AGENTS.md',
   );
 
@@ -2660,7 +2660,7 @@ test('changing agentFile deletes a managed-only old file and restores it on late
   const root = await repository('agent-relocate-delete');
   const data = await mkdtemp(path.join(tmpdir(), 'kiokuko-data-'));
   const databasePath = path.join(data, 'db.sqlite3');
-  const bindingPath = path.join(root, '.kiokuko.json');
+  const bindingPath = path.join(root, '.kiokuko-ai.json');
   const oldPath = path.join(root, 'AGENTS.md');
   const newPath = path.join(root, 'nested', 'AGENTS.md');
   await useRepository({ root, databasePath });
@@ -2684,7 +2684,7 @@ test('changing agentFile deletes a managed-only old file and restores it on late
 
   await useRepository({ root, databasePath, agentFile: 'nested/AGENTS.md' });
   await assert.rejects(access(oldPath));
-  assert.match(await readFile(newPath, 'utf8'), /BEGIN KIOKUKO MANAGED BLOCK/u);
+  assert.match(await readFile(newPath, 'utf8'), /BEGIN KIOKUKO-AI MANAGED BLOCK/u);
 });
 
 test('changing agentFile restores an old managed-only file after a committed unlink error', async () => {
@@ -2692,7 +2692,7 @@ test('changing agentFile restores an old managed-only file after a committed unl
   const data = await mkdtemp(path.join(tmpdir(), 'kiokuko-data-'));
   const databasePath = path.join(data, 'db.sqlite3');
   const initial = await useRepository({ root, databasePath });
-  const bindingPath = path.join(initial.repositoryRoot, '.kiokuko.json');
+  const bindingPath = path.join(initial.repositoryRoot, '.kiokuko-ai.json');
   const oldPath = path.join(initial.repositoryRoot, 'AGENTS.md');
   const newPath = path.join(initial.repositoryRoot, 'nested', 'AGENTS.md');
   const bindingBefore = await readFile(bindingPath, 'utf8');
@@ -2752,7 +2752,7 @@ test('changing agentFile with no-agent-file still removes the retired managed-on
   await assert.rejects(access(oldPath));
   await assert.rejects(access(skippedPath));
   assert.equal(
-    (JSON.parse(await readFile(path.join(root, '.kiokuko.json'), 'utf8')) as { agentFile: string }).agentFile,
+    (JSON.parse(await readFile(path.join(root, '.kiokuko-ai.json'), 'utf8')) as { agentFile: string }).agentFile,
     'SKIPPED.md',
   );
 });
@@ -2764,7 +2764,7 @@ test('no-agent-file validates the prospective target after retiring the old mana
   const data = await mkdtemp(path.join(tmpdir(), 'kiokuko-data-'));
   const databasePath = path.join(data, 'db.sqlite3');
   const initial = await useRepository({ root, databasePath });
-  const bindingPath = path.join(initial.repositoryRoot, '.kiokuko.json');
+  const bindingPath = path.join(initial.repositoryRoot, '.kiokuko-ai.json');
   const oldPath = path.join(initial.repositoryRoot, 'AGENTS.md');
   const prospectivePath = path.join(initial.repositoryRoot, 'SKIPPED.md');
   const bindingBefore = await readFile(bindingPath, 'utf8');
@@ -2810,7 +2810,7 @@ test('changing agentFile reports old-file cleanup failure and restores every own
   const data = await mkdtemp(path.join(tmpdir(), 'kiokuko-data-'));
   const databasePath = path.join(data, 'db.sqlite3');
   const initial = await useRepository({ root, databasePath });
-  const bindingPath = path.join(root, '.kiokuko.json');
+  const bindingPath = path.join(root, '.kiokuko-ai.json');
   const oldPath = path.join(root, 'AGENTS.md');
   const plannedOldPath = path.join(initial.repositoryRoot, 'AGENTS.md');
   const newPath = path.join(root, 'next', 'AGENTS.md');
@@ -2850,7 +2850,7 @@ test('changing agentFile fails closed on a concurrent old-file edit and rolls ba
   const root = await repository('agent-relocate-cas');
   const data = await mkdtemp(path.join(tmpdir(), 'kiokuko-data-'));
   const databasePath = path.join(data, 'db.sqlite3');
-  const bindingPath = path.join(root, '.kiokuko.json');
+  const bindingPath = path.join(root, '.kiokuko-ai.json');
   const oldPath = path.join(root, 'AGENTS.md');
   const newPath = path.join(root, 'next', 'AGENTS.md');
   const initial = await useRepository({ root, databasePath });
@@ -2886,14 +2886,14 @@ test('changing agentFile rejects malformed or symlinked old ownership before mut
     const root = await repository(`agent-relocate-${variant}`);
     const data = await mkdtemp(path.join(tmpdir(), 'kiokuko-data-'));
     const databasePath = path.join(data, 'db.sqlite3');
-    const bindingPath = path.join(root, '.kiokuko.json');
+    const bindingPath = path.join(root, '.kiokuko-ai.json');
     const oldPath = path.join(root, 'AGENTS.md');
     const newPath = path.join(root, 'replacement', 'AGENTS.md');
     await useRepository({ root, databasePath });
     await mkdir(path.dirname(newPath));
     const bindingBefore = await readFile(bindingPath, 'utf8');
     if (variant === 'malformed') {
-      await writeFile(oldPath, '<!-- BEGIN KIOKUKO MANAGED BLOCK -->\ntruncated\n');
+      await writeFile(oldPath, '<!-- BEGIN KIOKUKO-AI MANAGED BLOCK -->\ntruncated\n');
     } else {
       const outside = path.join(data, 'outside.md');
       await writeFile(outside, 'outside-owned\n');

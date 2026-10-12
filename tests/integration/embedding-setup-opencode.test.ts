@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
+import { PassThrough } from 'node:stream';
 import test from 'node:test';
 import { Command } from 'commander';
 import { parse } from 'jsonc-parser';
@@ -108,7 +109,7 @@ for (const initial of ['fresh', 'legacy', 'current'] as const) {
 
 }
 
-test('embedding setup actually repairs two registered projects before reporting success', async () => {
+test('embedding setup reports missing instructions in JSON and repairs them after interactive consent', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'kiokuko-embedding-project-repair-'));
   const env = { HOME: path.join(root, 'home'), XDG_CONFIG_HOME: path.join(root, 'config'), KIOKUKO_DATA_DIR: path.join(root, 'data') };
   const previousData = process.env.KIOKUKO_DATA_DIR;
@@ -126,10 +127,21 @@ test('embedding setup actually repairs two registered projects before reporting 
     }
     await rm(files[0]!);
     await writeFile(files[1]!, '# Human instructions\n');
+    const input = new PassThrough() as PassThrough & { isTTY: boolean };
+    const setupOutput = new PassThrough() as PassThrough & { isTTY: boolean };
+    input.isTTY = true; setupOutput.isTTY = true;
+    let prompts = 0;
+    setupOutput.on('data', chunk => {
+      if (chunk.toString().includes('Recreate this instruction file? [y/N]')) {
+        prompts++; setImmediate(() => input.write('y\n'));
+      }
+    });
     let output: any;
     const cli = new Command();
     registerEmbeddingsCommands(cli, {
       pathEnvironment: { env },
+      setupInput: input,
+      setupOutput,
       withDatabase: async operation => {
         const database = openConnection(getGlobalDatabasePath({ env }));
         try { return await operation(database); } finally { database.close(); }
@@ -141,8 +153,17 @@ test('embedding setup actually repairs two registered projects before reporting 
     });
     await cli.parseAsync(['node', 'kiokuko-ai', 'embeddings', 'setup', '--json']);
     assert.equal(output.semanticEnabled, true);
-    assert.deepEqual(output.projectSetup.projectAgentFiles.map((x: any) => x.status).sort(), ['created', 'created', 'unchanged'], JSON.stringify(output.projectSetup));
-    for (const file of files) assert.match(await readFile(file, 'utf8'), /<!-- BEGIN KIOKUKO MANAGED BLOCK -->/u);
+    assert.equal(prompts, 0);
+    assert.equal(output.projectSetup.health.ok, false);
+    assert.equal(process.exitCode, 9);
+    await assert.rejects(readFile(files[0]!), { code: 'ENOENT' });
+    process.exitCode = undefined;
+    await cli.parseAsync(['node', 'kiokuko-ai', 'embeddings', 'setup']);
+    input.destroy(); setupOutput.destroy();
+    assert.equal(prompts, 1);
+    assert.equal(output.projectSetup.health.ok, true);
+    assert.deepEqual(output.projectSetup.projectAgentFiles.map((x: any) => x.status).sort(), ['created', 'unchanged', 'unchanged'], JSON.stringify(output.projectSetup));
+    for (const file of files) assert.match(await readFile(file, 'utf8'), /<!-- BEGIN KIOKUKO-AI MANAGED BLOCK -->/u);
     assert.ok((await readFile(files[1]!, 'utf8')).startsWith('# Human instructions\n'));
     const { stdout } = await execFileAsync(process.execPath, ['--import', 'tsx', '--input-type=module', '--eval',
       'import { runDoctor } from "./src/commands/doctor.ts"; console.log(JSON.stringify((await runDoctor()).checks.agentFiles));'], { env: { ...process.env, ...env } });

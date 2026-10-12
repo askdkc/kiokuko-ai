@@ -26,7 +26,7 @@ test('detects a realpath-normalized git root from a subdirectory', async () => {
 test('prefers an ancestor binding over a git root', async () => {
   const root = await temp('binding-root');
   await mkdir(path.join(root, '.git'));
-  await writeFile(path.join(root, '.kiokuko.json'), '{}');
+  await writeFile(path.join(root, '.kiokuko-ai.json'), '{}');
   const nested = path.join(root, 'packages', 'app');
   await mkdir(nested, { recursive: true });
   assert.equal(detectRepositoryRoot({ cwd: nested }).source, 'binding');

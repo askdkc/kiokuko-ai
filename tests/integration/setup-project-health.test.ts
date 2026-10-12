@@ -47,8 +47,10 @@ test('doctor identifies each broken project and setup repairs absent files witho
   assert.ok((await readFile(file, 'utf8')).startsWith(human));
   assert.equal((await runDoctor({ databasePath })).checks.agentFiles.ok, true);
   await rm(file);
-  await setupOpenCode(options);
-  assert.equal((await runDoctor({ databasePath })).checks.agentFiles.ok, true);
+  const missing = await setupOpenCode(options);
+  assert.equal(missing.projectAgentFiles[0]?.status, 'failed');
+  assert.equal((await runDoctor({ databasePath })).checks.agentFiles.ok, false);
+  await assert.rejects(readFile(file), { code: 'ENOENT' });
 });
 
 test('doctor and setup agree that reversed markers need manual repair and preserve original bytes', async (t) => {
@@ -100,7 +102,7 @@ test('project health distinguishes missing binding and stale or future instructi
   const database = openConnection(databasePath);
   const [location] = listRegisteredProjectLocations(database);
   database.close();
-  const bindingPath = path.join(project, '.kiokuko.json');
+  const bindingPath = path.join(project, '.kiokuko-ai.json');
   const original = await readFile(bindingPath, 'utf8');
   const binding = JSON.parse(original);
   await writeFile(bindingPath, JSON.stringify({ ...binding, templateVersion: 1 }));
@@ -123,7 +125,7 @@ test('project health distinguishes missing binding and stale or future instructi
 });
 
 
-test('project refresh verifies the file after a reported successful write and skips verification for dry-run', async (t) => {
+test('project refresh verifies confirmed recreation and never claims dry-run repaired a missing file', async (t) => {
   const { project, databasePath } = await fixture(t);
   const receipt = await useRepository({ root: project, allowDirectory: true, databasePath });
   const database = openConnection(databasePath);
@@ -131,28 +133,29 @@ test('project refresh verifies the file after a reported successful write and sk
   database.close();
   await rm(receipt.agentFile!);
   const dependencies = { useRepository: async () => ({ ...receipt, agentFileAction: 'created' as const }) };
-  const [actual] = await refreshRegisteredProjectAgentFiles(locations, { databasePath }, dependencies);
+  const [actual] = await refreshRegisteredProjectAgentFiles(locations, { databasePath, confirmRecreateAgentFile: async () => true }, dependencies);
   assert.equal(actual?.status, 'failed');
   if (actual?.status === 'failed') {
     assert.equal(actual.reason, 'verification_failed');
     assert.equal(actual.finding?.reason, 'agent_file_missing');
   }
   const [planned] = await refreshRegisteredProjectAgentFiles(locations, { databasePath, dryRun: true }, dependencies);
-  assert.equal(planned?.status, 'created');
+  assert.equal(planned?.status, 'failed');
+  if (planned?.status === 'failed') assert.equal(planned.reason, 'confirmation_required');
   await assert.rejects(readFile(receipt.agentFile!), { code: 'ENOENT' });
 });
 
 for (const kind of ['newer_template', 'other_product'] as const) {
   test(`setup preserves ${kind} instructions and reports a notice without downgrading or rewriting`, async t => {
     const { project, databasePath, options } = await fixture(t);
-    const bindingPath = path.join(project, '.kiokuko.json');
+    const bindingPath = path.join(project, '.kiokuko-ai.json');
     const binding = JSON.parse(await readFile(bindingPath, 'utf8'));
     if (kind === 'newer_template') binding.templateVersion = AGENT_TEMPLATE_VERSION + 1;
     const bindingText = JSON.stringify(binding);
     await writeFile(bindingPath, bindingText);
     const declaration = kind === 'other_product'
       ? '<!-- kiokuko-dsh-template-version: 1 -->'
-      : `<!-- kiokuko-template-version: ${AGENT_TEMPLATE_VERSION + 1} -->`;
+      : `<!-- kiokuko-ai-template-version: ${AGENT_TEMPLATE_VERSION + 1} -->`;
     const agent = `Human prefix\n${BEGIN_MARKER}\n${declaration}\nOwned instructions.\n${END_MARKER}\nHuman suffix\n`;
     await writeFile(path.join(project, 'AGENTS.md'), agent);
     for (const dryRun of [true, false]) {
@@ -174,12 +177,12 @@ for (const kind of ['newer_template', 'other_product'] as const) {
 
 test('future versions and DSH declarations cannot bypass malformed marker or identity checks', async t => {
   const { project, options } = await fixture(t);
-  const bindingPath = path.join(project, '.kiokuko.json');
+  const bindingPath = path.join(project, '.kiokuko-ai.json');
   const binding = JSON.parse(await readFile(bindingPath, 'utf8'));
   await writeFile(bindingPath, JSON.stringify({ ...binding, templateVersion: AGENT_TEMPLATE_VERSION + 1 }));
   const cases = [
-    `${BEGIN_MARKER}\n<!-- kiokuko-template-version: 99999 -->\n`,
-    `${BEGIN_MARKER}\n<!-- kiokuko-template-version: ${AGENT_TEMPLATE_VERSION} -->\n<!-- kiokuko-dsh-template-version: 1 -->\n${END_MARKER}`,
+    `${BEGIN_MARKER}\n<!-- kiokuko-ai-template-version: 99999 -->\n`,
+    `${BEGIN_MARKER}\n<!-- kiokuko-ai-template-version: ${AGENT_TEMPLATE_VERSION} -->\n<!-- kiokuko-dsh-template-version: 1 -->\n${END_MARKER}`,
   ];
   for (const content of cases) {
     await writeFile(path.join(project, 'AGENTS.md'), content);
@@ -213,4 +216,74 @@ test('repeated and embedding dependency setup preserve completed choices without
   }
   assert.equal(text, '');
   assert.equal(parse(await readFile(configPath, 'utf8')).mcp.servers.kiokuko.environment.KIOKUKO_SKILL_DISCOVERY, 'community');
+});
+
+for (const answer of ['y', 'yes', 'n', '', 'EOF'] as const) {
+  test(`interactive setup asks before recreating missing instructions: ${JSON.stringify(answer)}`, async t => {
+    const { project, databasePath, options } = await fixture(t);
+    const file = path.join(project, 'AGENTS.md');
+    const binding = await readFile(path.join(project, '.kiokuko-ai.json'), 'utf8');
+    await rm(file);
+    const input = new PassThrough() as PassThrough & { isTTY: boolean };
+    const output = new PassThrough() as PassThrough & { isTTY: boolean };
+    input.isTTY = true; output.isTTY = true;
+    t.after(() => { input.destroy(); output.destroy(); });
+    let text = '';
+    let prompts = 0;
+    output.on('data', chunk => {
+      const part = chunk.toString();
+      text += part;
+      if (part.includes('[y/N]')) { prompts++; setImmediate(() => { if (answer === 'EOF') input.end(); else input.write(answer + '\n'); }); }
+    });
+    const result = await runSetupFlow({ environment: { env: options.env }, standardSkills: false,
+      skillDiscoveryMode: 'official', optionalPrompts: false, input, output });
+    assert.equal(prompts, 1);
+    assert.ok(text.includes(file));
+    assert.match(text, /Kiokuko.*won't work.*without/iu);
+    assert.equal(await readFile(path.join(project, '.kiokuko-ai.json'), 'utf8'), binding);
+    if (answer === 'y' || answer === 'yes') {
+      assert.equal(result.projectAgentFiles[0]?.status, 'created');
+      assert.equal((await runDoctor({ databasePath })).checks.agentFiles.ok, true);
+      assert.equal((await setupOpenCode(options)).projectAgentFiles[0]?.status, 'unchanged');
+    } else {
+      assert.equal(summarizeProjectAgentRefresh(result.projectAgentFiles).ok, false);
+      await assert.rejects(readFile(file), { code: 'ENOENT' });
+      assert.match(formatProjectAgentRefresh(result.projectAgentFiles), /setup.*interactive/iu);
+    }
+  });
+}
+
+for (const mode of ['json', 'noninteractive', 'dry-run'] as const) {
+  test(`setup never recreates missing instructions without consent in ${mode} mode`, async t => {
+    const { project, options } = await fixture(t);
+    const file = path.join(project, 'AGENTS.md');
+    await rm(file);
+    const input = new PassThrough() as PassThrough & { isTTY: boolean };
+    const output = new PassThrough() as PassThrough & { isTTY: boolean };
+    input.isTTY = mode !== 'noninteractive'; output.isTTY = input.isTTY;
+    t.after(() => { input.destroy(); output.destroy(); });
+    let text = '';
+    output.on('data', chunk => { text += chunk.toString(); });
+    const result = await runSetupFlow({ environment: { env: options.env }, standardSkills: false,
+      skillDiscoveryMode: 'official', optionalPrompts: false, input, output, json: mode === 'json', dryRun: mode === 'dry-run' });
+    assert.equal(text, '');
+    assert.equal(summarizeProjectAgentRefresh(result.projectAgentFiles).ok, false);
+    await assert.rejects(readFile(file), { code: 'ENOENT' });
+  });
+}
+
+test('setup does not promise missing-file recovery for an unsupported binding version', async t => {
+  const { project, options } = await fixture(t);
+  const bindingPath = path.join(project, '.kiokuko-ai.json');
+  const binding = JSON.parse(await readFile(bindingPath, 'utf8'));
+  const original = JSON.stringify({ ...binding, templateVersion: AGENT_TEMPLATE_VERSION + 1 });
+  await writeFile(bindingPath, original);
+  await rm(path.join(project, 'AGENTS.md'));
+  const result = await setupOpenCode(options);
+  assert.equal(summarizeProjectAgentRefresh(result.projectAgentFiles).ok, false);
+  const message = formatProjectAgentRefresh(result.projectAgentFiles);
+  assert.match(message, /newer.*binding|binding.*newer/iu);
+  assert.doesNotMatch(message, /setup can recreate/iu);
+  assert.equal(await readFile(bindingPath, 'utf8'), original);
+  await assert.rejects(readFile(path.join(project, 'AGENTS.md')), { code: 'ENOENT' });
 });

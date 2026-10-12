@@ -61,8 +61,8 @@ test('concurrent use creates one binding and one managed block without losing us
     KIOKUKO_TEST_DATABASE: databasePath,
   })));
   const agent = await readFile(path.join(root, 'AGENTS.md'), 'utf8');
-  assert.equal((agent.match(/BEGIN KIOKUKO MANAGED BLOCK/g) ?? []).length, 1);
-  assert.equal((agent.match(/END KIOKUKO MANAGED BLOCK/g) ?? []).length, 1);
+  assert.equal((agent.match(/BEGIN KIOKUKO-AI MANAGED BLOCK/g) ?? []).length, 1);
+  assert.equal((agent.match(/END KIOKUKO-AI MANAGED BLOCK/g) ?? []).length, 1);
   assert.match(agent, /^human header\n/);
   const database = openConnection(databasePath);
   try {

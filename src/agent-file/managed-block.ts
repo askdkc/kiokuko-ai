@@ -1,8 +1,8 @@
 import { KiokukoError } from '../errors.js';
 import { digestManagedRegion } from '../managed-files/rebase.js';
 
-export const BEGIN_MARKER = '<!-- BEGIN KIOKUKO MANAGED BLOCK -->';
-export const END_MARKER = '<!-- END KIOKUKO MANAGED BLOCK -->';
+export const BEGIN_MARKER = '<!-- BEGIN KIOKUKO-AI MANAGED BLOCK -->';
+export const END_MARKER = '<!-- END KIOKUKO-AI MANAGED BLOCK -->';
 
 type ManagedBlockState = 'absent' | 'balanced';
 
@@ -133,14 +133,14 @@ export function readManagedBlockTemplateVersion(existing: string): number | unde
     .slice(markers.start, markers.end)
     .replaceAll('\r\n', '\n')
     .split('\n')
-    .filter((line) => /kiokuko(?:-dsh)?-template-version/u.test(line));
+    .filter((line) => /kiokuko(?:-ai|-dsh)?-template-version/u.test(line));
   if (lines.length === 0) {
     throw new KiokukoError('VALIDATION_ERROR', 'Managed block is missing its template-version declaration');
   }
   if (lines.length !== 1) {
     throw new KiokukoError('VALIDATION_ERROR', 'Managed block has ambiguous template-version declarations');
   }
-  const match = /^<!-- kiokuko-template-version: ([1-9][0-9]*) -->$/u.exec(lines[0] ?? '');
+  const match = /^<!-- kiokuko-ai-template-version: ([1-9][0-9]*) -->$/u.exec(lines[0] ?? '');
   const version = match?.[1] === undefined ? Number.NaN : Number(match[1]);
   if (!Number.isSafeInteger(version)) {
     throw new KiokukoError('VALIDATION_ERROR', 'Managed block has a malformed template-version declaration');
@@ -153,7 +153,7 @@ export function hasDshManagedBlock(existing: string): boolean {
   const region = readManagedBlockRegion(existing);
   if (region === undefined) return false;
   const declarations = region.content.replaceAll('\r\n', '\n').split('\n')
-    .filter(line => /kiokuko(?:-dsh)?-template-version/u.test(line));
+    .filter(line => /kiokuko(?:-ai|-dsh)?-template-version/u.test(line));
   if (declarations.length !== 1) return false;
   const match = /^<!-- kiokuko-dsh-template-version: ([1-9][0-9]*) -->$/u.exec(declarations[0]!);
   return match !== null && Number.isSafeInteger(Number(match[1]));

@@ -133,7 +133,7 @@ test('auto resolution is stable and does not write repository files', async () =
   } finally {
     database.close();
   }
-  await assert.rejects(access(path.join(root, '.kiokuko.json')));
+  await assert.rejects(access(path.join(root, '.kiokuko-ai.json')));
   await assert.rejects(access(path.join(root, 'AGENTS.md')));
 });
 

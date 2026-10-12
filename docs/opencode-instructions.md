@@ -5,7 +5,7 @@
 or updates the repository's `AGENTS.md` with a project-specific block.
 
 If setup creates a missing project binding for a registered project, it also
-adds `.kiokuko.json` to that project's root `.gitignore` when neither the plain
+adds `.kiokuko-ai.json` to that project's root `.gitignore` when neither the plain
 nor root-anchored entry is already present. This setup-only addition participates
 in the same compare-and-swap and rollback boundary as the binding and project
 agent file.

@@ -24,16 +24,16 @@ test('rejects unknown binding schema versions and fields', () => {
   assert.throws(() => parseProjectConfig({ ...config, schemaVersion: 99 }), /schemaVersion/i);
   assert.throws(() => parseProjectConfig({ ...config, extra: true }), /unknown|field/i);
   assert.throws(() => parseProjectConfig({ ...config, agentFile: '../outside.md' }), /agentFile/i);
-  assert.throws(() => parseProjectConfig({ ...config, agentFile: '.kiokuko.json' }), /agentFile/i);
+  assert.throws(() => parseProjectConfig({ ...config, agentFile: '.kiokuko-ai.json' }), /agentFile/i);
   assert.throws(() => parseProjectConfig({ ...config, agentFile: '.KIOKUKO.JSON' }), /agentFile/i);
-  assert.throws(() => parseProjectConfig({ ...config, agentFile: '.kiokuko.json/AGENTS.md' }), /agentFile/i);
+  assert.throws(() => parseProjectConfig({ ...config, agentFile: '.kiokuko-ai.json/AGENTS.md' }), /agentFile/i);
   assert.throws(() => parseProjectConfig({ ...config, agentFile: 'nested/' }), /agentFile/i);
   assert.throws(() => parseProjectConfig({ ...config, agentFile: 'nested//' }), /agentFile/i);
-  for (const agentFile of ['.kiokuko.json.', '.kiokuko.json::$DATA', 'AGENTS.md ', 'CON', 'aux.txt', 'nested/LPT3.md', 'nested/COM¹.txt']) {
+  for (const agentFile of ['.kiokuko-ai.json.', '.kiokuko-ai.json::$DATA', 'AGENTS.md ', 'CON', 'aux.txt', 'nested/LPT3.md', 'nested/COM¹.txt']) {
     assert.throws(() => parseProjectConfig({ ...config, agentFile }), /agentFile/i);
   }
   assert.throws(() => parseProjectConfig({ ...config, templateVersion: 1e100 }), /templateVersion/i);
-  assert.throws(() => parseProjectConfig({ ...config, workspace: 'project:ok\n<!-- BEGIN KIOKUKO MANAGED BLOCK -->' }), /workspace/i);
+  assert.throws(() => parseProjectConfig({ ...config, workspace: 'project:ok\n<!-- BEGIN KIOKUKO-AI MANAGED BLOCK -->' }), /workspace/i);
   assert.throws(() => parseProjectConfig({ ...config, repositoryId: 'kiokuko_global' }), /reserved global/i);
   assert.throws(() => parseProjectConfig({ ...config, workspace: 'global' }), /reserved global/i);
 });

@@ -76,6 +76,19 @@ Human text outside a valid Kiokuko block is preserved. Missing files/blocks and
 outdated instructions can be repaired; malformed boundaries, unsafe paths, or
 conflicting identities require explicit correction.
 
+Instruction blocks use `KIOKUKO-AI` comments and declare that only `kiokuko-ai`
+may read or update them. Project settings live in `.kiokuko-ai.json`; template
+versions belong only to this product. Existing registrations can import identity
+and the instruction path from `.kiokuko.json`, without changing that file or
+using another product's template version. Other products' comment blocks remain
+byte-for-byte intact.
+
+When a registered instruction file is missing, interactive setup names its path,
+explains that Kiokuko project integration won't work without it, and asks
+`Recreate this instruction file? [y/N]`. Only `y` or `yes` authorizes creation.
+Declining, EOF, `--json`, non-interactive setup and dry-run leave the file missing
+and report incomplete setup. This confirmation also applies to `embeddings setup`.
+
 Valid newer templates and DSH-owned blocks are preserved and reported separately;
 they do not make setup fail. Malformed or ambiguous blocks remain errors.
 

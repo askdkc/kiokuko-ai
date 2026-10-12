@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import path from 'node:path';
-import { readProjectConfig } from '../config/project-config.js';
+import { readProjectConfigFromRoot } from '../config/project-config.js';
 import type { SqliteDatabase, SqliteRow } from '../db/adapter.js';
 import { KiokukoError } from '../errors.js';
 import { registerRepositoryAndLocation } from '../repository/binding.js';
@@ -83,7 +83,7 @@ export async function resolveProjectWorkspace(
   const repositoryRoot = detected.root;
 
   if (detected.source === 'binding') {
-    const binding = await readProjectConfig(path.join(repositoryRoot, '.kiokuko.json'));
+    const binding = await readProjectConfigFromRoot(repositoryRoot);
     return registerResolved(database, repositoryRoot, binding.repositoryId, binding.workspace, null, 'binding');
   }
 
@@ -141,7 +141,7 @@ export async function resolveProjectWorkspaceReadOnly(
   const repositoryRoot = detected.root;
 
   if (detected.source === 'binding') {
-    const binding = await readProjectConfig(path.join(repositoryRoot, '.kiokuko.json'));
+    const binding = await readProjectConfigFromRoot(repositoryRoot);
     return {
       repositoryRoot,
       repositoryId: binding.repositoryId,

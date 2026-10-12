@@ -13,7 +13,7 @@ const block = `${BEGIN_MARKER}\nmanaged\n${END_MARKER}`;
 test('adds a managed block without changing existing content', () => {
   const result = upsertManagedBlock('header\n', block);
   assert.equal(result.action, 'created');
-  assert.match(result.content, /^header\n\n\n<!-- BEGIN KIOKUKO MANAGED BLOCK -->/);
+  assert.match(result.content, /^header\n\n\n<!-- BEGIN KIOKUKO-AI MANAGED BLOCK -->/);
   assert.match(result.content, /managed/);
 });
 
@@ -61,17 +61,17 @@ test('managed-block removal rejects ambiguous or malformed markers', () => {
 
 test('reads only one canonical managed template-version declaration', () => {
   assert.equal(
-    readManagedBlockTemplateVersion(`${BEGIN_MARKER}\n<!-- kiokuko-template-version: 9 -->\n${END_MARKER}`),
+    readManagedBlockTemplateVersion(`${BEGIN_MARKER}\n<!-- kiokuko-ai-template-version: 9 -->\n${END_MARKER}`),
     9,
   );
   assert.equal(readManagedBlockTemplateVersion('human template version 99\n'), undefined);
   assert.throws(() => readManagedBlockTemplateVersion(block), /missing/i);
   assert.throws(
-    () => readManagedBlockTemplateVersion(`${BEGIN_MARKER}\n<!-- kiokuko-template-version: 9 -->\n<!-- kiokuko-template-version: 10 -->\n${END_MARKER}`),
+    () => readManagedBlockTemplateVersion(`${BEGIN_MARKER}\n<!-- kiokuko-ai-template-version: 9 -->\n<!-- kiokuko-ai-template-version: 10 -->\n${END_MARKER}`),
     /ambiguous/i,
   );
   assert.throws(
-    () => readManagedBlockTemplateVersion(`${BEGIN_MARKER}\n<!-- kiokuko-template-version: 09 -->\n${END_MARKER}`),
+    () => readManagedBlockTemplateVersion(`${BEGIN_MARKER}\n<!-- kiokuko-ai-template-version: 09 -->\n${END_MARKER}`),
     /malformed/i,
   );
 });

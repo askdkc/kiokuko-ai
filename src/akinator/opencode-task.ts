@@ -461,7 +461,7 @@ interface ResolvedOpenCodeTaskProject {
 async function requireProject(database: SqliteDatabase, cwd?: string): Promise<ResolvedOpenCodeTaskProject> {
   const canonicalCwd = canonicalDirectory(cwd ?? process.cwd());
   const project = await resolveProjectWorkspace(database, canonicalCwd);
-  if (!project) throw new KiokukoError('NOT_FOUND', 'No Git repository or .kiokuko.json binding was found for task preparation');
+  if (!project) throw new KiokukoError('NOT_FOUND', 'No Git repository or .kiokuko-ai.json binding was found for task preparation');
   registerTraceStore(database, await resolveTraceStoreLocation(canonicalCwd, project.repositoryRoot));
   if (canonicalCwd !== project.repositoryRoot) registerTraceStore(database, await resolveTraceStoreLocation(project.repositoryRoot, project.repositoryRoot));
   return { project, executionContext: taskExecutionContext(canonicalCwd, project) };
@@ -491,7 +491,7 @@ async function requireRegisteredProjectReadOnly(
 ): Promise<ResolvedOpenCodeTaskProject> {
   const canonicalCwd = canonicalDirectory(cwd ?? process.cwd());
   const project = await resolveProjectWorkspaceReadOnly(database, canonicalCwd);
-  if (!project) throw new KiokukoError('NOT_FOUND', 'No Git repository or .kiokuko.json binding was found for task answer');
+  if (!project) throw new KiokukoError('NOT_FOUND', 'No Git repository or .kiokuko-ai.json binding was found for task answer');
   assertRegisteredProjectLocation(database, project);
   return { project, executionContext: taskExecutionContext(canonicalCwd, project) };
 }

@@ -3,13 +3,13 @@ import path from 'node:path';
 import { readRegularFile } from '../agent-file/atomic-write.js';
 import { hasDshManagedBlock, readManagedBlockTemplateVersion } from '../agent-file/managed-block.js';
 import { AGENT_TEMPLATE_VERSION } from '../agent-file/render.js';
-import { parseProjectConfigText } from '../config/project-config.js';
+import { parseProjectConfigText, readLegacyProjectConfig } from '../config/project-config.js';
 import { KiokukoError } from '../errors.js';
 import type { RegisteredProjectLocation } from './project-agent-refresh.js';
 
 export type ProjectAgentIssue =
   | 'missing_root' | 'unsafe_root' | 'inaccessible_root'
-  | 'binding_missing' | 'binding_invalid' | 'binding_unreadable' | 'binding_mismatch'
+  | 'binding_missing' | 'binding_invalid' | 'binding_unreadable' | 'binding_mismatch' | 'binding_newer_template'
   | 'agent_file_missing' | 'agent_file_unreadable'
   | 'other_product' | 'managed_block_missing' | 'managed_block_invalid' | 'outdated_template' | 'newer_template';
 
@@ -18,6 +18,7 @@ export interface ProjectAgentFinding {
   agentFile: string | null;
   reason: ProjectAgentIssue;
   repair: 'setup' | 'manual' | 'remove_missing_location';
+  templateVersion?: number;
 }
 
 export type ProjectAgentHealth = { ok: true; agentFile: string } | { ok: false; finding: ProjectAgentFinding };
@@ -43,10 +44,10 @@ export async function inspectProjectAgentFile(location: RegisteredProjectLocatio
   }
   let binding;
   try {
-    const snapshot = await readRegularFile(path.join(location.repositoryRoot, '.kiokuko.json'), { containmentRoot: location.repositoryRoot });
-    if (snapshot === undefined) return finding('binding_missing', 'setup');
-    try { binding = parseProjectConfigText(snapshot.content); }
+    const snapshot = await readRegularFile(path.join(location.repositoryRoot, '.kiokuko-ai.json'), { containmentRoot: location.repositoryRoot });
+    try { binding = snapshot === undefined ? await readLegacyProjectConfig(location.repositoryRoot) : parseProjectConfigText(snapshot.content); }
     catch (error) { if (!(error instanceof KiokukoError)) throw error; return finding('binding_invalid', 'manual'); }
+    if (binding === undefined) return finding('binding_missing', 'setup');
   } catch (error) {
     if (!expectedReadError(error)) throw error;
     return finding('binding_unreadable', 'manual');
@@ -56,7 +57,13 @@ export async function inspectProjectAgentFile(location: RegisteredProjectLocatio
   let agent;
   try {
     agent = await readRegularFile(agentFile, { containmentRoot: location.repositoryRoot });
-    if (agent === undefined) return finding('agent_file_missing', 'setup', agentFile);
+    if (agent === undefined) {
+      if (binding.templateVersion > AGENT_TEMPLATE_VERSION) {
+        return { ok: false, finding: { repositoryRoot: location.repositoryRoot, agentFile,
+          reason: 'binding_newer_template', repair: 'manual', templateVersion: binding.templateVersion } };
+      }
+      return finding('agent_file_missing', 'setup', agentFile);
+    }
   } catch (error) {
     if (!expectedReadError(error)) throw error;
     return finding('agent_file_unreadable', 'manual', agentFile);
@@ -78,10 +85,11 @@ const DESCRIPTIONS: Record<ProjectAgentIssue, string> = {
   unsafe_root: 'Registered path is a link or not a directory; inspect the path manually.',
   inaccessible_root: 'Registered directory cannot be read; check its permissions.',
   binding_missing: 'Project binding is missing; kiokuko-ai setup can restore it from the registration.',
-  binding_invalid: 'Project binding is malformed; inspect .kiokuko.json before retrying setup.',
-  binding_unreadable: 'Project binding cannot be read safely; check .kiokuko.json and its permissions.',
+  binding_invalid: 'Project binding is malformed; inspect .kiokuko-ai.json before retrying setup.',
+  binding_unreadable: 'Project binding cannot be read safely; check .kiokuko-ai.json and its permissions.',
   binding_mismatch: 'Project binding differs from the registered identity; reconcile it before retrying setup.',
-  agent_file_missing: 'Agent file is missing; kiokuko-ai setup can recreate it.',
+  binding_newer_template: 'Agent file is missing, but the binding uses a newer template than this kiokuko-ai version supports. Use the compatible Kiokuko version to restore it; this version cannot recreate it safely. Kiokuko project integration won\'t work without its instruction file.',
+  agent_file_missing: 'Agent file is missing. Kiokuko project integration won\'t work without it. Run kiokuko-ai setup in an interactive terminal and answer y to recreate it.',
   agent_file_unreadable: 'Agent file cannot be read safely; check its path and permissions.',
   other_product: 'Instructions are managed by kiokuko-dsh; kiokuko-ai leaves them unchanged.',
   managed_block_missing: 'Kiokuko managed block is missing; kiokuko-ai setup can append it while preserving human text.',
@@ -91,7 +99,9 @@ const DESCRIPTIONS: Record<ProjectAgentIssue, string> = {
 };
 
 export function describeProjectAgentFinding(finding: ProjectAgentFinding): string {
-  return `${JSON.stringify(finding.repositoryRoot)}: ${finding.reason}. ${DESCRIPTIONS[finding.reason]}`;
+  const version = finding.reason === 'binding_newer_template'
+    ? ` Binding template version: ${finding.templateVersion}; supported version: ${AGENT_TEMPLATE_VERSION}.` : '';
+  return `${JSON.stringify(finding.repositoryRoot)}: ${finding.reason}. ${DESCRIPTIONS[finding.reason]}${version}`;
 }
 
 /** Files outside this package's supported ownership/version are notices, not repair attempts. */

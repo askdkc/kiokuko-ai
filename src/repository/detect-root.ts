@@ -72,7 +72,7 @@ export function detectRepositoryRoot(options: DetectRepositoryRootOptions = {}):
   }
 
   for (const directory of ancestorDirectories(cwd)) {
-    if (existsSync(path.join(directory, '.kiokuko.json'))) {
+    if (existsSync(path.join(directory, '.kiokuko-ai.json')) || existsSync(path.join(directory, '.kiokuko.json'))) {
       return { root: directory, source: 'binding' };
     }
   }

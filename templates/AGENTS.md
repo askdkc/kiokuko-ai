@@ -1,16 +1,18 @@
-<!-- BEGIN KIOKUKO MANAGED BLOCK -->
-<!-- kiokuko-template-version: 25 -->
+<!-- BEGIN KIOKUKO-AI MANAGED BLOCK -->
+<!-- kiokuko-ai-template-version: 25 -->
 <!-- This section is managed by `{{CLI_COMMAND}} use`. Edit outside the markers. -->
+<!-- Only kiokuko-ai may read or update this section. Other Kiokuko products must use their own sections and template versions. -->
 
 ## Kiokuko external memory
 
-This repository uses Kiokuko as its external project memory.
+This repository uses kiokuko-ai as its external project memory for OpenCode.
 
 - Repository ID: `{{REPOSITORY_ID}}`
 - Workspace: `{{WORKSPACE}}`
 - Preferred command: `{{CLI_COMMAND}}`
 
 Use the Kiokuko MCP tools rather than reading or modifying the SQLite file directly. Always stay within the workspace shown above unless the user explicitly requests otherwise.
+These instructions apply only to the Kiokuko MCP server launched by `kiokuko-ai`. Do not apply them to `kiokuko` or `kiokuko-dsh`, or read their instruction blocks as kiokuko-ai configuration. Project binding: `.kiokuko-ai.json`.
 
 ### Before non-trivial work
 
@@ -39,4 +41,4 @@ For each new logical request, inspect execution. For bounded documentation wordi
 
 If Kiokuko or an MCP tool is unavailable, continue from current repository evidence and report the missing enrichment. Never store passwords, API keys, access tokens, private keys, session cookies, auth headers, provider credentials, client secrets, private user data, full transcripts, or capability catalogs.
 
-<!-- END KIOKUKO MANAGED BLOCK -->
+<!-- END KIOKUKO-AI MANAGED BLOCK -->

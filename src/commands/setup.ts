@@ -46,9 +46,12 @@ import {
 import {
   listRegisteredProjectLocations,
   refreshRegisteredProjectAgentFiles,
+  summarizeProjectAgentRefresh,
   type ProjectAgentRefreshResult,
+  type RefreshRegisteredProjectOptions,
   type RegisteredProjectLocation,
 } from '../setup/project-agent-refresh.js';
+import type { ProjectAgentFinding } from '../setup/project-agent-health.js';
 import { enableAgenticReplayIntegration, type AgenticReplaySpawner } from './agentic-replay.js';
 import {
   findMissingRepositoryLocations,
@@ -115,6 +118,7 @@ export interface SetupOptions extends PathEnvironment {
   replaceConflictingOpenCodeMcp?: boolean;
   ennoOduno?: EnnoSetupMode;
   unfinishedRunCleanup?: SetupUnfinishedRunCleanup;
+  confirmRecreateAgentFile?: RefreshRegisteredProjectOptions['confirmRecreateAgentFile'];
 }
 
 export type SetupUnfinishedRunCleanup =
@@ -159,6 +163,23 @@ export interface SetupResult {
 export interface SetupPromptOptions {
   input?: NodeJS.ReadableStream;
   output?: NodeJS.WritableStream;
+}
+
+async function promptRecreateProjectAgentFile(finding: ProjectAgentFinding, options: SetupPromptOptions): Promise<boolean> {
+  const input = options.input ?? stdin;
+  const output = options.output ?? stdout;
+  output.write(`\n${JSON.stringify(finding.agentFile)} is missing. Kiokuko project integration won't work without this instruction file.\n`);
+  if ((input as NodeJS.ReadableStream & { readableEnded?: boolean }).readableEnded === true) return false;
+  const prompt = createInterface({ input, output });
+  const cancellation = new AbortController();
+  prompt.once('close', () => cancellation.abort());
+  try {
+    const answer = (await prompt.question('Recreate this instruction file? [y/N] ', { signal: cancellation.signal })).trim();
+    return /^y(?:es)?$/iu.test(answer);
+  } catch (error) {
+    if (cancellation.signal.aborted) return false;
+    throw error;
+  } finally { prompt.close(); }
 }
 
 export function parseSetupSkillDiscoveryMode(value: string): SkillDiscoveryMode {
@@ -317,6 +338,9 @@ export async function runSetupFlow<T extends { client: 'opencode'; projectAgentF
     ...pathEnvironment,
     dryRun: options.dryRun === true,
     standardSkills: options.standardSkills ?? true,
+    ...(interactive && options.dryRun !== true ? {
+      confirmRecreateAgentFile: (finding: ProjectAgentFinding) => promptRecreateProjectAgentFile(finding, { input, output }),
+    } : {}),
     ...(options.command === undefined ? {} : { command: options.command }),
     ...(skillDiscoveryMode === undefined ? {} : { skillDiscoveryMode }),
     ...(options.ennoOduno === undefined ? {} : { ennoOduno: options.ennoOduno }),
@@ -370,7 +394,8 @@ export async function runSetupFlow<T extends { client: 'opencode'; projectAgentF
     }
     (result as T & { appliedMigrations: number[] }).appliedMigrations = [...appliedMigrations].sort((left, right) => left - right);
   }
-  if (interactive && options.optionalPrompts !== false && options.dryRun !== true) {
+  if (interactive && options.optionalPrompts !== false && options.dryRun !== true
+    && summarizeProjectAgentRefresh(result.projectAgentFiles).ok) {
     await enableAgenticReplayIntegration({
       interactive:true,
       environment:setupProcessEnvironment,
@@ -1042,6 +1067,7 @@ export async function setupOpenCode(
       databasePath: prepared.result.databasePath,
       dryRun: options.dryRun === true,
       managedFileEnvironment: options,
+      ...(options.confirmRecreateAgentFile === undefined ? {} : { confirmRecreateAgentFile: options.confirmRecreateAgentFile }),
       ...(options.migrationsDirectory === undefined ? {} : { migrationsDirectory: options.migrationsDirectory }),
     },
   );

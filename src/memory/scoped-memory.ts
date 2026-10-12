@@ -457,7 +457,7 @@ export async function checkpointScopedMemory(database: SqliteDatabase, input: Sc
   const needsProject = memories.some((memory) => (memory.scope ?? 'project') === 'project');
   const plannedProject = await resolveProjectWorkspaceReadOnly(database, request.cwd);
   if (needsProject && !plannedProject) {
-    throw new KiokukoError('NOT_FOUND', 'No Git repository or .kiokuko.json binding was found for project-scoped memory; use scope "global" only for cross-project preferences or lessons');
+    throw new KiokukoError('NOT_FOUND', 'No Git repository or .kiokuko-ai.json binding was found for project-scoped memory; use scope "global" only for cross-project preferences or lessons');
   }
   if (run && plannedProject !== undefined && run.workspace !== plannedProject.workspace) {
     throw new KiokukoError('NOT_FOUND', 'Checkpoint run was not found');

@@ -555,7 +555,7 @@ export async function curateMemoryCandidates(database: SqliteDatabase, input: Cu
     ? null
     : input.workspace === undefined ? resolved?.workspace ?? null : requireWorkspace(input.workspace);
   if (!allWorkspaces && workspace === null) {
-    throw new KiokukoError('NOT_FOUND', 'No Git repository or .kiokuko.json binding was found for curator candidates');
+    throw new KiokukoError('NOT_FOUND', 'No Git repository or .kiokuko-ai.json binding was found for curator candidates');
   }
   const result = listCuratorCandidates(database, workspace, input, limit);
   return {

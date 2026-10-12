@@ -31,6 +31,7 @@ import { getGlobalDatabasePath } from '../config/paths.js';
 import {
   parseProjectConfig,
   parseProjectConfigText,
+  readLegacyProjectConfig,
   type ProjectConfig,
 } from '../config/project-config.js';
 import { initializeDatabase } from './init.js';
@@ -61,6 +62,9 @@ export interface UseOptions {
   repositoryId?: string;
   /** Setup-only policy: ignore a binding created by this use operation. */
   ensureNewBindingIgnored?: boolean;
+  /** Setup preserves deleted instruction files unless their exact path was confirmed. */
+  requireExistingAgentFile?: boolean;
+  recreateAgentFile?: string;
 }
 
 export interface UseCommandDependencies {
@@ -1089,7 +1093,7 @@ async function useRepositoryAttempt(
   if (retryParents !== undefined && repositoryRoot !== retryParents.repositoryRoot) {
     throw new KiokukoError('CONFLICT', 'Repository root changed during concurrent binding convergence');
   }
-  const bindingFile = path.join(repositoryRoot, '.kiokuko.json');
+  const bindingFile = path.join(repositoryRoot, '.kiokuko-ai.json');
   const bindingParentIdentity = await existingParentIdentity(bindingFile);
   if (retryParents !== undefined
     && !sameFileIdentity(bindingParentIdentity, retryParents.bindingParentIdentity)) {
@@ -1102,7 +1106,7 @@ async function useRepositoryAttempt(
     dependencies.readBindingFileForConvergence,
   );
   const bindingSnapshot = bindingObservation.snapshot;
-  const existingBinding = parseBindingSnapshot(bindingSnapshot);
+  const existingBinding = parseBindingSnapshot(bindingSnapshot) ?? await readLegacyProjectConfig(repositoryRoot);
   if (existingBinding !== undefined && existingBinding.templateVersion > AGENT_TEMPLATE_VERSION) {
     throw new KiokukoError(
       'VALIDATION_ERROR',
@@ -1200,6 +1204,10 @@ async function useRepositoryAttempt(
         dependencies.readAgentFileForConvergence,
       );
   assertSupportedManagedTemplate(plannedAgent, 'Prospective agentFile');
+  if (options.requireExistingAgentFile === true && plannedAgent === undefined
+    && options.recreateAgentFile !== nextBinding.agentFile) {
+    throw new KiokukoError('VALIDATION_ERROR', 'Missing project instruction file requires explicit recreation confirmation');
+  }
   const existingAgent = options.noAgentFile ? undefined : plannedAgent;
   if (options.noAgentFile && plannedAgent !== undefined) {
     const plannedManagedBlock = removeManagedBlock(plannedAgent.content);
@@ -1251,7 +1259,7 @@ async function useRepositoryAttempt(
   const nextBindingText = bindingText(nextBinding);
   const gitignoreFile = path.join(repositoryRoot, '.gitignore');
   const shouldIgnoreNewBinding = options.ensureNewBindingIgnored === true
-    && existingBinding === undefined;
+    && bindingSnapshot === undefined;
   const gitignoreSnapshot = shouldIgnoreNewBinding
     ? await readStrictSettledTarget(
         gitignoreFile,

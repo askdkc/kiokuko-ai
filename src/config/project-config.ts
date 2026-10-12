@@ -72,7 +72,7 @@ function validateAgentFile(agentFile: unknown): asserts agentFile is string {
     throw new KiokukoError('VALIDATION_ERROR', 'agentFile must remain inside the repository root');
   }
   const lower = normalized.toLowerCase();
-  if (lower === '.kiokuko.json' || lower.startsWith('.kiokuko.json/')) {
+  if (['.kiokuko-ai.json', '.kiokuko.json'].some(name => lower === name || lower.startsWith(name + '/'))) {
     throw new KiokukoError('VALIDATION_ERROR', 'agentFile must not alias the repository binding file');
   }
 }
@@ -115,4 +115,20 @@ export async function readProjectConfig(filePath: string): Promise<ProjectConfig
   const snapshot = await readRegularFile(filePath);
   if (snapshot === undefined) throw new KiokukoError('VALIDATION_ERROR', 'Project binding file is unavailable');
   return parseProjectConfigText(snapshot.content);
+}
+
+/** Import legacy identity only; its template version belongs to another namespace. */
+export async function readLegacyProjectConfig(repositoryRoot: string): Promise<ProjectConfig | undefined> {
+  const snapshot = await readRegularFile(path.join(repositoryRoot, '.kiokuko.json'), { containmentRoot: repositoryRoot });
+  if (snapshot === undefined) return undefined;
+  const binding = parseProjectConfigText(snapshot.content);
+  return { ...binding, templateVersion: 1 };
+}
+
+export async function readProjectConfigFromRoot(repositoryRoot: string): Promise<ProjectConfig> {
+  const snapshot = await readRegularFile(path.join(repositoryRoot, '.kiokuko-ai.json'), { containmentRoot: repositoryRoot });
+  if (snapshot !== undefined) return parseProjectConfigText(snapshot.content);
+  const legacy = await readLegacyProjectConfig(repositoryRoot);
+  if (legacy !== undefined) return legacy;
+  throw new KiokukoError('VALIDATION_ERROR', 'Project binding file is unavailable');
 }
