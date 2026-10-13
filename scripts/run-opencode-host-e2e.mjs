@@ -13,6 +13,7 @@ import { agentDefinition, buildExecutionCatalog, EXECUTION_ROLES, orchestrationO
 import { probeMcpTools, callMcpTool } from './lib/mcp-probe.mjs';
 import { startPackedRegistry } from './lib/packed-registry.mjs';
 import { waitForPackedPlugin } from './lib/plugin-readiness.mjs';
+import { createLearningDeliveryProbe, waitForLearningDelivery } from './lib/learning-readiness.mjs';
 
 const repositoryRoot = path.resolve(import.meta.dirname, '..');
 const maxOutputBytes = 96 * 1024;
@@ -268,8 +269,8 @@ export async function runHostContract(options = {}) {
   let continuationFinished = Promise.resolve();
   let roleAction;
   let roleIssued = false;
-  let learningCautionEventId;
-  let learningContextSeen = false;
+  let learningProbe;
+  let learningDelivery;
   const fixture = await startFakeOpenAiServer({
     emitTaskPrepare: false,
     onContinuation: (payload) => {
@@ -277,9 +278,7 @@ export async function runHostContract(options = {}) {
       return continuationFinished;
     },
     respond: async body => {
-      if (learningCautionEventId && (body.messages ?? []).some(message => message.role === 'system'
-        && JSON.stringify(message.content ?? '').includes('Kiokuko advisory project memory and public handoff')
-        && JSON.stringify(message.content ?? '').includes(learningCautionEventId))) learningContextSeen = true;
+      learningProbe?.observe(body);
       if ((body.messages ?? []).some(message => JSON.stringify(message.content ?? '').includes('Return only the structured summary in the requested format'))) {
         return { text: '## Objective\n- Verify the installed Kiokuko OpenCode v2 plugin.\n\n## Work State\n### Active\n- Continue the role execution check.' };
       }
@@ -358,23 +357,19 @@ export async function runHostContract(options = {}) {
       const previousModel = ordinaryContext.findLast(item => item.type === 'assistant').model;
       const previousReference = `${previousModel.providerID}/${previousModel.id}${previousModel.variant ? '#' + previousModel.variant : ''}`;
       if (switched.fromModel !== previousReference || switched.toModel !== 'fixture/fixture-next-model') throw new Error('native_model_handoff_identity_missing');
-      await server.client.session.prompt({ sessionID: ordinarySession.id, text: 'Migration startup is still broken. Check the ordinary startup before reporting completion.' });
+      const cautionIssue = 'Migration startup is still broken. Check the ordinary startup before reporting completion.';
+      await server.client.session.prompt({ sessionID: ordinarySession.id, text: cautionIssue });
       await server.client.session.wait({ sessionID: ordinarySession.id });
       await waitFor(() => Boolean(observation('complaint')), 'native_learning_feedback', 15_000);
-      learningCautionEventId = parseJson(observation('complaint').observation_json, 'learning_complaint').eventId;
+      const learningCautionEventId = parseJson(observation('complaint').observation_json, 'learning_complaint').eventId;
       await server.client.session.compact({ sessionID: ordinarySession.id });
       await server.client.session.wait({ sessionID: ordinarySession.id });
       await waitFor(() => Boolean(observation('compaction')), 'native_learning_compaction', 15_000);
       if (parseJson(observation('compaction').observation_json, 'learning_compaction').verification !== 'unknown') throw new Error('compaction_was_mistaken_for_verification');
       const nextSession = await server.client.session.create({ location, model: { providerID: 'fixture', id: 'fixture-next-model' } });
-      for (let attempt = 0; attempt < 3 && !learningContextSeen; attempt++) {
-        await server.client.session.prompt({ sessionID: nextSession.id, text: 'Review an unrelated new feature in this repository.' });
-        await server.client.session.wait({ sessionID: nextSession.id });
-        // Learning is background work; completion persistence is an observable
-        // boundary for the next request, rather than an arbitrary fixed sleep.
-        await waitFor(() => Boolean(learningDb.prepare('SELECT 1 FROM learning_observations WHERE session_id=?').get(nextSession.id)), 'native_learning_next_session', 15_000);
-      }
-      if (!learningContextSeen) throw new Error('native_next_session_caution_not_delivered');
+      // Arm only after compaction: its requests cannot prove next-session delivery.
+      learningProbe = createLearningDeliveryProbe({ sessionId: nextSession.id, eventId: learningCautionEventId, issue: cautionIssue });
+      learningDelivery = await waitForLearningDelivery(server.client, nextSession.id, learningProbe);
     } finally { learningDb.close(); }
 
     const capabilities = [
@@ -531,7 +526,7 @@ export async function runHostContract(options = {}) {
       await new Promise(resolve => setTimeout(resolve, 1_200));
       if (fixture.stats.continuationRequests !== requestsBeforeReload) throw new Error('reload_duplicated_continuation');
     }
-    process.stdout.write(`${JSON.stringify({ protocolVersion: 2, status: 'passed', opencodeVersion: health.version, plugin: 'active', mcp: 'connected', toolCatalog: toolNames.length, hook: hookResponse.code, fixtureRequests: fixture.stats.chatCompletions, ordinaryVerified: true, learningVerified: true, learningCompactionVerified: true, preparedEnnoStatus: ideal.ennoOduno.status, continuationRequests: fixture.stats.continuationRequests, durableReceipts: 1, executionVerified, compactionVerified, reloadVerified: Boolean(options.execution), fixtureDigests: fixture.stats.requestDigests.map((value) => value.slice(0, 16)) })}\n`);
+    process.stdout.write(`${JSON.stringify({ protocolVersion: 2, status: 'passed', opencodeVersion: health.version, plugin: 'active', mcp: 'connected', toolCatalog: toolNames.length, hook: hookResponse.code, fixtureRequests: fixture.stats.chatCompletions, ordinaryVerified: true, learningVerified: true, learningDelivery, learningCompactionVerified: true, preparedEnnoStatus: ideal.ennoOduno.status, continuationRequests: fixture.stats.continuationRequests, durableReceipts: 1, executionVerified, compactionVerified, reloadVerified: Boolean(options.execution), fixtureDigests: fixture.stats.requestDigests.map((value) => value.slice(0, 16)) })}\n`);
     completeVerification({ordinaryVerified:true,executionVerified,compactionVerified,reloadVerified:Boolean(options.execution)});
   } finally {
     await server.close();
