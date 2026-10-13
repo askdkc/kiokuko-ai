@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { execFileSync } from 'node:child_process';
-import { mkdtemp, readFile, rm, symlink, writeFile, truncate } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, symlink, writeFile, truncate, link, unlink, stat, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
@@ -85,4 +85,64 @@ test('a bounded read that changes underneath its descriptor is a typed retryable
  await assert.rejects(readRegularFile(file,{maxBytes:1024,afterOpen:async(_file,handle)=>{
   const read=handle.read.bind(handle);handle.read=(async(...args:Parameters<typeof read>)=>{const result=await read(...args);await truncate(file,0);return result;}) as typeof handle.read;
  }}),error=>error instanceof AtomicReadChangedError&&error.code==='INTEGRITY_ERROR');
+});
+
+test('queued concurrent ignore updates preserve user bytes and converge once', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'trace-ignore-queue-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const file = path.join(root, '.gitignore');
+  for (let round = 0; round < 4; round++) {
+    const original = `# user round ${round}\r\nnode_modules/\r\n/.agenticreplay/\r\n`;
+    await writeFile(file, original);
+    await Promise.all(Array.from({ length: 32 }, (_, index) =>
+      ensureAgenticReplayIgnored(index % 2 === 0 ? root : path.join(root, '.'))));
+    assert.equal(await readFile(file, 'utf8'), `${original}.agenticreplay/\r\n`);
+    assert.deepEqual(await readdir(root), ['.gitignore']);
+  }
+});
+
+test('queued failures remain visible and do not poison later ignore updates', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'trace-ignore-queue-failure-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const file = path.join(root, '.gitignore');
+  const victim = path.join(root, 'user-ignore');
+  await writeFile(victim, 'private user content\n');
+  await symlink(victim, file);
+  const results = await Promise.allSettled(Array.from({ length: 8 }, () => ensureAgenticReplayIgnored(root)));
+  for (const result of results) {
+    assert.equal(result.status, 'rejected');
+    if (result.status === 'rejected') assert.equal(result.reason.code, 'SECURITY_REJECTION');
+  }
+  assert.equal(await readFile(victim, 'utf8'), 'private user content\n');
+  await rm(file);
+  await ensureAgenticReplayIgnored(root);
+  assert.equal(await readFile(file, 'utf8'), '.agenticreplay/\n');
+});
+
+test('hardlink cleanup during a bounded read remains a typed conflict', async (t) => {
+  const { AtomicReadChangedError, readRegularFile } = await import('../../src/agent-file/atomic-write.js');
+  const root = await mkdtemp(path.join(tmpdir(), 'trace-ignore-link-cleanup-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const file = path.join(root, '.gitignore');
+  const temporary = path.join(root, 'owned-temporary');
+  const content = '.agenticreplay/\n';
+  await writeFile(temporary, content);
+  await link(temporary, file);
+  const before = await stat(file);
+  assert.equal(before.nlink, 2);
+  await assert.rejects(readRegularFile(file, {
+    maxBytes: 1024,
+    afterOpen: async (_file, handle) => {
+      const read = handle.read.bind(handle);
+      handle.read = (async (...args: Parameters<typeof read>) => {
+        const result = await read(...args);
+        await unlink(temporary);
+        return result;
+      }) as typeof handle.read;
+    },
+  }), error => error instanceof AtomicReadChangedError);
+  const after = await stat(file);
+  assert.equal(after.ino, before.ino);
+  assert.equal(after.nlink, 1);
+  assert.equal(await readFile(file, 'utf8'), content);
 });

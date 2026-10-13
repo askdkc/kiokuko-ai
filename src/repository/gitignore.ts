@@ -49,22 +49,40 @@ export function renderAgenticReplayGitignore(existing: string | undefined): Rend
   return { content: `${current}${separator}${AGENTICREPLAY_IGNORE_ENTRY}${newline}`, action: existing === undefined ? 'created' : 'updated' };
 }
 
+// Keep our own writers out of each other's quarantine and hardlink cleanup
+// windows. Other processes still require the unchanged atomic safety checks.
+const pendingIgnoreUpdates = new Map<string, Promise<void>>();
+
+async function serializeIgnoreUpdate(file: string, operation: () => Promise<void>): Promise<void> {
+  const key = path.resolve(file);
+  const previous = pendingIgnoreUpdates.get(key);
+  const current = (previous ?? Promise.resolve()).catch(() => undefined).then(operation);
+  pendingIgnoreUpdates.set(key, current);
+  try {
+    await current;
+  } finally {
+    if (pendingIgnoreUpdates.get(key) === current) pendingIgnoreUpdates.delete(key);
+  }
+}
+
 /** Protect both root captures and a nested capture CWD's overriding ignore rules. */
 export async function ensureAgenticReplayIgnored(repositoryRoot: string, captureCwd = repositoryRoot): Promise<void> {
   for (const directory of new Set([repositoryRoot, captureCwd])) {
     const file = path.join(directory, '.gitignore');
-    for (let attempt = 0; ; attempt++) {
-      try {
-        const expected = await readRegularFile(file, { containmentRoot: repositoryRoot, maxBytes: 1024 * 1024 });
-        const rendered = renderAgenticReplayGitignore(expected?.content);
-        const expectation = { expected, containmentRoot: repositoryRoot, maxBytes: 1024 * 1024 };
-        if (rendered.action === 'unchanged') await assertFileExpectation(file, expectation);
-        else assertAtomicCleanupComplete(await atomicWriteTextIfUnchanged(file, rendered.content, expectation, expected?.mode ?? 0o644));
-        break;
-      } catch (error) {
-        // Re-read after another recorder changes the file; never overwrite a stale snapshot.
-        if (attempt >= 2 || !(error instanceof AtomicReadChangedError || error instanceof KiokukoError && error.code === 'CONFLICT')) throw error;
+    await serializeIgnoreUpdate(file, async () => {
+      for (let attempt = 0; ; attempt++) {
+        try {
+          const expected = await readRegularFile(file, { containmentRoot: repositoryRoot, maxBytes: 1024 * 1024 });
+          const rendered = renderAgenticReplayGitignore(expected?.content);
+          const expectation = { expected, containmentRoot: repositoryRoot, maxBytes: 1024 * 1024 };
+          if (rendered.action === 'unchanged') await assertFileExpectation(file, expectation);
+          else assertAtomicCleanupComplete(await atomicWriteTextIfUnchanged(file, rendered.content, expectation, expected?.mode ?? 0o644));
+          break;
+        } catch (error) {
+          // Re-read after another recorder changes the file; never overwrite a stale snapshot.
+          if (attempt >= 2 || !(error instanceof AtomicReadChangedError || error instanceof KiokukoError && error.code === 'CONFLICT')) throw error;
+        }
       }
-    }
+    });
   }
 }
