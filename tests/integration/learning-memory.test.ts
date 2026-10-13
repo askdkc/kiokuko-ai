@@ -3,6 +3,7 @@ import test from 'node:test';
 import { execFileSync, spawn } from 'node:child_process';
 import { Readable } from 'node:stream';
 import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { openConnection } from '../../src/db/connection.js';
 import { migrateDatabase } from '../../src/db/migrate.js';
@@ -22,12 +23,15 @@ import { PACKAGE_VERSION } from '../../src/package-version.js';
 import { purgeEntry } from '../../src/commands/purge.js';
 
 function fixture(t: { after(fn: () => void): void }) {
-  const directory = mkdtempSync('/tmp/kiokuko-followup/ai-learning/store-');
+  const directory = mkdtempSync(path.join(tmpdir(), 'kiokuko-learning-store-'));
+  let database: ReturnType<typeof openConnection> | undefined;
+  t.after(() => {
+    try { database?.close(); } finally { rmSync(directory, { recursive: true, force: true }); }
+  });
   const root = path.join(directory, 'repo'), other = path.join(directory, 'other');
   execFileSync('git', ['init', '-q', root]); execFileSync('git', ['init', '-q', other]);
   const databasePath = path.join(directory, 'memory.sqlite');
-  const database = openConnection(databasePath); migrateDatabase(database);
-  t.after(() => { database.close(); rmSync(directory, { recursive: true, force: true }); });
+  database = openConnection(databasePath); migrateDatabase(database);
   const observation = { cwd: root, eventId: 'evt_1', sessionId: 'session_1', kind: 'complaint',
     summary: 'Migration startup still fails after update.', issue: 'Migration startup fails.', prevention: 'Test existing migration startup before reporting completion.',
     tags: ['migration', 'startup'], outcome: 'unknown', verification: 'unknown', actions: [],
@@ -207,7 +211,7 @@ test('ordinary local CLI works with an isolated database and requires no externa
   const environment = { ...process.env, KIOKUKO_DATA_DIR: path.join(f.root, 'cli-data'), KIOKUKO_SKILL_DISCOVERY: 'off' };
   const cli = process.env.KIOKUKO_TEST_BUILT_CLI ?? path.resolve('src/bin/kiokuko.ts');
   const run = (operation: string, input: unknown) => JSON.parse(execFileSync(process.execPath,
-    ['--import', 'tsx', cli, 'memory', operation, '--input-json', '-'], { cwd: f.root, env: environment,
+    ['--import', import.meta.resolve('tsx'), cli, 'memory', operation, '--input-json', '-'], { cwd: f.root, env: environment,
       input: JSON.stringify(input), encoding: 'utf8' }));
   assert.equal(run('observe', f.observation).recorded, true);
   assert.equal(run('observe', f.observation).duplicate, true);
