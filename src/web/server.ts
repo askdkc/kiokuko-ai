@@ -872,7 +872,8 @@ async function handleRequest(
 }
 
 function isSharedServerPath(pathname: string): boolean {
-  return pathname === '/health/live' || pathname === '/health/ready';
+  return pathname === '/health/live' || pathname === '/health/ready'
+    || /^\/api\/memory\/(?:observe|context|improve)$/u.test(pathname);
 }
 
 function createWebApplication(context: HttpApplicationContext, trustedOrigin: () => string | undefined): RequestListener {

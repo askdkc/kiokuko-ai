@@ -15,6 +15,7 @@ import { TraceInputError } from '../trace/bounded-read.js';
 import { findSecretInValue } from '../memory/secrets.js';
 import { canonicalContentHash } from '../serialization/validate.js';
 import { LedgerStore } from '../ledger/store.js';
+import { improveMemory } from '../memory/learning.js';
 import {
   claimOrchestrationJobs,
   renewOrchestrationJobLease,
@@ -199,6 +200,9 @@ async function processJob(options: OrchestrationWorkerOptions, job: Orchestratio
   if (job.kind === 'semantic_context') return processSemanticContext(options, job);
   if (job.kind === 'skill_discovery') return processSkillDiscovery(options, job);
   if (job.kind === 'trace_ingestion') return processTraceIngestion(options, job);
+  if (job.kind === 'memory_promotion' && job.payload.source === 'learning') {
+    return improveMemory(options.database, { cwd: job.payload.cwd, limit: 40 });
+  }
   if (job.kind === 'compaction_meditation') {
     return options.processCompactionMeditation === undefined
       ? processCompactionMeditationJob(options.database, job)

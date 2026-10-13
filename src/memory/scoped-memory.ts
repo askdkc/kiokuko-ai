@@ -162,7 +162,7 @@ export type ScopedCheckpointInput = ScopedCheckpointStandaloneInput | ScopedChec
 export interface ScopedCheckpointResult {
   project: ResolvedProjectWorkspace | null;
   entries: Array<Pick<EntryRecord, 'id' | 'workspace' | 'kind' | 'status' | 'title' | 'revision'>>;
-  run?: { runId: string; status: string; feedbackCount: number; evidenceCount: number; reasoningPaths: number; qualifiedReasoningPaths: number; memoryApplication: MemoryApplicationStatus | null };
+  run?: { runId: string; status: string; feedbackCount: number; evidenceCount: number; reasoningPaths: number; qualifiedReasoningPaths: number; memoryApplication: MemoryApplicationStatus | null; verification: 'reported' | 'unverified'; warnings: string[] };
 }
 
 const CHECKPOINT_MEMORY_FIELDS = new Set([
@@ -578,12 +578,18 @@ export async function checkpointScopedMemory(database: SqliteDatabase, input: Sc
       ? memoryApplicationStatus(database, transactionRun.runId, project.repositoryRoot) : null;
     const unsuccessful = evidence.tests.some(test => test.outcome !== 'passed')
       || evidence.commands.some(command => command.outcome !== 'passed' || (command.exitCode !== undefined && command.exitCode !== 0));
-    if (outcome === 'completed' && evidence.verification?.outcome === 'fresh'
-      && (memoryApplication?.complete === false || unsuccessful)) {
-      throw new KiokukoError('CONFLICT', 'Fresh verification requires current memory decisions and successful required checks', {
-        memoryApplication, unsuccessful,
-      });
-    }
+    // Learning bookkeeping must never gate completion. Keep the evidence honest:
+    // a fresh assertion alone, missing reviews or failed checks is not verification.
+    const fresh = evidence.verification?.outcome === 'fresh'
+      && memoryApplication?.complete !== false && !unsuccessful
+      && evidence.tests.length + evidence.commands.length > 0;
+    const warnings = [
+      ...(memoryApplication?.complete === false ? ['memory_application_incomplete'] : []),
+      ...(unsuccessful ? ['verification_unsuccessful'] : []),
+      ...(!fresh ? ['completion_unverified'] : []),
+    ];
+    const verificationOutcome = evidence.verification?.outcome === 'fresh' && !fresh
+      ? 'unknown' : evidence.verification?.outcome;
     ensureGlobalWorkspace(database, now);
     const store = transactionRun === undefined ? undefined : new LedgerStore(database, { workspace: transactionRun.workspace });
     const evidenceEvents = [
@@ -591,7 +597,7 @@ export async function checkpointScopedMemory(database: SqliteDatabase, input: Sc
       ...evidence.errorSignatures.map((signature) => ({ eventId: randomUUID(), eventType: 'error.recorded' as const, actor: 'kiokuko-mcp', occurredAt: now, payload: { signature } })),
       ...evidence.commands.map((command) => ({ eventId: randomUUID(), eventType: 'command.completed' as const, actor: 'kiokuko-mcp', occurredAt: now, outcome: command.outcome, payload: { executable: command.executable, ...(command.classification === undefined ? {} : { classification: command.classification }), ...(command.exitCode === undefined ? {} : { exitCode: command.exitCode }), ...(command.digest === undefined ? {} : { digest: command.digest }) } })),
       ...evidence.tests.map((test) => ({ eventId: randomUUID(), eventType: 'test.completed' as const, actor: 'kiokuko-mcp', occurredAt: now, outcome: test.outcome, payload: { runner: test.runner, ...(test.target === undefined ? {} : { target: test.target }), ...(test.digest === undefined ? {} : { digest: test.digest }) } })),
-      ...(evidence.verification === undefined ? [] : [{ eventId: randomUUID(), eventType: 'verification.recorded' as const, actor: 'kiokuko-mcp' as const, occurredAt: now, outcome: evidence.verification.outcome, payload: { outcome: evidence.verification.outcome } }]),
+      ...(verificationOutcome === undefined ? [] : [{ eventId: randomUUID(), eventType: 'verification.recorded' as const, actor: 'kiokuko-mcp' as const, occurredAt: now, outcome: verificationOutcome, payload: { outcome: verificationOutcome } }]),
     ];
     const evidenceAck = transactionRun === undefined || evidenceEvents.length === 0 ? { eventIds: [] as string[] } : store!.appendBatchInTransaction(transactionRun.runId, { events: evidenceEvents });
     const evidenceRows: Array<{ kind: 'command' | 'test' | 'file' | 'artifact'; locator: string; eventId: string | null; summary: string; digest?: string }> = [
@@ -599,7 +605,7 @@ export async function checkpointScopedMemory(database: SqliteDatabase, input: Sc
       ...evidence.errorSignatures.map((locator, index) => ({ kind: 'artifact' as const, locator, eventId: evidenceAck.eventIds[evidence.changedPaths.length + index] ?? null, summary: 'sanitized error signature' })),
       ...evidence.commands.map((command, index) => ({ kind: 'command' as const, locator: command.executable, eventId: evidenceAck.eventIds[evidence.changedPaths.length + evidence.errorSignatures.length + index] ?? null, summary: command.classification ?? command.outcome, ...(command.digest === undefined ? {} : { digest: command.digest }) })),
       ...evidence.tests.map((test, index) => ({ kind: 'test' as const, locator: test.runner, eventId: evidenceAck.eventIds[evidence.changedPaths.length + evidence.errorSignatures.length + evidence.commands.length + index] ?? null, summary: test.target ?? test.outcome, ...(test.digest === undefined ? {} : { digest: test.digest }) })),
-      ...(evidence.verification === undefined ? [] : [{ kind: 'artifact' as const, locator: 'verification', eventId: evidenceAck.eventIds.at(-1) ?? null, summary: evidence.verification.outcome }]),
+      ...(verificationOutcome === undefined ? [] : [{ kind: 'artifact' as const, locator: 'verification', eventId: evidenceAck.eventIds.at(-1) ?? null, summary: verificationOutcome }]),
     ];
     if (evidenceRows.length !== evidenceIds.length) {
       throw new KiokukoError('INTEGRITY_ERROR', 'Checkpoint evidence projection is invalid');
@@ -630,7 +636,7 @@ export async function checkpointScopedMemory(database: SqliteDatabase, input: Sc
         entries: saved,
         outcome,
         verification: {
-          fresh: evidence.verification?.outcome === 'fresh' && memoryApplication?.complete !== false && !unsuccessful,
+          fresh,
           passedTests: evidence.tests.filter((test) => test.outcome === 'passed').length,
           passedCommands: evidence.commands.filter((command) => command.outcome === 'passed').length,
           evidenceCount: evidenceRows.length,
@@ -648,6 +654,10 @@ export async function checkpointScopedMemory(database: SqliteDatabase, input: Sc
           reasoningPaths: paths.recorded,
           qualifiedReasoningPaths: paths.qualified,
           memoryApplication,
+          // Checkpoint fields are caller reports; execution origin remains explicit
+          // in memoryApplication. Never label a caller's assertion as observed proof.
+          verification: fresh ? 'reported' as const : 'unverified' as const,
+          warnings,
         },
       };
     }

@@ -26,6 +26,7 @@ import {
   type RuntimeDescriptorView,
 } from './runtime-descriptor.js';
 import { WriteQueue, type WriteQueueState } from './write-queue.js';
+import { observeMemory, memoryContext, improveMemory } from '../memory/learning.js';
 import {
   createEmbeddingRuntime,
   type EmbeddingRuntimeOptions,
@@ -442,6 +443,11 @@ export async function startHttpServer(options: HttpServerOptions = {}): Promise<
     const createAuthenticatedApp = (): RequestListener => createApp({
       expectedToken: capabilityToken,
       readiness: () => ready && !closing,
+      memory: {
+        observe: input => enqueueWrite(() => observeMemory(database!, input)),
+        context: input => enqueueWrite(() => memoryContext(database!, input)),
+        improve: input => enqueueWrite(() => improveMemory(database!, input)),
+      },
     });
     const application = options.applicationFactory === undefined
       ? options.app ?? createAuthenticatedApp()

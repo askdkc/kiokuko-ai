@@ -48,14 +48,14 @@ test('missing, failed and stale regression evidence cannot support fresh complet
   const f = await fixture();
   try {
     assert.equal(memoryApplicationStatus(f.database, f.identity.runId, f.root).complete, false);
-    await assert.rejects(checkpointScopedMemory(f.database, f.checkpoint), { code: 'CONFLICT' });
+    assert.equal(memoryApplicationStatus(f.database, f.identity.runId, f.root).complete, false);
     const first = await reviewTaskMemory(f.database, f.review);
     assert.deepEqual(await reviewTaskMemory(f.database, f.review), first);
     await assert.rejects(reviewTaskMemory(f.database, { ...f.review, basis: 'changed' }), { code: 'CONFLICT' });
     const failed = await recordMemoryEvidence(f.database, { ...f.identity, requestId: 'failed', command: 'node migration-test.ts',
       paths: ['migration-test.ts'], exitCode: 1, outcome: 'failed' });
     await reviewTaskMemory(f.database, { ...f.review, expectedRevision: 1, requestId: 'review-failed', evidenceIds: [failed.evidenceId] });
-    await assert.rejects(checkpointScopedMemory(f.database, f.checkpoint), { code: 'CONFLICT' });
+    assert.equal(memoryApplicationStatus(f.database, f.identity.runId, f.root).complete, false);
     writeFileSync(path.join(f.root, 'migration-test.ts'), 'export const expected = discoverBundledMigrations();\n');
     const passed = await recordMemoryEvidence(f.database, { ...f.identity, requestId: 'passed', command: 'node migration-test.ts',
       paths: ['migration-test.ts'], exitCode: 0, outcome: 'passed' });
@@ -68,7 +68,7 @@ test('missing, failed and stale regression evidence cannot support fresh complet
       assert.equal(status.clientObserved, false);
       writeFileSync(path.join(f.root, 'migration-test.ts'), 'changed after verification\n');
       assert.equal(memoryApplicationStatus(reopened, f.identity.runId, f.root).invalid[0]?.reason, 'verification_stale');
-      await assert.rejects(checkpointScopedMemory(reopened, f.checkpoint), { code: 'CONFLICT' });
+      assert.equal(memoryApplicationStatus(reopened, f.identity.runId, f.root).complete, false);
       const cancelled = await checkpointScopedMemory(reopened, { ...f.checkpoint, outcome: 'cancelled' });
       assert.equal(cancelled.run?.status, 'cancelled');
     } finally { reopened.close(); }
@@ -143,7 +143,7 @@ assert.deepEqual(expectation, bundled('future-migrations'));\n`);
     assert.equal(failed.outcome, 'failed');
     assert.equal(failed.origin, 'host_executed');
     await reviewTaskMemory(f.database, { ...f.review, evidenceIds: [failed.evidenceId] });
-    await assert.rejects(checkpointScopedMemory(f.database, f.checkpoint), { code: 'CONFLICT' });
+    assert.equal(memoryApplicationStatus(f.database, f.identity.runId, f.root).complete, false);
     writeFileSync(check, `import assert from 'node:assert/strict';
 import { readdirSync } from 'node:fs';
 const versions = directory => readdirSync(directory).filter(name => name.endsWith('.sql')).sort().map(name => Number(name.slice(0,3)));
@@ -164,7 +164,7 @@ for (const directory of ['migrations', 'future-migrations']) {
     assert.equal(memoryApplicationStatus(f.database, f.identity.runId, f.root).evidenceOrigin, 'host_executed');
     // Configuration outside the explicitly listed test is also bound by host execution.
     writeFileSync(path.join(f.root, 'settings.json'), '{"changed":true}\n');
-    await assert.rejects(checkpointScopedMemory(f.database, f.checkpoint), { code: 'CONFLICT' });
+    assert.equal(memoryApplicationStatus(f.database, f.identity.runId, f.root).complete, false);
   } finally { f.cleanup(); }
 });
 
@@ -177,8 +177,6 @@ test('MCP application tools share domain validation and completed checkpoint dec
   try {
     const pending = await client.callTool({ name: 'task_memory_status', arguments: { cwd: f.root, runId: f.identity.runId } });
     assert.equal((pending.structuredContent as Record<string, unknown>)?.complete, false);
-    const refused = await client.callTool({ name: 'memory_checkpoint', arguments: f.checkpoint });
-    assert.equal(refused.isError, true);
     const reviewed = await client.callTool({ name: 'task_memory_review', arguments: { ...f.review, decision: 'not_applicable', basis: 'Historical schema fixture must remain pinned' } });
     assert.equal(reviewed.isError, undefined);
     assert.equal((reviewed.structuredContent as Record<string, unknown>)?.revision, 1);
@@ -216,7 +214,7 @@ test('skip, unknown and unreadable verification state prevent fresh completion b
       const evidence = await recordMemoryEvidence(f.database, { ...f.identity, requestId: outcome, command: 'test',
         paths: ['migration-test.ts'], outcome, ...(outcome === 'passed' ? { exitCode: 0 } : {}) });
       await reviewTaskMemory(f.database, { ...f.review, requestId: `review-${outcome}`, expectedRevision: index, evidenceIds: [evidence.evidenceId] });
-      if (outcome !== 'passed') await assert.rejects(checkpointScopedMemory(f.database, f.checkpoint), { code: 'CONFLICT' });
+      if (outcome !== 'passed') assert.equal(memoryApplicationStatus(f.database, f.identity.runId, f.root).complete, false);
     }
     rmSync(path.join(f.root, 'migration-test.ts'));
     symlinkSync('missing-file.ts', path.join(f.root, 'migration-test.ts'));

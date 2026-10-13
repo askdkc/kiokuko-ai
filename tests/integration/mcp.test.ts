@@ -80,6 +80,9 @@ test('MCP exposes the memory-first task and lifecycle tools and persists candida
       'enno_work_claim',
       'enno_work_report',
       'memory_checkpoint',
+      'memory_context',
+      'memory_improve',
+      'memory_observe',
       'source_context',
       'task_answer',
       'task_context_read',
@@ -205,8 +208,8 @@ test('MCP exposes the memory-first task and lifecycle tools and persists candida
     assert.match(tools.tools.find((tool) => tool.name === 'memory_checkpoint')?.description ?? '', /call no more tools/);
     const checkpointTool = tools.tools.find((tool) => tool.name === 'memory_checkpoint');
     assert.match(checkpointTool?.description ?? '', /runId.*active/u);
-    assert.match(checkpointTool?.description ?? '', /unresolved advisory intake question does not block checkpointing/iu);
-    assert.match(checkpointTool?.description ?? '', /current profile, unresolved items, and evidence boundary/iu);
+    assert.match(checkpointTool?.description ?? '', /Advisory intake, memory review and learning never suspend coding or checkpointing/iu);
+    assert.match(checkpointTool?.description ?? '', /downgrade completion to unverified with warnings/iu);
     assert.match(checkpointTool?.description ?? '', /successful terminal checkpoint.*at most once/u);
     assert.doesNotMatch(checkpointTool?.description ?? '', /Call at most once per user request/u);
     const checkpointSchema = checkpointTool?.inputSchema as ToolInputSchema;
@@ -1396,6 +1399,8 @@ test('memory_checkpoint returns actionable MCP guidance during intake and succee
       reasoningPaths: 0,
       qualifiedReasoningPaths: 0,
       memoryApplication: { deliveryId: null, required: 0, pending: [], invalid: [], complete: true, evidenceOrigin: 'none', clientObserved: false },
+      verification: 'unverified',
+      warnings: ['completion_unverified'],
     });
     assert.equal(checkpointContent.entries.length, 1);
 

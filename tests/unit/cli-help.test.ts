@@ -122,7 +122,7 @@ test('exposes the small external-skill management surface', () => {
 test('exposes scoped recall through the documented memory recall command', () => {
   const memory = buildCli().commands.find((command) => command.name() === 'memory');
   assert.ok(memory);
-  assert.deepEqual(memory.commands.map((command) => command.name()), ['recall']);
+  assert.deepEqual(memory.commands.map((command) => command.name()), ['recall', 'observe', 'context', 'improve']);
   const recall = memory.commands[0];
   assert.ok(recall);
   assert.match(recall.helpInformation(), /<query>/);

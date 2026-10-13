@@ -2,6 +2,7 @@ import { lstat, readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { findSecretInValue } from '../memory/secrets.js';
+import { containsPrivateLearningData } from '../memory/learning-safety.js';
 import { PACKAGE_VERSION } from '../package-version.js';
 import {
   OPENCODE_HOOK_PROTOCOL_VERSION,
@@ -75,6 +76,45 @@ export interface HookEffectDependencies {
   runtimeFailure?: HookFailureReason;
   signal?: AbortSignal;
   timeoutMs?: number;
+}
+
+/** Use the same version-pinned, same-user CLI boundary as existing OpenCode hooks. */
+export async function runKiokukoMemoryOperation(
+  operation: 'observe' | 'context' | 'improve', input: { cwd: string } & Record<string, unknown>,
+  dependencies: HookEffectDependencies,
+): Promise<Record<string, unknown>> {
+  if (containsPrivateLearningData(input) || dependencies.signal?.aborted || dependencies.runtimeFailure) throw new Error('learning_unavailable');
+  const spawn = dependencies.spawn ?? runtimeSpawn();
+  const invocation = await trustedInvocation(dependencies);
+  if (!spawn || !invocation.argv) throw new Error('learning_runtime_unavailable');
+  const payload = JSON.stringify(input);
+  if (Buffer.byteLength(payload) > 16 * 1024) throw new Error('learning_input_oversized');
+  const child = spawn([...invocation.argv, 'memory', operation, '--input-json', '-'], {
+    stdin: 'pipe', stdout: 'pipe', stderr: 'pipe', cwd: input.cwd,
+  });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const cancellation = abortRace(dependencies.signal, child);
+  try {
+    const work = (async () => {
+      const reading = Promise.all([readBounded(child.stdout), readBounded(child.stderr), child.exited]);
+      await child.stdin.write(payload); await child.stdin.end();
+      const [output, , code] = await reading;
+      if (code !== 0) throw new Error('learning_hook_failed');
+      const result: unknown = JSON.parse(output);
+      if (!result || typeof result !== 'object' || Array.isArray(result) || containsPrivateLearningData(result)) throw new Error('learning_response_invalid');
+      const value = result as Record<string, unknown>;
+      if (value.workMayContinue !== true) throw new Error('learning_contract_invalid');
+      return value;
+    })();
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => { child.kill(); reject(new Error('learning_timeout')); }, dependencies.timeoutMs ?? 10_000);
+    });
+    return await Promise.race(cancellation ? [work, timeout, cancellation.promise] : [work, timeout]);
+  } finally {
+    cancellation?.cleanup(); if (timer) clearTimeout(timer);
+    try { child.kill(); } catch { /* already exited */ }
+    await settleChild(child);
+  }
 }
 
 function boundedString(value: unknown, maximum: number): string | undefined {

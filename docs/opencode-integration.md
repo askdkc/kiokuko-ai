@@ -90,3 +90,11 @@ environment to that server's password. The password is never included in output.
 
 The Web UI is a local operator surface. It does not replace model-facing MCP
 calls or the OpenCode plugin lifecycle.
+
+## Nonblocking learning
+
+The plugin observes public work and retrieves same-repository cautions through
+the existing local SQLite/CLI path. Model switches keep same-session public
+handoff data. Recording and retrieval failure never reject prompt/context hooks.
+See [nonblocking project learning](nonblocking-learning.md) for source revisions,
+receipts, verification limits and the shared MCP/HTTP contracts.

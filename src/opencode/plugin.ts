@@ -3,12 +3,13 @@ import { canonicalContentHash } from '../serialization/validate.js';
 import { parseOpenCodePluginOptions } from './runtime-invocation.js';
 import { OpenCodeCompactionState } from './compaction.js';
 import { OpenCodePluginLifecycle } from './lifecycle.js';
-import { readKiokukoTrackedSessions, runKiokukoCompactionHook, type HookEffectDependencies } from './hook-effect.js';
+import { readKiokukoTrackedSessions, runKiokukoCompactionHook, runKiokukoMemoryOperation, type HookEffectDependencies } from './hook-effect.js';
 import { registerExecutionHooks } from './execution.js';
 import { OpenCodeV2Continuation } from './v2-continuation.js';
 import { v2EventSession } from './v2-adapter.js';
 import { ensureAgenticReplayIgnored } from '../repository/gitignore.js';
 import { resolveTraceStoreLocation } from '../trace/store-location.js';
+import { registerOpenCodeLearning, renderOpenCodeLearningContext } from './learning.js';
 
 const MAX_SUMMARY_CHARS = 64 * 1024;
 type CompletedCompaction = { id: string; summary: string };
@@ -40,6 +41,26 @@ export const KiokukoPlugin: Plugin.Plugin = {
       ? { runtime, signal: lifecycle.signal, timeoutMs: 10_000 }
       : { runtimeFailure: 'version_mismatch', signal: lifecycle.signal, timeoutMs: 10_000 };
     const warn = (reason: string) => { console.warn(`kiokuko-ai: ${reason}`); };
+    const learning = await registerOpenCodeLearning(ctx, directory, lifecycle, {
+      observe: async observation => {
+        const receipt = await runKiokukoMemoryOperation('observe', { cwd: directory, ...observation }, dependencies);
+        if (receipt.accepted !== true || receipt.recorded !== true) throw new Error('learning_not_recorded');
+      },
+      recall: async (query, sessionId) => {
+        const contexts = await Promise.allSettled([
+          runKiokukoMemoryOperation('context', { cwd: directory, query: query.slice(0, 500), sessionId, limit: 5 }, dependencies),
+          runKiokukoMemoryOperation('context', { cwd: directory, tags: ['complaint'], limit: 3 }, dependencies),
+        ]);
+        const valid = contexts.flatMap(result => result.status === 'fulfilled' && result.value.available === true ? [result.value] : []);
+        if (!valid.length) throw new Error('learning_context_unavailable');
+        const unique = new Map<string, unknown>();
+        // Current repository cautions are included even for an unrelated new task.
+        for (const value of [...valid].reverse()) for (const entry of Array.isArray(value.entries) ? value.entries : []) {
+          if (entry && typeof entry === 'object') unique.set(String((entry as Record<string, unknown>).entryId), entry);
+        }
+        return renderOpenCodeLearningContext({ entries: [...unique.values()], handoff: valid[0]?.handoff ?? null });
+      },
+    }, warn);
     try {
       const location = await resolveTraceStoreLocation(directory);
       await ensureAgenticReplayIgnored(location.repositoryRoot, location.captureCwd);
@@ -54,11 +75,13 @@ export const KiokukoPlugin: Plugin.Plugin = {
       : undefined;
     const execution = await registerExecutionHooks(ctx, directory, dependencies);
     await ctx.tool.hook('execute.after', event => {
+      learning.observeTool(event);
       if (!lifecycle.isActive() || event.status !== 'completed') return;
       state.observe(event.sessionID, event.tool, event.result);
     });
     await ctx.session.hook('compaction', async event => {
       if (!lifecycle.isActive()) return;
+      learning.append(event.sessionID, event.system);
       await lifecycle.run(async () => {
         const binding = await tracked(event.sessionID);
         if (!binding) return;
@@ -82,7 +105,7 @@ export const KiokukoPlugin: Plugin.Plugin = {
           state.appendContext(event.sessionID, context);
           for (const text of context) event.system.push({ type: 'text', text });
         }
-      });
+      }).catch(() => warn('compaction_observation_unavailable'));
     });
     const saveCompaction = async (sessionID: string) => {
       if (!lifecycle.isActive()) return;
@@ -106,6 +129,7 @@ export const KiokukoPlugin: Plugin.Plugin = {
     const observe = (raw: unknown) => {
       const event = v2EventSession(raw);
       if (!event || (event.directory !== undefined && event.directory !== directory)) return;
+      learning.observeEvent(event);
       if (event.type === 'session.execution.succeeded') {
         // wait() is observational and may not be abortable in 2.0.18.
         void ctx.session.wait({ sessionID: event.sessionId }).then(() => {

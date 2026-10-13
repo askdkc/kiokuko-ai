@@ -27,7 +27,7 @@ export interface TraceAdvisory {
     skills?: JsonObject;
     sourceAvailable?: false;
 }
-export function readTraceAdvisory(database: SqliteDatabase, root: string, captureCwd: string): {
+export function readTraceAdvisory(database: SqliteDatabase, root: string, captureCwd: string, traceRunId?: string, runsDirectory?: string): {
     context?: TraceAdvisory;
     rejected: boolean;
 } {
@@ -35,6 +35,8 @@ export function readTraceAdvisory(database: SqliteDatabase, root: string, captur
   FROM agenticreplay_trace_context c JOIN agenticreplay_trace_stores s ON s.directory=c.directory
   JOIN agenticreplay_trace_cursors p ON p.directory=c.directory AND p.trace_run_id=c.trace_run_id AND p.generation=c.generation
   WHERE s.repository_root=? AND s.state='present' AND c.reader_policy_version=2 AND p.reader_policy_version=2
+  ${traceRunId === undefined ? '' : 'AND c.trace_run_id=?'}
+  ${runsDirectory === undefined ? '' : 'AND c.directory=?'}
   ORDER BY (c.finalization='finalized') DESC,(s.capture_cwd=?) DESC,c.trace_created_at DESC,c.trace_run_id DESC LIMIT 16`).all<{
         json: string;
         digest: string;
@@ -43,7 +45,7 @@ export function readTraceAdvisory(database: SqliteDatabase, root: string, captur
         finalization: string;
         captureCwd: string;
         progressState: string;
-    }>(root, captureCwd);
+    }>(root, ...(traceRunId === undefined ? [] : [traceRunId]), ...(runsDirectory === undefined ? [] : [runsDirectory]), captureCwd);
     let rejected = false;
     for (const row of rows) {
         try {

@@ -50,7 +50,7 @@ function nonNegativeInteger(value: unknown): number | null | undefined {
       : undefined;
 }
 
-function parseToolOutput(value: unknown): Record<string, unknown> | undefined {
+export function readOpenCodeToolResult(value: unknown): Record<string, unknown> | undefined {
   // Native tools return `output`; OpenCode passes raw MCP CallToolResult to
   // this same hook before converting its text content into a native result.
   const envelope = record(value);
@@ -156,7 +156,7 @@ export class OpenCodeCompactionState {
 
   observe(sessionId: string, toolId: string, output: unknown): void {
     if (!ENNO_STATE_TOOL.test(toolId)) return;
-    const parsed = parseToolOutput(output);
+    const parsed = readOpenCodeToolResult(output);
     if (parsed === undefined) return;
     const execution = record(parsed.execution);
     const prior = this.entries.get(sessionId);

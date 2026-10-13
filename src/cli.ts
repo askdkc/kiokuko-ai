@@ -43,6 +43,7 @@ import { createEmbeddingRuntime, prepareEmbeddingSearchRuntime } from './embeddi
 import type { HybridSearchRuntime } from './memory/hybrid-retrieval.js';
 import { registerTraceCommands, type TraceCommandDependencies } from './commands/trace.js';
 import { registerSourceCommands } from './commands/source.js';
+import { observeMemory, memoryContext, improveMemory, learningFailure } from './memory/learning.js';
 
 const MAX_CLI_JSON_INPUT_BYTES = 2 * 1024 * 1024;
 const MAX_CALL_PATH_BYTES = 4 * 1024;
@@ -417,6 +418,19 @@ export function buildCli(dependencies: CliDependencies = {}): Command {
   configureRecallCommand(cli.command('recall'), dependencies);
   const memory = cli.command('memory').description('Human/operator memory management');
   configureRecallCommand(memory.command('recall'), dependencies);
+  const learningOperations: Record<string, (database: SqliteDatabase, input: unknown) => Promise<unknown>> = { observe: observeMemory, context: memoryContext, improve: improveMemory };
+  for (const [name, operation] of Object.entries(learningOperations)) {
+    memory.command(name).description(`Nonblocking public memory ${name}`)
+      .requiredOption('--input-json <path>', 'stdin (-) only')
+      .action(async (options: { inputJson: string }) => {
+        try {
+          if (options.inputJson !== '-') throw new KiokukoError('VALIDATION_ERROR', 'Memory observation requires stdin');
+          const input = await readJsonInput('-');
+          const result = await withDatabase(database => operation(database, input));
+          process.stdout.write(JSON.stringify(result));
+        } catch (error) { process.stdout.write(JSON.stringify(learningFailure(error))); }
+      });
+  }
 
   const guide = cli.command('guide').description('Run the Akinator-style knowledge and skill intake');
   guide.command('start').description('Start an intake session').argument('<task>').requiredOption('--workspace <name>').option('--json').action(async (task: string, options: { workspace: string; json?: boolean }) => {

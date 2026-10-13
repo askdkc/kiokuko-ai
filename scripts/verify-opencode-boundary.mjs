@@ -59,7 +59,14 @@ for (const file of files.sort()) {
       ? line.replace(/^const EXCLUDED = new Set\(\[[^\]]*\]\);/u,
         (declaration) => declaration.replaceAll(`'.${foreignAgents[0]}'`, ''))
       : line;
-    const lowercase = checkedLine.toLowerCase();
+    // The shared observation envelope names its source producer. Accepting that
+    // provenance label adds no foreign host adapter, launch command or routing.
+    const provenanceLine = file === 'src/memory/learning.ts'
+      ? checkedLine.replace(`producer: z.enum(['${foreignAgents[0]}', 'agenticreplay', 'kiokuko-ai', 'kiokuko-dsh'])`, 'producer: sharedObservationProducer')
+      : file === 'tests/integration/learning-memory.test.ts'
+        ? checkedLine.replace(`source: { producer: '${foreignAgents[0]}' }`, 'source: { producer: sharedObservationProducer }')
+        : checkedLine;
+    const lowercase = provenanceLine.toLowerCase();
     for (const agent of foreignAgents) {
       if (lowercase.includes(agent)) findings.push(`${file}:${index + 1}:${agent}`);
     }

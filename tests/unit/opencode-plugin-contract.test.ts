@@ -12,7 +12,7 @@ test('v2 plugin registers domain hooks and cleanup closes the subscription', asy
   const cleanup = await KiokukoPlugin.setup(fixture.ctx);
   assert.equal(typeof cleanup, 'function');
   assert.deepEqual([...fixture.hooks.keys()].sort(), [
-    'session:compaction', 'tool:execute.after', 'tool:execute.before',
+    'session:compaction', 'session:context', 'session:prompt', 'tool:execute.after', 'tool:execute.before',
   ]);
   await cleanup?.();
   assert.equal(fixture.subscriptionClosed, true);

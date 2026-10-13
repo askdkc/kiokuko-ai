@@ -268,6 +268,8 @@ export async function runHostContract(options = {}) {
   let continuationFinished = Promise.resolve();
   let roleAction;
   let roleIssued = false;
+  let learningCautionEventId;
+  let learningContextSeen = false;
   const fixture = await startFakeOpenAiServer({
     emitTaskPrepare: false,
     onContinuation: (payload) => {
@@ -275,6 +277,9 @@ export async function runHostContract(options = {}) {
       return continuationFinished;
     },
     respond: async body => {
+      if (learningCautionEventId && (body.messages ?? []).some(message => message.role === 'system'
+        && JSON.stringify(message.content ?? '').includes('Kiokuko advisory project memory and public handoff')
+        && JSON.stringify(message.content ?? '').includes(learningCautionEventId))) learningContextSeen = true;
       if ((body.messages ?? []).some(message => JSON.stringify(message.content ?? '').includes('Return only the structured summary in the requested format'))) {
         return { text: '## Objective\n- Verify the installed Kiokuko OpenCode v2 plugin.\n\n## Work State\n### Active\n- Continue the role execution check.' };
       }
@@ -291,7 +296,7 @@ export async function runHostContract(options = {}) {
     providers: { fixture: {
       package: '@opencode/ai/providers/openai-compatible', name: 'Kiokuko fixture',
       env: ['KIOKUKO_FIXTURE_API_KEY'], settings: { baseURL: fixture.baseURL },
-      models: { 'fixture-model': { name: 'Kiokuko fixture' } },
+      models: { 'fixture-model': { name: 'Kiokuko fixture' }, 'fixture-next-model': { name: 'Kiokuko next fixture' } },
   } },
   };
   await writeFile(path.join(project, 'opencode.json'), `${JSON.stringify(projectConfig, null, 2)}\n`);
@@ -337,6 +342,40 @@ export async function runHostContract(options = {}) {
     if (!ordinaryContext.some(item => item.type === 'assistant' && item.time.completed !== undefined)) {
       throw new Error('ordinary_untracked_session_did_not_complete');
     }
+    // Observe the real host publisher, pinned CLI and SQLite consumer, not a
+    // fabricated event callback. The deterministic provider remains explicit.
+    const { openConnection: openLearningConnection } = await import('../dist/db/connection.js');
+    const learningDb = openLearningConnection(path.join(data, 'kiokuko-ai.sqlite'), { readOnly: true });
+    try {
+      const observation = kind => learningDb.prepare(`SELECT observation_json FROM learning_observations
+        WHERE session_id=? AND json_extract(observation_json,'$.kind')=? AND tombstone=0 ORDER BY rowid DESC LIMIT 1`)
+        .get(ordinarySession.id, kind);
+      await waitFor(() => Boolean(observation('completion')), 'native_learning_completion', 15_000);
+      if (parseJson(observation('completion').observation_json, 'learning_completion').verification !== 'unknown') throw new Error('host_turn_was_mistaken_for_verification');
+      await server.client.session.switchModel({ sessionID: ordinarySession.id, model: { providerID: 'fixture', id: 'fixture-next-model' } });
+      await waitFor(() => Boolean(observation('model_switch')), 'native_learning_model_switch', 15_000);
+      const switched = parseJson(observation('model_switch').observation_json, 'learning_model_switch');
+      const previousModel = ordinaryContext.findLast(item => item.type === 'assistant').model;
+      const previousReference = `${previousModel.providerID}/${previousModel.id}${previousModel.variant ? '#' + previousModel.variant : ''}`;
+      if (switched.fromModel !== previousReference || switched.toModel !== 'fixture/fixture-next-model') throw new Error('native_model_handoff_identity_missing');
+      await server.client.session.prompt({ sessionID: ordinarySession.id, text: 'Migration startup is still broken. Check the ordinary startup before reporting completion.' });
+      await server.client.session.wait({ sessionID: ordinarySession.id });
+      await waitFor(() => Boolean(observation('complaint')), 'native_learning_feedback', 15_000);
+      learningCautionEventId = parseJson(observation('complaint').observation_json, 'learning_complaint').eventId;
+      await server.client.session.compact({ sessionID: ordinarySession.id });
+      await server.client.session.wait({ sessionID: ordinarySession.id });
+      await waitFor(() => Boolean(observation('compaction')), 'native_learning_compaction', 15_000);
+      if (parseJson(observation('compaction').observation_json, 'learning_compaction').verification !== 'unknown') throw new Error('compaction_was_mistaken_for_verification');
+      const nextSession = await server.client.session.create({ location, model: { providerID: 'fixture', id: 'fixture-next-model' } });
+      for (let attempt = 0; attempt < 3 && !learningContextSeen; attempt++) {
+        await server.client.session.prompt({ sessionID: nextSession.id, text: 'Review an unrelated new feature in this repository.' });
+        await server.client.session.wait({ sessionID: nextSession.id });
+        // Learning is background work; completion persistence is an observable
+        // boundary for the next request, rather than an arbitrary fixed sleep.
+        await waitFor(() => Boolean(learningDb.prepare('SELECT 1 FROM learning_observations WHERE session_id=?').get(nextSession.id)), 'native_learning_next_session', 15_000);
+      }
+      if (!learningContextSeen) throw new Error('native_next_session_caution_not_delivered');
+    } finally { learningDb.close(); }
 
     const capabilities = [
       'kiokuko-soul',
@@ -492,7 +531,7 @@ export async function runHostContract(options = {}) {
       await new Promise(resolve => setTimeout(resolve, 1_200));
       if (fixture.stats.continuationRequests !== requestsBeforeReload) throw new Error('reload_duplicated_continuation');
     }
-    process.stdout.write(`${JSON.stringify({ protocolVersion: 2, status: 'passed', opencodeVersion: health.version, plugin: 'active', mcp: 'connected', toolCatalog: toolNames.length, hook: hookResponse.code, fixtureRequests: fixture.stats.chatCompletions, ordinaryVerified: true, preparedEnnoStatus: ideal.ennoOduno.status, continuationRequests: fixture.stats.continuationRequests, durableReceipts: 1, executionVerified, compactionVerified, reloadVerified: Boolean(options.execution), fixtureDigests: fixture.stats.requestDigests.map((value) => value.slice(0, 16)) })}\n`);
+    process.stdout.write(`${JSON.stringify({ protocolVersion: 2, status: 'passed', opencodeVersion: health.version, plugin: 'active', mcp: 'connected', toolCatalog: toolNames.length, hook: hookResponse.code, fixtureRequests: fixture.stats.chatCompletions, ordinaryVerified: true, learningVerified: true, learningCompactionVerified: true, preparedEnnoStatus: ideal.ennoOduno.status, continuationRequests: fixture.stats.continuationRequests, durableReceipts: 1, executionVerified, compactionVerified, reloadVerified: Boolean(options.execution), fixtureDigests: fixture.stats.requestDigests.map((value) => value.slice(0, 16)) })}\n`);
     completeVerification({ordinaryVerified:true,executionVerified,compactionVerified,reloadVerified:Boolean(options.execution)});
   } finally {
     await server.close();
