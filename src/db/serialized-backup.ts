@@ -715,6 +715,15 @@ async function normalizedDestination(destination: string): Promise<{ output: str
   return { output: path.join(directory, fileName), fileName };
 }
 
+async function requireAbsentDestination(output: string): Promise<void> {
+  try { await lstat(output); }
+  catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return;
+    throw error;
+  }
+  throw new KiokukoError('CONFLICT', 'Backup destination already exists');
+}
+
 async function syncBackupDirectory(binding: BackupDirectoryBinding): Promise<void> {
   if (process.platform !== 'win32' && binding.handle !== undefined) {
     await binding.handle.sync();
@@ -733,6 +742,7 @@ export async function createSerializedBackupArtifact(
   const posixFlags = requirePosixBackupOpenFlags();
   const { output, fileName } = await normalizedDestination(destination);
   await hooks.validateDestination?.(output);
+  await requireAbsentDestination(output);
   let directoryBinding: BackupDirectoryBinding | undefined;
   let operationFailed = false;
   let operationError: unknown;

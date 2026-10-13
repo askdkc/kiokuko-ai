@@ -386,3 +386,17 @@ test('explicit output-directory interposition fails without writing through the 
   assert.deepEqual(await readdir(displacedDirectory), []);
   assert.deepEqual(await readFile(sourcePath), sourceBefore);
 });
+
+test('an existing backup destination rejects before serialization and writer hooks', async t => {
+  const directory=await mkdtemp(path.join(tmpdir(),'backup-preflight-'));
+  const destination=path.join(directory,'existing.sqlite3');const victim=Buffer.from('preflight victim must survive');await writeFile(destination,victim,{flag:'wx'});
+  let calls=0;const forbidden=():never=>{calls++;throw new Error('existing output must not reach serialization or writer');};
+  await assert.rejects(createSerializedBackupArtifact({serializeDatabase:forbidden},destination,{beforeSerialization:forbidden,afterDirectoryBound:forbidden,beforeArtifactWrite:forbidden}),{code:'CONFLICT',message:'Backup destination already exists'});
+  assert.equal(calls,0);assert.deepEqual(await readFile(destination),victim);
+});
+test('a destination created after the absence check wins the create-only race unchanged',async()=>{
+  const directory=await mkdtemp(path.join(tmpdir(),'backup-preflight-race-'));const source=path.join(directory,'source.sqlite3');const destination=path.join(directory,'destination.sqlite3');
+  await createSentinelDatabase(source,'race source');const sourceBefore=await readFile(source);const winner=Buffer.from('race winner must survive');
+  await assert.rejects(createBackup(destination,source,{async beforeArtifactWrite(output){await writeFile(output,winner,{flag:'wx'});}}),{code:'CONFLICT',message:'Backup destination already exists'});
+  assert.deepEqual(await readFile(destination),winner);assert.deepEqual(await readFile(source),sourceBefore);
+});
