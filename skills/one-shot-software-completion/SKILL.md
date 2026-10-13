@@ -82,4 +82,17 @@ specific blocker requiring unavailable access, evidence or user action.
 Report the changed behavior, material assumptions, checks and their results,
 and anything unverified or deliberately excluded. Passing a helper test alone
 does not establish a working user workflow.
+
+## Repository verification entry
+
+When the target repository defines `npm run verify`, read `npm run verify:plan`
+(or `npm run verify -- --plan --profile <profile>`) and use that declared scope.
+Run the same profile locally and in CI; do not reconstruct independent checks
+from CI YAML. `npm test` and focused commands are partial evidence. The JSON
+result records each required check, prerequisite failure, platform exclusion,
+and source/artifact identity. Only a current full-scope `completionReady: true`
+result supports full verification. Recheck saved results with
+`npm run verify -- --status <result.json>` after related edits or artifact changes.
+Never derive skip permissions or expected failures from observed test output.
+
 <!-- /kiokuko:runtime -->

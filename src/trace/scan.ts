@@ -6,7 +6,7 @@ import { enqueueOrchestrationJob } from '../orchestration/jobs.js';
 import { canonicalContentHash } from '../serialization/validate.js';
 import { findSecretInValue } from '../memory/secrets.js';
 import { KiokukoError } from '../errors.js';
-import { readAgenticReplayTraceManifest, AGENTICREPLAY_TRACE_RUN_ID_PATTERN } from './agentic-trace.js';
+import { readAgenticReplayTraceManifest, AGENTICREPLAY_TRACE_RUN_ID_PATTERN, agenticReplayRunIdFromDirectory } from './agentic-trace.js';
 import { TRACE_LIMITS, TraceInputError, assertTracePath, traceCaptureRoot, fileIdentity, readBoundedTraceFile } from './bounded-read.js';
 import { createHash } from 'node:crypto';
 export const AGENTICREPLAY_TRACE_SCAN_MAX_RUNS = 8;
@@ -61,11 +61,12 @@ export class TraceScanSession {
                 this.#dir = undefined;
                 break;
             }
-            if (!AGENTICREPLAY_TRACE_RUN_ID_PATTERN.test(entry.name))
+            const runId=agenticReplayRunIdFromDirectory(entry.name);
+            if (!runId)
                 continue;
             const now = new Date().toISOString();
             database.prepare(`INSERT INTO agenticreplay_trace_cursors(directory,trace_run_id,created_at,updated_at,finalization,diagnostic_code)
-    VALUES(?,?,?,?,?,?) ON CONFLICT(directory,trace_run_id) DO NOTHING`).run(this.runsDirectory, entry.name, now, now, entry.isDirectory() ? 'recording' : 'blocked', entry.isDirectory() ? null : 'run_not_directory');
+    VALUES(?,?,?,?,?,?) ON CONFLICT(directory,trace_run_id) DO NOTHING`).run(this.runsDirectory, runId, now, now, entry.isDirectory() ? 'recording' : 'blocked', entry.isDirectory() ? null : 'run_not_directory');
             discovered++;
         }
         return discovered;

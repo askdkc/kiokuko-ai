@@ -1,3 +1,4 @@
+import { completeVerification } from '../../scripts/verification-completion.mjs';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { mkdir, mkdtemp, readdir, readFile, realpath, rm } from 'node:fs/promises';
@@ -105,9 +106,11 @@ try {
   const packageJson = JSON.parse(await readFile(path.join(repositoryRoot, 'package.json'), 'utf8'));
   assert.equal(packageJson.name, 'kiokuko-ai', 'the published package identity must be kiokuko-ai');
   await mkdir(packDirectory, { recursive: true });
-  await run('npm', ['run', 'build'], repositoryRoot);
-  const packed = await run('npm', ['pack', '--pack-destination', packDirectory, '--json'], repositoryRoot);
-  const tarball = packedFilename(packed.stdout, packDirectory);
+  if (!process.env.KIOKUKO_VERIFY_TARBALL) await run('npm', ['run', 'build'], repositoryRoot);
+  const packed = process.env.KIOKUKO_VERIFY_TARBALL
+    ? { stdout: await readFile(process.env.KIOKUKO_VERIFY_PACK_METADATA, 'utf8') }
+    : await run('npm', ['pack', '--pack-destination', packDirectory, '--json'], repositoryRoot);
+  const tarball = process.env.KIOKUKO_VERIFY_TARBALL ?? packedFilename(packed.stdout, packDirectory);
   const install = await run('npm', [
     'install',
     '--global',
@@ -181,3 +184,5 @@ try {
 }
 
 process.stdout.write('Global install smoke test passed.\n');
+
+completeVerification({});

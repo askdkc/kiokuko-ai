@@ -57,7 +57,10 @@
     "test:e2e:opencode:agenticreplay": "npm run build && node scripts/run-opencode-agenticreplay-e2e.mjs",
     "memory:backfill:akinator": "npm run build && node scripts/backfill-akinator-memory.mjs",
     "test:evaluation:akinator": "npm run build && node scripts/run-akinator-memory-evaluation.mjs",
-    "test:benchmark:akinator": "npm run build && node scripts/run-akinator-memory-benchmark.mjs"
+    "test:benchmark:akinator": "npm run build && node scripts/run-akinator-memory-benchmark.mjs",
+    "verify": "node scripts/verify.mjs",
+    "verify:plan": "node scripts/verify.mjs --plan",
+    "test:verification": "node --test scripts/verification-contract.test.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",

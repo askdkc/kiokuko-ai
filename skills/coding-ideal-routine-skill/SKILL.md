@@ -53,3 +53,15 @@ description: バグ修正・機能追加・挙動に関わる設定や配布物�
 - 完了報告は変更した挙動、通常利用の証拠、実行対象と結果、残る制約を簡潔に示す。source 実装・local 検証・remote CI・公開・稼働反映は別々の事実。SKILL 作成や配置だけで発見・呼出し・適用・ホスト強制が実現したと主張しない。
 
 この Skill 自体を改訂・評価する場合は [verification-scenarios.md](references/verification-scenarios.md) を読み、形式検証と実行時の行動検証を分ける。
+
+## Repository verification entry
+
+When the target repository defines `npm run verify`, read `npm run verify:plan`
+(or `npm run verify -- --plan --profile <profile>`) and use that declared scope.
+Run the same profile locally and in CI; do not reconstruct independent checks
+from CI YAML. `npm test` and focused commands are partial evidence. The JSON
+result records each required check, prerequisite failure, platform exclusion,
+and source/artifact identity. Only a current full-scope `completionReady: true`
+result supports full verification. Recheck saved results with
+`npm run verify -- --status <result.json>` after related edits or artifact changes.
+Never derive skip permissions or expected failures from observed test output.

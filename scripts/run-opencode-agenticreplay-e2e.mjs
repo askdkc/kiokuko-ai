@@ -1,3 +1,4 @@
+import { completeVerification } from './verification-completion.mjs';
 import { spawn } from 'node:child_process';
 import { access, mkdir, mkdtemp, readFile, readdir, realpath, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -69,8 +70,8 @@ try {
   environment.OPENCODE_CONFIG_CONTENT = JSON.stringify(openCodeConfig);
   await writeFile(path.join(config, 'opencode', 'opencode.jsonc'), `${JSON.stringify(openCodeConfig, null, 2)}\n`);
   await writeFile(path.join(project, 'opencode.json'), `${JSON.stringify(openCodeConfig, null, 2)}\n`);
-  const packed = await requireSuccess('npm', ['pack', '--ignore-scripts', '--json', '--pack-destination', root], { cwd: path.resolve(import.meta.dirname, '..'), label: 'pack', maxOutputBytes: 4 * 1024 * 1024 });
-  const tarball = path.join(root, JSON.parse(packed.stdout.toString('utf8'))[0].filename);
+  const packed = process.env.KIOKUKO_VERIFY_TARBALL ? {stdout: Buffer.from(await readFile(process.env.KIOKUKO_VERIFY_PACK_METADATA, 'utf8'))} : await requireSuccess('npm', ['pack', '--ignore-scripts', '--json', '--pack-destination', root], { cwd: path.resolve(import.meta.dirname, '..'), label: 'pack', maxOutputBytes: 4 * 1024 * 1024 });
+  const tarball = process.env.KIOKUKO_VERIFY_TARBALL ?? path.join(root, JSON.parse(packed.stdout.toString('utf8'))[0].filename);
   registry = await startPackedRegistry(tarball, JSON.parse(await readFile(path.resolve(import.meta.dirname, '../package.json'), 'utf8')));
   environment.NPM_CONFIG_REGISTRY = registry.url;
   environment.npm_config_registry = registry.url;
@@ -97,7 +98,7 @@ try {
   if (!prepareSucceeded) throw new Error(`Wrapped task_prepare did not succeed:${output.slice(-1500)}`);
   if (fixture.stats.chatCompletions < 1) throw new Error('AgenticReplay-wrapped OpenCode did not reach the provider fixture');
   const runs = path.join(project, '.agenticreplay', 'runs');
-  const ids = (await readdir(runs)).filter(value => /^run_[0-9a-f]+$/u.test(value));
+  const ids = (await readdir(runs)).filter(value => /^run_[0-9a-f]+$/u.test(value) || /^\d{14}-[a-z0-9-]+-[0-9a-f]{6,32}$/u.test(value));
   if (ids.length !== 1) throw new Error(`expected one AgenticReplay run, found ${ids.length}`);
   const run = path.join(runs, ids[0]);
   const manifest = JSON.parse(await readFile(path.join(run, 'manifest.json'), 'utf8'));
@@ -143,3 +144,5 @@ try {
   await fixture.close();
   await registry?.close();
 }
+
+completeVerification({});

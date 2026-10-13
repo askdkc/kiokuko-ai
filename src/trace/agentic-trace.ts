@@ -39,6 +39,25 @@ export const AGENTICREPLAY_TRACE_EVENT_TYPES = [
 export type AgenticReplayTraceEventType = (typeof AGENTICREPLAY_TRACE_EVENT_TYPES)[number];
 const SUPPORTED_SCHEMA_PATTERN = /^0\.[0-9]+\.[0-9]+$/u;
 export const AGENTICREPLAY_TRACE_RUN_ID_PATTERN = /^run_[0-9a-f]{6,32}$/u;
+export function agenticReplayRunIdFromDirectory(name:string):string|undefined {
+ if(AGENTICREPLAY_TRACE_RUN_ID_PATTERN.test(name))return name;
+ if(name.length>255)return undefined;
+ const suffix=/^\d{14}-[a-z0-9-]+-([0-9a-f]{6,32})$/u.exec(name)?.[1];return suffix===undefined?undefined:`run_${suffix}`;
+}
+export async function resolveAgenticReplayRunDirectory(runs:string,id:string):Promise<string> {
+ if(!path.isAbsolute(runs)||!AGENTICREPLAY_TRACE_RUN_ID_PATTERN.test(id))throw new TraceInputError('invalid_run_id');
+ const fs=await import('node:fs/promises');const directory=await fs.opendir(runs);let count=0;const valid:string[]=[];
+ try{for(let entry=await directory.read();entry!==null;entry=await directory.read()){
+  if(++count>4096)throw new TraceInputError('discovery_limit');if(agenticReplayRunIdFromDirectory(entry.name)!==id)continue;
+  const candidate=path.join(runs,entry.name);const st=await fs.lstat(candidate);if(st.isSymbolicLink()||!st.isDirectory())throw new TraceInputError('unsafe_path');
+  let bytes:Buffer;
+  try{bytes=await readBoundedTraceFile(path.join(candidate,'manifest.json'),traceCaptureRoot(runs),TRACE_LIMITS.manifest);}
+  catch(error){if(entry.name!==id||(error as NodeJS.ErrnoException).code!=='ENOENT')throw error;const claim=await fs.opendir(candidate);try{if(await claim.read()!==null)throw new TraceInputError('invalid_manifest');}finally{await claim.close();}continue;}
+  const parsed=parseManifest(new TextDecoder('utf-8',{fatal:true}).decode(bytes),id);if(!parsed)throw new TraceInputError('invalid_manifest');valid.push(candidate);if(valid.length>1)throw new TraceInputError('ambiguous_run');
+ }}finally{await directory.close();}
+ if(valid.length!==1)throw new TraceInputError('missing_manifest');return valid[0]!;
+}
+
 const BLOB_DIGEST_PATTERN = /^sha256:([0-9a-f]{64})$/u;
 const RFC3339_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/u;
 export type AgenticReplayTraceWarningCode = 'truncated_final_line' | 'invalid_event' | 'unknown_event_type' | 'seq_gap' | 'blob_unresolved' | 'events_too_large' | 'event_line_too_large';
@@ -109,6 +128,7 @@ export type AgenticReplayTraceManifestRead = {
     readonly ok: true;
     readonly manifest: ParsedAgenticReplayTraceManifest;
     readonly fingerprint: string;
+    readonly runDirectory: string;
 } | {
     readonly ok: false;
     readonly reason: 'missing_manifest' | 'invalid_manifest' | 'unsupported_schema';
@@ -161,9 +181,10 @@ export async function readAgenticReplayTraceManifest(runsDirectory: string, trac
     if (typeof traceRunId !== 'string' || !AGENTICREPLAY_TRACE_RUN_ID_PATTERN.test(traceRunId)) {
         throw new KiokukoError('VALIDATION_ERROR', 'AgenticReplay trace run ID is invalid');
     }
-    const runDirectory = path.join(runsDirectory, traceRunId);
+    let runDirectory: string;
     let raw: string;
     try {
+        runDirectory=await resolveAgenticReplayRunDirectory(runsDirectory,traceRunId);
         const bytes = await readBoundedTraceFile(path.join(runDirectory, 'manifest.json'), traceCaptureRoot(runsDirectory), TRACE_LIMITS.manifest);
         try {
             raw = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
@@ -174,9 +195,9 @@ export async function readAgenticReplayTraceManifest(runsDirectory: string, trac
     }
     catch (error) {
         const code = error instanceof Error && 'code' in error ? (error as NodeJS.ErrnoException).code : undefined;
-        if (code === 'ENOENT' || code === 'ENOTDIR')
+        if (code === 'ENOENT' || code === 'ENOTDIR' || code === 'missing_manifest')
             return { ok: false, reason: 'missing_manifest' };
-        if (code === 'EACCES' || code === 'EPERM')
+        if (code === 'EACCES' || code === 'EPERM' || code === 'invalid_manifest')
             return { ok: false, reason: 'invalid_manifest' };
         throw error;
     }
@@ -186,7 +207,7 @@ export async function readAgenticReplayTraceManifest(runsDirectory: string, trac
     if (!SUPPORTED_SCHEMA_PATTERN.test(manifest.schemaVersion)) {
         return { ok: false, reason: 'unsupported_schema', schemaVersion: manifest.schemaVersion };
     }
-    return { ok: true, manifest, fingerprint: createHash('sha256').update(raw).digest('hex') };
+    return { ok: true, manifest, runDirectory, fingerprint: createHash('sha256').update(raw).digest('hex') };
 }
 function descriptor(hex: string, bytes: number, mediaType: string | undefined): AgenticReplayTraceBlobDescriptor {
     return mediaType === undefined
@@ -405,7 +426,8 @@ export interface TraceReadBatch {
 export async function readTraceBatch(runs: string, id: string, options: TraceBatchOptions = {}): Promise<TraceReadBatch> {
     if (!AGENTICREPLAY_TRACE_RUN_ID_PATTERN.test(id))
         throw new TraceInputError('invalid_run_id');
-    const target = path.join(runs, id, 'events.jsonl');
+    const runDirectory=await resolveAgenticReplayRunDirectory(runs,id);
+    const target = path.join(runDirectory, 'events.jsonl');
     const root = traceCaptureRoot(runs);
     const { handle, identity } = await openTraceFile(target, root);
     let offset = options.offset ?? 0;
@@ -438,7 +460,7 @@ export async function readTraceBatch(runs: string, id: string, options: TraceBat
             options.hash?.update(raw);
             return;
         }
-        const parsed = await parseTraceLine(path.join(runs, id), text, lastSeq);
+        const parsed = await parseTraceLine(runDirectory, text, lastSeq);
         if (parsed.kind !== 'event') {
             warn(parsed.warning);
             skippedEventCount++;

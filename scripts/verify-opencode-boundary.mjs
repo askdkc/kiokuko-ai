@@ -1,3 +1,4 @@
+import { completeVerification } from './verification-completion.mjs';
 import { readFile, readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -96,3 +97,5 @@ if (findings.length > 0) {
 } else {
   process.stdout.write('OpenCode-only public boundary verified.\n');
 }
+
+completeVerification({});

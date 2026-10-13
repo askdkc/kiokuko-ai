@@ -1,3 +1,4 @@
+import { completeVerification } from '../../scripts/verification-completion.mjs';
 import assert from 'node:assert/strict';
 import { detectSqliteVecCapability } from '../../src/db/capabilities.js';
 import { migrateDatabase } from '../../src/db/migrate.js';
@@ -38,7 +39,7 @@ function vector(first: number, second: number): number[] {
 async function main(): Promise<void> {
   const loader = await createSqliteVecLoader();
   if (loader === null) {
-    if (process.env.KIOKUKO_REQUIRE_SQLITE_VEC_SMOKE === '1') {
+    if (process.env.KIOKUKO_REQUIRE_SQLITE_VEC_SMOKE !== '0') {
       throw new Error('sqlite-vec package or native extension is required for this smoke job');
     }
     process.stdout.write('sqlite-vec package or native extension is unavailable; smoke skipped.\n');
@@ -111,6 +112,8 @@ async function main(): Promise<void> {
       assert.ok(Number.isFinite(nativeHit.distance));
       assert.ok(Math.abs(nativeHit.distance - javascriptHits[index]!.distance) < 1e-5);
     }
+    process.stdout.write(JSON.stringify({schema:'sqlite-vec-smoke-v1',status:'passed',nativeHits:nativeHits.length,comparison:'javascript-parity'}) + '\n');
+    completeVerification({nativeHits:nativeHits.length});
   } finally {
     database.close();
   }

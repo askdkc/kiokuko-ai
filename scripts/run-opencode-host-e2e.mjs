@@ -1,3 +1,4 @@
+import { completeVerification } from './verification-completion.mjs';
 import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { createServer as createNetServer } from 'node:net';
@@ -237,10 +238,10 @@ export async function runHostContract(options = {}) {
     KIOKUKO_FIXTURE_API_KEY: 'fixture-key',
   };
   await requireSuccess('git', ['init', '-q'], { cwd: project, env: environment, timeoutMs: 20_000, label: 'git_init' });
-  await requireSuccess(npmExecutable(), ['pack', '--pack-destination', root], { cwd: repositoryRoot, env: environment, timeoutMs: 120_000, label: 'npm_pack' });
+  if (!process.env.KIOKUKO_VERIFY_TARBALL) await requireSuccess(npmExecutable(), ['pack', '--pack-destination', root], { cwd: repositoryRoot, env: environment, timeoutMs: 120_000, label: 'npm_pack' });
   const tarballName = (await readdir(root)).find((entry) => entry.endsWith('.tgz'));
-  if (tarballName === undefined) throw new Error('packed tarball is missing');
-  const tarball = path.join(root, tarballName);
+  if (tarballName === undefined && !process.env.KIOKUKO_VERIFY_TARBALL) throw new Error('packed tarball is missing');
+  const tarball = process.env.KIOKUKO_VERIFY_TARBALL ?? path.join(root, tarballName);
   await requireSuccess(npmExecutable(), ['install', '--global', '--prefix', prefix, tarball, '--omit=optional', '--ignore-scripts'], { cwd: project, env: environment, timeoutMs: 180_000, label: 'npm_install' });
   const installedRoot = await installedPackagePath(prefix);
   const cliScript = path.join(installedRoot, 'dist', 'bin', 'kiokuko.js');
@@ -492,6 +493,7 @@ export async function runHostContract(options = {}) {
       if (fixture.stats.continuationRequests !== requestsBeforeReload) throw new Error('reload_duplicated_continuation');
     }
     process.stdout.write(`${JSON.stringify({ protocolVersion: 2, status: 'passed', opencodeVersion: health.version, plugin: 'active', mcp: 'connected', toolCatalog: toolNames.length, hook: hookResponse.code, fixtureRequests: fixture.stats.chatCompletions, ordinaryVerified: true, preparedEnnoStatus: ideal.ennoOduno.status, continuationRequests: fixture.stats.continuationRequests, durableReceipts: 1, executionVerified, compactionVerified, reloadVerified: Boolean(options.execution), fixtureDigests: fixture.stats.requestDigests.map((value) => value.slice(0, 16)) })}\n`);
+    completeVerification({ordinaryVerified:true,executionVerified,compactionVerified,reloadVerified:Boolean(options.execution)});
   } finally {
     await server.close();
     await fixture.close();

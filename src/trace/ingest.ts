@@ -179,7 +179,7 @@ export async function ingestTraceRun(database: SqliteDatabase, input: TraceInges
         });
     }
     const { manifest, fingerprint } = manifestRead;
-    const currentIdentity = fileIdentity(await lstat(path.join(runs, id, 'events.jsonl')));
+    const currentIdentity = fileIdentity(await lstat(path.join(manifestRead.runDirectory, 'events.jsonl')));
     let generation = previous?.generation ?? 1;
     let offset = previous?.offset ?? 0;
     let lastSeq = previous?.lastSeq ?? -1;

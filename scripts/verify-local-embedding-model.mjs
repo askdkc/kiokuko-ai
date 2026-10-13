@@ -1,3 +1,4 @@
+import { completeVerification } from './verification-completion.mjs';
 import { createHash } from 'node:crypto';
 import { lstat, readFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -29,7 +30,16 @@ if (args.some((arg, index) => arg !== '--offline' && arg !== '--model-dir' && in
 
 const modelDirectory = modelDirectoryIndex === -1 ? undefined : path.resolve(args[modelDirectoryIndex + 1]);
 if (modelDirectory === undefined) {
-  console.log(`Pinned ${MODEL_ID}@${REVISION} manifest verified (${EXPECTED_MANIFEST_HASH}); no local installation supplied.`);
+  const {LOCAL_SMALL_PRESET}=await import('../dist/embedding/presets/local-small.js');
+  const {presetManifestHash}=await import('../dist/embedding/presets/manifest.js');
+  const {validatePresetManifest}=await import('../dist/embedding/model-manifest.js');
+  const assert=(await import('node:assert/strict')).default;
+  validatePresetManifest(LOCAL_SMALL_PRESET);
+  assert.equal(LOCAL_SMALL_PRESET.artifactRepository,MODEL_ID);assert.equal(LOCAL_SMALL_PRESET.revision,REVISION);
+  assert.deepEqual(LOCAL_SMALL_PRESET.files.map(f=>[f.path,f.size,f.sha256]),FILES);
+  assert.equal(presetManifestHash(LOCAL_SMALL_PRESET),EXPECTED_MANIFEST_HASH);
+  console.log('Pinned compiled model manifest matches the independent artifact coordinates and hash.');
+  completeVerification({manifestVerified:true,inference:'not-requested'});
   process.exit(0);
 }
 
@@ -71,3 +81,5 @@ try {
   await extractor.dispose?.();
 }
 console.log(`Pinned ${MODEL_ID}@${REVISION} offline inference passed (${EXPECTED_MANIFEST_HASH}).`);
+
+completeVerification({manifestVerified:true,inference:'passed'});

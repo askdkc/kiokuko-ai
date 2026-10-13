@@ -1,0 +1,323 @@
+{
+  "schema": "verification-contract-v1",
+  "package": "kiokuko-ai",
+  "profiles": [
+    "full",
+    "main",
+    "semantic",
+    "host"
+  ],
+  "environment": {
+    "KIOKUKO_REQUIRE_SQLITE_VEC_SMOKE": "1"
+  },
+  "checks": [
+    {
+      "id": "verification-contract",
+      "argv": [
+        "node",
+        "--test",
+        "scripts/verification-contract.test.mjs"
+      ],
+      "profiles": [
+        "main",
+        "semantic",
+        "host"
+      ],
+      "result": "node",
+      "requires": [],
+      "expected": "complete official lifecycle; at least one passing leaf; no failures, cancellation, todo or undeclared skips",
+      "dependsOn": []
+    },
+    {
+      "id": "typecheck",
+      "argv": [
+        "npm",
+        "run",
+        "typecheck"
+      ],
+      "profiles": [
+        "main"
+      ],
+      "result": "command",
+      "requires": [],
+      "expected": "exit 0",
+      "dependsOn": []
+    },
+    {
+      "id": "build",
+      "argv": [
+        "npm",
+        "run",
+        "build"
+      ],
+      "profiles": [
+        "main",
+        "semantic",
+        "host"
+      ],
+      "result": "command",
+      "requires": [],
+      "expected": "exit 0",
+      "dependsOn": []
+    },
+    {
+      "id": "suite",
+      "argv": [
+        "node",
+        "scripts/run-tests.mjs",
+        "tests"
+      ],
+      "profiles": [
+        "main"
+      ],
+      "result": "node",
+      "requires": [],
+      "expected": "complete official lifecycle; at least one passing leaf; no failures, cancellation, todo or undeclared skips",
+      "dependsOn": [
+        "build"
+      ],
+      "testCapabilities": [
+        "agenticreplay-pinned",
+        "ripwire"
+      ]
+    },
+    {
+      "id": "retrieval",
+      "argv": [
+        "npm",
+        "run",
+        "test:evaluation"
+      ],
+      "profiles": [
+        "main"
+      ],
+      "result": "script",
+      "requires": [],
+      "expected": "existing independent assertions finish, emit their result and exit 0",
+      "dependsOn": [
+        "build"
+      ]
+    },
+    {
+      "id": "sampledb",
+      "argv": [
+        "npm",
+        "run",
+        "test:sampledb"
+      ],
+      "profiles": [
+        "main"
+      ],
+      "result": "script",
+      "requires": [],
+      "expected": "existing independent assertions finish, emit their result and exit 0",
+      "dependsOn": [
+        "build"
+      ]
+    },
+    {
+      "id": "pack-contents",
+      "argv": [
+        "npm",
+        "run",
+        "pack:check"
+      ],
+      "profiles": [
+        "main"
+      ],
+      "result": "command",
+      "requires": [],
+      "expected": "exit 0",
+      "dependsOn": [
+        "build"
+      ]
+    },
+    {
+      "id": "installed",
+      "argv": [
+        "node",
+        "tests/ci/global-install-smoke.mjs"
+      ],
+      "profiles": [
+        "main"
+      ],
+      "result": "script",
+      "requires": [],
+      "expected": "existing independent assertions finish, emit their result and exit 0",
+      "dependsOn": [
+        "build"
+      ],
+      "packed": true
+    },
+    {
+      "id": "opencode-boundary",
+      "argv": [
+        "npm",
+        "run",
+        "verify:opencode-boundary"
+      ],
+      "profiles": [
+        "main"
+      ],
+      "result": "script",
+      "requires": [],
+      "expected": "existing independent assertions finish, emit their result and exit 0",
+      "dependsOn": [
+        "build"
+      ]
+    },
+    {
+      "id": "opencode-host",
+      "argv": [
+        "node",
+        "scripts/run-opencode-host-e2e.mjs"
+      ],
+      "profiles": [
+        "semantic",
+        "host"
+      ],
+      "result": "script",
+      "requires": [
+        "opencode"
+      ],
+      "expected": "existing independent assertions finish, emit their result and exit 0",
+      "dependsOn": [
+        "build"
+      ],
+      "packed": true,
+      "platforms": [
+        "linux",
+        "darwin"
+      ],
+      "exclusionReason": "This existing CI check targets linux, darwin; other OSes are outside its declared scope.",
+      "completionEvidence": {
+        "ordinaryVerified": true
+      },
+      "profileExclusions": {
+        "semantic": {
+          "platforms": [
+            "linux"
+          ],
+          "reason": "The host profile executes the identical Linux ordinary host contract."
+        }
+      }
+    },
+    {
+      "id": "opencode-execution",
+      "argv": [
+        "node",
+        "scripts/run-opencode-execution-e2e.mjs"
+      ],
+      "profiles": [
+        "host"
+      ],
+      "result": "script",
+      "requires": [
+        "opencode"
+      ],
+      "expected": "existing independent assertions finish, emit their result and exit 0",
+      "dependsOn": [
+        "build"
+      ],
+      "packed": true,
+      "platforms": [
+        "linux",
+        "darwin"
+      ],
+      "exclusionReason": "This existing CI check targets linux, darwin; other OSes are outside its declared scope.",
+      "completionEvidence": {
+        "executionVerified": true,
+        "compactionVerified": true,
+        "reloadVerified": true
+      }
+    },
+    {
+      "id": "opencode-wrapped",
+      "argv": [
+        "node",
+        "scripts/run-opencode-agenticreplay-e2e.mjs"
+      ],
+      "profiles": [
+        "host"
+      ],
+      "result": "script",
+      "requires": [
+        "opencode",
+        "agenticreplay"
+      ],
+      "expected": "existing independent assertions finish, emit their result and exit 0",
+      "dependsOn": [
+        "build"
+      ],
+      "packed": true,
+      "platforms": [
+        "linux",
+        "darwin"
+      ],
+      "exclusionReason": "This existing CI check targets linux, darwin; other OSes are outside its declared scope."
+    },
+    {
+      "id": "sqlite-vec",
+      "argv": [
+        "npm",
+        "run",
+        "test:sqlite-vec"
+      ],
+      "profiles": [
+        "main",
+        "semantic"
+      ],
+      "result": "script",
+      "requires": [
+        "sqlite-vec"
+      ],
+      "expected": "existing independent assertions finish, emit their result and exit 0",
+      "dependsOn": [
+        "build"
+      ]
+    },
+    {
+      "id": "embedding",
+      "argv": [
+        "node",
+        "scripts/run-local-embedding-smoke.mjs",
+        "--offline"
+      ],
+      "profiles": [
+        "main",
+        "semantic"
+      ],
+      "result": "script",
+      "requires": [],
+      "expected": "existing independent assertions finish, emit their result and exit 0",
+      "dependsOn": [
+        "build"
+      ]
+    }
+  ],
+  "testExclusions": [],
+  "capabilities": {
+    "opencode": {
+      "environment": "OPENCODE_BIN",
+      "binary": "opencode"
+    },
+    "agenticreplay": {
+      "environment": "KIOKUKO_TEST_AGENTICREPLAY",
+      "binary": "agenticreplay"
+    },
+    "tunnel-client": {
+      "environment": "KIOKUKO_TUNNEL_CLIENT",
+      "binary": "tunnel-client"
+    },
+    "ripwire": {
+      "environment": "KIOKUKO_TEST_RIPWIRE",
+      "binary": "ripwire"
+    },
+    "agenticreplay-pinned": {
+      "environment": "KIOKUKO_TEST_AGENTICREPLAY",
+      "binary": "agenticreplay",
+      "version": "0.1.2"
+    }
+  },
+  "coveredChecks": []
+}
