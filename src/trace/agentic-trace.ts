@@ -46,16 +46,16 @@ export function agenticReplayRunIdFromDirectory(name:string):string|undefined {
 }
 export async function resolveAgenticReplayRunDirectory(runs:string,id:string):Promise<string> {
  if(!path.isAbsolute(runs)||!AGENTICREPLAY_TRACE_RUN_ID_PATTERN.test(id))throw new TraceInputError('invalid_run_id');
- const fs=await import('node:fs/promises');const directory=await fs.opendir(runs);let count=0;const valid:string[]=[];
+ const fs=await import('node:fs/promises');const directory=await fs.opendir(runs);let count=0,missingLegacy=false;const valid:string[]=[];
  try{for(let entry=await directory.read();entry!==null;entry=await directory.read()){
   if(++count>4096)throw new TraceInputError('discovery_limit');if(agenticReplayRunIdFromDirectory(entry.name)!==id)continue;
   const candidate=path.join(runs,entry.name);const st=await fs.lstat(candidate);if(st.isSymbolicLink()||!st.isDirectory())throw new TraceInputError('unsafe_path');
   let bytes:Buffer;
   try{bytes=await readBoundedTraceFile(path.join(candidate,'manifest.json'),traceCaptureRoot(runs),TRACE_LIMITS.manifest);}
-  catch(error){if(entry.name!==id||(error as NodeJS.ErrnoException).code!=='ENOENT')throw error;const claim=await fs.opendir(candidate);try{if(await claim.read()!==null)throw new TraceInputError('invalid_manifest');}finally{await claim.close();}continue;}
+  catch(error){if(entry.name!==id||(error as NodeJS.ErrnoException).code!=='ENOENT')throw error;const claim=await fs.opendir(candidate);try{if(await claim.read()!==null)missingLegacy=true;}finally{await claim.close();}continue;}
   const parsed=parseManifest(new TextDecoder('utf-8',{fatal:true}).decode(bytes),id);if(!parsed)throw new TraceInputError('invalid_manifest');valid.push(candidate);if(valid.length>1)throw new TraceInputError('ambiguous_run');
  }}finally{await directory.close();}
- if(valid.length!==1)throw new TraceInputError('missing_manifest');return valid[0]!;
+ if(valid.length!==1)throw new TraceInputError('missing_manifest');if(missingLegacy)throw new TraceInputError('invalid_manifest');return valid[0]!;
 }
 
 const BLOB_DIGEST_PATTERN = /^sha256:([0-9a-f]{64})$/u;

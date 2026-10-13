@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { execFileSync } from 'node:child_process';
-import { mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, symlink, writeFile, truncate } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
@@ -77,4 +77,12 @@ test('project binding ignore renderer accepts canonical root entries and rejects
     content: `!${PROJECT_BINDING_IGNORE_ENTRY}\n${PROJECT_BINDING_IGNORE_ENTRY}\n`,
     action: 'updated',
   });
+});
+
+test('a bounded read that changes underneath its descriptor is a typed retryable conflict',async t=>{
+ const {AtomicReadChangedError,readRegularFile}=await import('../../src/agent-file/atomic-write.js');
+ const root=await mkdtemp(path.join(tmpdir(),'trace-ignore-read-race-'));t.after(()=>rm(root,{recursive:true,force:true}));const file=path.join(root,'.gitignore');await writeFile(file,'user bytes\n');
+ await assert.rejects(readRegularFile(file,{maxBytes:1024,afterOpen:async(_file,handle)=>{
+  const read=handle.read.bind(handle);handle.read=(async(...args:Parameters<typeof read>)=>{const result=await read(...args);await truncate(file,0);return result;}) as typeof handle.read;
+ }}),error=>error instanceof AtomicReadChangedError&&error.code==='INTEGRITY_ERROR');
 });

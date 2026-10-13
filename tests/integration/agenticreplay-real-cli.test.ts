@@ -10,7 +10,7 @@ import { syncTraceStore } from '../../src/trace/sync.js';
 import { findSecretInValue } from '../../src/memory/secrets.js';
 import { readTraceCursor } from '../../src/trace/ingest.js';
 // Explicit opt-in: never download or update the user's global installation.
-const executable = process.env.KIOKUKO_TEST_AGENTICREPLAY;
+const executable = process.env.AGENTICREPLAY_BIN ?? process.env.KIOKUKO_TEST_AGENTICREPLAY;
 const pinnedVersion = '0.1.2';
 test('real AgenticReplay 0.1.2 output seals a fake OpenCode run and imports with verified integrity', { skip: !executable ? 'Set KIOKUKO_TEST_AGENTICREPLAY to an installed AgenticReplay 0.1.2 executable' : false }, async (t) => {
     assert.equal(execFileSync(executable!, ['--version'], { encoding: 'utf8', timeout: 5000 }).trim(), pinnedVersion);

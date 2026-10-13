@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { assertAtomicCleanupComplete, assertFileExpectation, atomicWriteTextIfUnchanged, readRegularFile } from '../agent-file/atomic-write.js';
+import { AtomicReadChangedError, assertAtomicCleanupComplete, assertFileExpectation, atomicWriteTextIfUnchanged, readRegularFile } from '../agent-file/atomic-write.js';
 import { KiokukoError } from '../errors.js';
 
 export const PROJECT_BINDING_IGNORE_ENTRY = '.kiokuko-ai.json';
@@ -63,7 +63,7 @@ export async function ensureAgenticReplayIgnored(repositoryRoot: string, capture
         break;
       } catch (error) {
         // Re-read after another recorder changes the file; never overwrite a stale snapshot.
-        if (!(error instanceof KiokukoError) || error.code !== 'CONFLICT' || attempt >= 2) throw error;
+        if (attempt >= 2 || !(error instanceof AtomicReadChangedError || error instanceof KiokukoError && error.code === 'CONFLICT')) throw error;
       }
     }
   }

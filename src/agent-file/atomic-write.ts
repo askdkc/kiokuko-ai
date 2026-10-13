@@ -200,6 +200,10 @@ function artifactFromOpenHandle(
   };
 }
 
+export class AtomicReadChangedError extends KiokukoError {
+  constructor(){super('INTEGRITY_ERROR','Atomic artifact changed while it was read');}
+}
+
 async function readOpenHandleArtifact(
   handle: FileHandle,
   filePath: string,
@@ -215,7 +219,7 @@ async function readOpenHandleArtifact(
   while (offset < buffer.length) {
     const result = await handle.read(buffer, offset, buffer.length - offset, offset);
     if (result.bytesRead === 0) {
-      throw new KiokukoError('INTEGRITY_ERROR', 'Atomic artifact changed while it was read');
+      throw new AtomicReadChangedError();
     }
     offset += result.bytesRead;
   }
@@ -223,7 +227,7 @@ async function readOpenHandleArtifact(
   const initial = artifactFromOpenHandle(before, decodeUtf8(buffer, filePath));
   const final = artifactFromOpenHandle(after, initial.snapshot.content);
   if (!sameArtifact(initial, final) || before.size !== after.size) {
-    throw new KiokukoError('INTEGRITY_ERROR', 'Atomic artifact changed while it was read');
+    throw new AtomicReadChangedError();
   }
   return final;
 }

@@ -6,7 +6,7 @@ import { enqueueOrchestrationJob } from '../orchestration/jobs.js';
 import { canonicalContentHash } from '../serialization/validate.js';
 import { findSecretInValue } from '../memory/secrets.js';
 import { KiokukoError } from '../errors.js';
-import { readAgenticReplayTraceManifest, AGENTICREPLAY_TRACE_RUN_ID_PATTERN, agenticReplayRunIdFromDirectory } from './agentic-trace.js';
+import { readAgenticReplayTraceManifest, AGENTICREPLAY_TRACE_RUN_ID_PATTERN, agenticReplayRunIdFromDirectory, resolveAgenticReplayRunDirectory } from './agentic-trace.js';
 import { TRACE_LIMITS, TraceInputError, assertTracePath, traceCaptureRoot, fileIdentity, readBoundedTraceFile } from './bounded-read.js';
 import { createHash } from 'node:crypto';
 export const AGENTICREPLAY_TRACE_SCAN_MAX_RUNS = 8;
@@ -114,10 +114,11 @@ export async function scanAgenticReplayTraceStore(database: SqliteDatabase, runs
             // Monotonic processing opportunities also work when callers inject one timestamp.
             database.prepare("UPDATE agenticreplay_trace_cursors SET last_checked_at=printf('%020d',(SELECT COALESCE(CAST(MAX(last_checked_at) AS INTEGER),0)+1 FROM agenticreplay_trace_cursors WHERE directory=?)) WHERE directory=? AND trace_run_id=?").run(runsDirectory, runsDirectory, row.id);
             try {
-                const manifestPath = path.join(runsDirectory, row.id, 'manifest.json');
+                const runDirectory=await resolveAgenticReplayRunDirectory(runsDirectory,row.id);
+                const manifestPath = path.join(runDirectory, 'manifest.json');
                 const raw = await readBoundedTraceFile(manifestPath, traceCaptureRoot(runsDirectory), TRACE_LIMITS.manifest);
                 const manifestHash = createHash('sha256').update(raw).digest('hex');
-                const eventsPath = path.join(runsDirectory, row.id, 'events.jsonl');
+                const eventsPath = path.join(runDirectory,'events.jsonl');
                 await assertTracePath(eventsPath, traceCaptureRoot(runsDirectory));
                 const stat = await lstat(eventsPath);
                 if (!stat.isFile())

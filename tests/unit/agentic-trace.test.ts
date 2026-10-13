@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, open, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, open, readdir, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { KiokukoError } from '../../src/errors.js';
 import {
   AGENTICREPLAY_TRACE_MAX_WARNINGS,
+  resolveAgenticReplayRunDirectory,
   readAgenticReplayTraceManifest,
   readAgenticReplayTraceRun,
 } from '../../src/trace/agentic-trace.js';
@@ -458,4 +459,22 @@ test('exposes counts and integrity from the manifest view', async () => {
   } finally {
     await rm(base, { recursive: true, force: true });
   }
+});
+
+test('titled recording and close rename retain logical identity beside an empty reservation', async t => {
+ const base=await mkdtemp(path.join(tmpdir(),'kiokuko-title-'));t.after(()=>rm(base,{recursive:true,force:true}));
+ const legacy=await makeRun(base);const named=path.join(base,'20261013093000-recording-abcdef123456');
+ await rename(legacy,named);await mkdir(legacy);
+ assert.equal(await resolveAgenticReplayRunDirectory(base,RUN_ID),named);
+ const closed=path.join(base,'20261013093000-captured-session-abcdef123456');await rename(named,closed);
+ const read=await readAgenticReplayTraceRun(base,RUN_ID);assert.equal(read.status,'ready');assert.equal(read.integrity,'verified');assert.equal(read.events.length,2);
+ assert.equal(await resolveAgenticReplayRunDirectory(base,RUN_ID),closed);
+});
+test('titled directory rejects duplicate identity, symlink, wrong manifest and nonempty reservation',async t=>{
+ const base=await mkdtemp(path.join(tmpdir(),'kiokuko-title-negative-'));t.after(()=>rm(base,{recursive:true,force:true}));
+ const legacy=await makeRun(base);const named=path.join(base,'20261013093000-first-abcdef123456');await rename(legacy,named);
+ await makeRun(base);await assert.rejects(()=>resolveAgenticReplayRunDirectory(base,RUN_ID),/ambiguous_run/);await rm(legacy,{recursive:true});
+ await symlink(named,legacy);await assert.rejects(()=>resolveAgenticReplayRunDirectory(base,RUN_ID),/unsafe_path/);await rm(legacy);
+ await mkdir(legacy);await writeFile(path.join(legacy,'unexpected'),'unclaimed');await assert.rejects(()=>resolveAgenticReplayRunDirectory(base,RUN_ID),/invalid_manifest/);await rm(legacy,{recursive:true});
+ await writeFile(path.join(named,'manifest.json'),JSON.stringify({schema_version:'0.4.0',run_id:'run_ffffffffffff',counts:{events:2}}));await assert.rejects(()=>resolveAgenticReplayRunDirectory(base,RUN_ID),/invalid_manifest/);
 });

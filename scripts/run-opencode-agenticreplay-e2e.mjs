@@ -1,6 +1,6 @@
 import { completeVerification } from './verification-completion.mjs';
 import { spawn } from 'node:child_process';
-import { access, mkdir, mkdtemp, readFile, readdir, realpath, symlink, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, readdir, realpath, symlink, writeFile, chmod } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
@@ -21,6 +21,9 @@ const data = path.join(root, 'data');
 await Promise.all([project, bin, home, config, data].map(directory => mkdir(directory, { recursive: true })));
 await mkdir(path.join(config, 'opencode'), { recursive: true });
 await symlink(opencode, path.join(bin, process.platform === 'win32' ? 'opencode.exe' : 'opencode'));
+const recorderShim=path.join(bin,'agenticreplay');
+await writeFile(recorderShim,`#!${process.execPath}\nimport {spawn} from 'node:child_process';const child=spawn(${JSON.stringify(executable)},process.argv.slice(2),{stdio:'inherit'});child.on('error',()=>process.exit(1));child.on('exit',(code,signal)=>{process.exitCode=code??1;});for(const signal of ['SIGINT','SIGTERM'])process.on(signal,()=>child.kill(signal));\n`);
+await chmod(recorderShim,0o755);
 const environment = {
   ...process.env, HOME: home, XDG_CONFIG_HOME: config, XDG_DATA_HOME: data,
   XDG_CACHE_HOME: path.join(root, 'cache'), XDG_STATE_HOME: path.join(root, 'state'),
@@ -123,7 +126,7 @@ try {
   let cursor;
   let preparedRun;
   try {
-    cursor = readTraceCursor(database, runs, ids[0]);
+    cursor = readTraceCursor(database, runs, manifest.run_id);
     preparedRun = database.prepare('SELECT run_id, client_kind, client_version, source_session_id FROM ledger_runs WHERE title = ?').get('Verify the wrapped MCP connection');
   }
   finally { database.close(); }

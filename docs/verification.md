@@ -24,27 +24,25 @@ results must be rechecked using `npm run verify -- --status <result.json>`.
 A profile passing alone never sets `completionReady`. A stale or failed full run
 must not be reported as full verification, and local results do not prove remote CI.
 
-## Existing CI checks and common suites
+## Common suites and retained assertions
 
-The runner inventory below preserves the previous CI checks. The former DSH
-`npm test` is covered by native unit/integration/e2e plus dedicated Skill delivery;
-its standalone `.mjs`, Python, browser, package and evaluation checks remain explicit.
+The inventory below is generated from the repository contract. A script check
+requires a fresh check-bound completion receipt after its existing assertions;
+arbitrary stdout or a successful no-op process is insufficient.
 
-| Common check | CI profile(s) | Existing runner | Required result |
+| Common check | Profiles | Runner | Required result |
 | --- | --- | --- | --- |
 | verification-contract | main, semantic, host | `node --test scripts/verification-contract.test.mjs` | complete official lifecycle; at least one passing leaf; no failures, cancellation, todo or undeclared skips |
 | typecheck | main | `npm run typecheck` | exit 0 |
 | build | main, semantic, host | `npm run build` | exit 0 |
 | suite | main | `node scripts/run-tests.mjs tests` | complete official lifecycle; at least one passing leaf; no failures, cancellation, todo or undeclared skips |
-| retrieval | main | `npm run test:evaluation` | existing independent assertions finish, emit their result and exit 0 |
-| sampledb | main | `npm run test:sampledb` | existing independent assertions finish, emit their result and exit 0 |
+| retrieval | main | `npm run test:evaluation` | explicit completion receipt |
+| sampledb | main | `npm run test:sampledb` | explicit completion receipt |
 | pack-contents | main | `npm run pack:check` | exit 0 |
-| installed | main | `node tests/ci/global-install-smoke.mjs` | existing independent assertions finish, emit their result and exit 0 |
-| opencode-boundary | main | `npm run verify:opencode-boundary` | existing independent assertions finish, emit their result and exit 0 |
-| opencode-host | semantic, host | `node scripts/run-opencode-host-e2e.mjs` | existing independent assertions finish, emit their result and exit 0 |
-| opencode-execution | host | `node scripts/run-opencode-execution-e2e.mjs` | existing independent assertions finish, emit their result and exit 0 |
-| opencode-wrapped | host | `node scripts/run-opencode-agenticreplay-e2e.mjs` | existing independent assertions finish, emit their result and exit 0 |
-| sqlite-vec | main, semantic | `npm run test:sqlite-vec` | existing independent assertions finish, emit their result and exit 0 |
-| embedding | main, semantic | `node scripts/run-local-embedding-smoke.mjs --offline` | existing independent assertions finish, emit their result and exit 0 |
-
-Linux, Windows, other architectures and real model quality require their own executions; Mac results do not cover them. Runtime setup is an environment prerequisite and is never installed silently by verify.
+| installed | main | `node tests/ci/global-install-smoke.mjs` | explicit completion receipt |
+| opencode-boundary | main | `npm run verify:opencode-boundary` | explicit completion receipt |
+| opencode-host | semantic, host | `node scripts/run-opencode-host-e2e.mjs` | explicit completion receipt |
+| opencode-execution | host | `node scripts/run-opencode-execution-e2e.mjs` | explicit completion receipt |
+| opencode-wrapped | host | `node scripts/run-opencode-agenticreplay-e2e.mjs` | explicit completion receipt |
+| sqlite-vec | main, semantic | `npm run test:sqlite-vec` | explicit completion receipt |
+| embedding | main, semantic | `node scripts/run-local-embedding-smoke.mjs --offline` | explicit completion receipt |

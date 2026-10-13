@@ -1,3 +1,4 @@
+import { pathToFileURL } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { validCompletion } from './verification-completion.mjs';
 import { spawn, execFileSync } from 'node:child_process';
@@ -16,8 +17,8 @@ if(values.plan){console.log(JSON.stringify(plan,null,2));process.exit(0);}
 const hashFile=file=>digest(readFileSync(file));
 const gitHead=()=>{try{return execFileSync('git',['rev-parse','HEAD'],{cwd:root,encoding:'utf8',stdio:['ignore','pipe','ignore']}).trim();}catch{return null;}};
 if(values.status){let report;try{report=JSON.parse(readFileSync(values.status));}catch{}let current=false;
-if(report?.schema==='verification-result-v1'&&Array.isArray(report.checks))try{const requiredPlan=verificationPlan(contract,report.profile,report.platform);current=report.checks.length===requiredPlan.checks.length&&new Set(report.checks.map(c=>c.id)).size===requiredPlan.checks.length&&requiredPlan.checks.every(c=>report.checks.some(r=>r.id===c.id&&(['passed'].includes(r.status)||c.status===r.status&&['scope-excluded','platform-excluded'].includes(c.status))))&&report.commit===gitHead()&&evidenceCurrent(report,{sourceDigest:sourceDigest(root),runtime:process.version,contractDigest,artifactHash:report.artifact?hashFile(report.artifact.path):undefined,distDigest:report.artifact?treeDigest(path.join(root,'dist')):undefined});}catch{}
-console.log(JSON.stringify({...report,schema:'verification-result-v1',status:current?'passed':report?.schema==='verification-result-v1'?'stale':'incomplete',completionReady:current&&report.completeScope}));process.exit(current?0:1);}
+if(report?.schema==='verification-result-v1'&&report.platform===process.platform&&report.architecture===process.arch&&Array.isArray(report.checks))try{const requiredPlan=verificationPlan(contract,report.profile,report.platform);current=report.checks.length===requiredPlan.checks.length&&new Set(report.checks.map(c=>c.id)).size===requiredPlan.checks.length&&requiredPlan.checks.every(c=>report.checks.some(r=>r.id===c.id&&(['passed'].includes(r.status)||c.status===r.status&&['scope-excluded','platform-excluded'].includes(c.status))))&&evidenceCurrent(report,{sourceDigest:sourceDigest(root),runtime:process.version,contractDigest,artifactHash:report.artifact?hashFile(report.artifact.path):undefined,distDigest:report.artifact?treeDigest(path.join(root,'dist')):undefined});}catch{}
+console.log(JSON.stringify({...report,testedCommit:report?.commit,commit:gitHead(),schema:'verification-result-v1',status:current?'passed':report?.schema==='verification-result-v1'?'stale':'incomplete',completionReady:current&&report.completeScope}));process.exit(current?0:1);}
 const output=values.output?path.resolve(values.output):mkdtempSync(path.join(tmpdir(),`${contract.package}-verify-`));
 if(existsSync(output)&&readdirSync(output).length)throw new Error('Verification output must be empty');
 // Evidence must not mutate the source fingerprint it is intended to verify.
@@ -35,7 +36,7 @@ baseEnv.KIOKUKO_REQUIRE_SQLITE_VEC_SMOKE='1';
 delete baseEnv.NODE_PATH;delete baseEnv.NODE_TEST_CONTEXT;
 async function command(argv,env=baseEnv,log='command') {
   const resolved=process.platform==='win32'&&argv[0]==='npm'?[process.execPath,process.env.npm_execpath??path.join(path.dirname(process.execPath),'node_modules/npm/bin/npm-cli.js'),...argv.slice(1)]:argv[0]==='node'?[process.execPath,...argv.slice(1).map(a=>a.replaceAll('{root}',root))]:argv.map(a=>a.replaceAll('{root}',root));
-  if (resolved[0]===process.execPath && resolved.includes('--test') && env.KIOKUKO_VERIFY_REPORT_DIR) resolved.splice(1,0,'--import='+path.join(root,'scripts/verification-test-environment.mjs'),'--test-reporter=tap','--test-reporter-destination=stdout','--test-reporter='+path.join(root,'scripts/verification-reporter.mjs'),'--test-reporter-destination='+path.join(env.KIOKUKO_VERIFY_REPORT_DIR,'reporter.txt')); 
+  if (resolved[0]===process.execPath && resolved.includes('--test') && env.KIOKUKO_VERIFY_REPORT_DIR) resolved.splice(1,0,'--import='+pathToFileURL(path.join(root,'scripts/verification-test-environment.mjs')).href,'--test-reporter=tap','--test-reporter-destination=stdout','--test-reporter='+pathToFileURL(path.join(root,'scripts/verification-reporter.mjs')).href,'--test-reporter-destination='+path.join(env.KIOKUKO_VERIFY_REPORT_DIR,'reporter.txt'));
   if(resolved[0]==='docker'&&env.KIOKUKO_VERIFY_COMPLETION_FILE){resolved.splice(2,0,'-v',path.dirname(env.KIOKUKO_VERIFY_COMPLETION_FILE)+':/verification-receipt','-e','KIOKUKO_VERIFY_COMPLETION_FILE=/verification-receipt/complete.json','-e','KIOKUKO_VERIFY_CHECK_ID='+env.KIOKUKO_VERIFY_CHECK_ID,'-e','KIOKUKO_VERIFY_NONCE='+env.KIOKUKO_VERIFY_NONCE);}
   const started=new Date().toISOString();
   const child=spawn(resolved[0],resolved.slice(1),{cwd:root,env,shell:false,stdio:['ignore','pipe','pipe'],detached:process.platform!=='win32'});
@@ -61,7 +62,7 @@ async function missingCapabilities(check) {
     if(!location){missing.push(capability);continue;}
     if(capability==='opencode'){try{const {resolveOpenCodeBinary}=await import('./run-opencode-host-e2e.mjs');location=await resolveOpenCodeBinary(location);}catch{missing.push(capability);continue;}}
     const result=await command([location,'--version'],baseEnv,`capability-${check.id}-${capability}`);
-    if(result.exitCode!==0||declaration?.version&&result.stdout.trim()!==declaration.version){missing.push(capability);continue;}
+    if(result.exitCode!==0||declaration?.version&&result.stdout.trim()!==declaration.version||declaration?.versionPattern&&!new RegExp(declaration.versionPattern).test(result.stdout.trim())){missing.push(capability);continue;}
     if(declaration){baseEnv[declaration.environment]=realpathSync(location);if(capability==='agenticreplay-pinned')baseEnv.AGENTICREPLAY_BIN=realpathSync(location);}
   }
   return missing;
@@ -93,6 +94,7 @@ for(const check of checks) {
   if(check.packed&&!artifact){try{await prepareArtifact();}catch(e){record.status='failed';record.reason=e.message;continue;}}
   if(artifact&&(artifact.hash!==hashFile(artifact.path)||artifact.distDigest!==treeDigest(path.join(root,'dist')))){record.status='stale';record.reason='artifact changed';continue;}
   const missingTests=await missingCapabilities({id:check.id,requires:check.testCapabilities??[]});
+  if(missingTests.length){record.status='prerequisite-missing';record.missingTestCapabilities=missingTests;continue;}
   const reportDir=path.join(output,check.id);mkdirSync(reportDir);
   const nonce=randomUUID(),completionFile=path.join(output,'receipts',check.id,'complete.json');mkdirSync(path.dirname(completionFile),{recursive:true});
   const env={...baseEnv,KIOKUKO_VERIFY_CHECK_ID:check.id,KIOKUKO_VERIFY_NONCE:nonce,KIOKUKO_VERIFY_COMPLETION_FILE:completionFile,...check.env,KIOKUKO_VERIFY_REPORT_DIR:reportDir,KIOKUKO_HARNESS_REPORT:path.join(output,'harness.json'),KIOKUKO_DSH_EVIDENCE_PATH:path.join(output,'dsh-lifecycle.json')};
@@ -111,5 +113,5 @@ for(const check of checks) {
 }
 const stable=sourceDigest(root)===initial&&(!artifact||hashFile(artifact.path)===artifact.hash&&treeDigest(path.join(root,'dist'))===artifact.distDigest);
 const passed=stable&&results.every(r=>['passed','platform-excluded','scope-excluded'].includes(r.status));
-const report={schema:'verification-result-v1',package:contract.package,commit,profile:plan.profile,completeScope:plan.completeScope,runtime:process.version,platform:process.platform,sourceDigest:initial,contractDigest,artifact,status:interrupted?'interrupted':stable?(passed?'passed':'failed'):'stale',completionReady:passed&&plan.completeScope,checks:results};
+const report={schema:'verification-result-v1',package:contract.package,commit,profile:plan.profile,completeScope:plan.completeScope,runtime:process.version,platform:process.platform,architecture:process.arch,sourceDigest:initial,contractDigest,artifact,status:interrupted?'interrupted':stable?(passed?'passed':'failed'):'stale',completionReady:passed&&plan.completeScope,checks:results};
 writeFileSync(path.join(output,'result.json'),JSON.stringify(report,null,2));console.log(JSON.stringify({output,status:report.status,profile:plan.profile,completionReady:report.completionReady}));process.exitCode=passed?0:1;

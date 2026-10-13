@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, cpSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, cpSync, existsSync } from 'node:fs';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -96,3 +96,18 @@ test('SIGTERM preserves an interrupted terminal result with no completion succes
  let stdout='';const completed=new Promise((resolve,reject)=>{child.on('error',reject);child.on('exit',resolve);});child.stdout.on('data',chunk=>{stdout+=chunk;if(stdout.includes('waiting'))child.kill('SIGTERM');});const timer=setTimeout(()=>child.kill('SIGKILL'),5000);
  await completed;clearTimeout(timer);const report=JSON.parse(readFileSync(path.join(output,'result.json')));assert.equal(report.status,'interrupted');assert.equal(report.completionReady,false);
 });
+
+ test('missing required test capability stops the suite before any test process runs',()=>{
+  const root=fixture([{...check,argv:['node','must-not-run.mjs'],testCapabilities:['verification-fixture-absent-tool'],result:'script'}]);
+  writeFileSync(path.join(root,'must-not-run.mjs'),"import{writeFileSync}from'node:fs';writeFileSync('executed','unexpected');");
+  const {child,report}=execute(root);assert.equal(child.status,1);assert.equal(report.checks[0].status,'prerequisite-missing');assert.equal(existsSync(path.join(root,'executed')),false);
+ });
+ test('evidence from another platform or architecture cannot certify this consumer',()=>{
+  const root=fixture([{...check,argv:['node','script.mjs'],result:'script'}]);writeFileSync(path.join(root,'script.mjs'),"import{completeVerification}from'./scripts/verification-completion.mjs';completeVerification({assertions:true});");
+  const {child,report}=execute(root);assert.equal(child.status,0);
+  const file=path.join(mkdtempSync(path.join(tmpdir(),'verification-platform-')),'result.json');
+  writeFileSync(file,JSON.stringify(report));assert.equal(spawnSync(process.execPath,['scripts/verify.mjs','--status',file],{cwd:root,encoding:'utf8'}).status,0);
+  for(const change of [{platform:'foreign-platform'},{architecture:'foreign-architecture'}]){
+   writeFileSync(file,JSON.stringify({...report,...change}));const observed=spawnSync(process.execPath,['scripts/verify.mjs','--status',file],{cwd:root,encoding:'utf8'});assert.equal(observed.status,1);assert.equal(JSON.parse(observed.stdout).completionReady,false);
+  }
+ });

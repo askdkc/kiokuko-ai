@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { openConnection } from '../../src/db/connection.js';
 import { migrateDatabase } from '../../src/db/migrate.js';
 import type { SqliteDatabase } from '../../src/db/adapter.js';
-import { upsertTraceCursor } from '../../src/trace/ingest.js';
+import { ingestTraceRun, readTraceCursor, upsertTraceCursor } from '../../src/trace/ingest.js';
 import {
   AGENTICREPLAY_TRACE_SCAN_MAX_RUNS,
   agenticreplayRunsDirectory,
@@ -147,4 +147,14 @@ test('marks unsupported schemas and detects non-zero or gapped sequence lag', as
     databaseConnection.close();
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test('scan and ingest fingerprint the physical titled directory using its logical manifest ID',async t=>{
+ const root=await mkdtemp(path.join(tmpdir(),'kiokuko-title-scan-'));const db=await database();t.after(()=>{db.close();return rm(root,{recursive:true,force:true});});
+ const runsDirectory=agenticreplayRunsDirectory(root);await mkdir(runsDirectory,{recursive:true});const id='run_abcdef123456';
+ const legacy=await makeRun(runsDirectory,id,[0,1],'0.4.0');const named=path.join(runsDirectory,'20261013093000-session-abcdef123456');await rename(legacy,named);await mkdir(legacy);
+ const first=await scanAgenticReplayTraceStore(db,runsDirectory);assert.equal(first.enqueued,1);assert.deepEqual(first.warningCodes,[]);assert.deepEqual(jobPayloads(db),[{traceRunId:id,fromSeq:0}]);
+ const ingested=await ingestTraceRun(db,{runsDirectory,traceRunId:id,fromSeq:0});assert.equal(ingested.ingested,true);assert.equal(readTraceCursor(db,runsDirectory,id)?.lastSeq,1);
+ await rename(named,path.join(runsDirectory,'20261013093000-completed-session-abcdef123456'));
+ const again=await scanAgenticReplayTraceStore(db,runsDirectory);assert.equal(again.enqueued,0);assert.deepEqual(again.warningCodes,[]);
 });

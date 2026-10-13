@@ -314,7 +314,7 @@
       "binary": "ripwire"
     },
     "agenticreplay-pinned": {
-      "environment": "KIOKUKO_TEST_AGENTICREPLAY",
+      "environment": "AGENTICREPLAY_BIN",
       "binary": "agenticreplay",
       "version": "0.1.2"
     }
