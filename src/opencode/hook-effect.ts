@@ -86,6 +86,7 @@ export async function runKiokukoMemoryOperation(
   if (containsPrivateLearningData(input) || dependencies.signal?.aborted || dependencies.runtimeFailure) throw new Error('learning_unavailable');
   const spawn = dependencies.spawn ?? runtimeSpawn();
   const invocation = await trustedInvocation(dependencies);
+  if (dependencies.signal?.aborted) throw new Error('learning_unavailable');
   if (!spawn || !invocation.argv) throw new Error('learning_runtime_unavailable');
   const payload = JSON.stringify(input);
   if (Buffer.byteLength(payload) > 16 * 1024) throw new Error('learning_input_oversized');
@@ -97,6 +98,8 @@ export async function runKiokukoMemoryOperation(
   try {
     const work = (async () => {
       const reading = Promise.all([readBounded(child.stdout), readBounded(child.stderr), child.exited]);
+      // Observe output failures even while stdin is pending or fails first.
+      void reading.catch(() => undefined);
       await child.stdin.write(payload); await child.stdin.end();
       const [output, , code] = await reading;
       if (code !== 0) throw new Error('learning_hook_failed');

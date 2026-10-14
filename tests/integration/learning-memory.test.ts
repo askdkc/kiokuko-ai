@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { execFileSync, spawn } from 'node:child_process';
-import { Readable } from 'node:stream';
+import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -19,6 +18,7 @@ import { writeTrace, traceLine, traceId } from '../fixtures/agentic-trace.js';
 import { syncTraceStore } from '../../src/trace/sync.js';
 import { KiokukoPlugin } from '../../src/opencode/plugin.js';
 import { pluginContextFixture } from '../fixtures/opencode-v2-plugin.js';
+import { spawnNodeBunChild } from '../fixtures/node-bun-child.js';
 import { PACKAGE_VERSION } from '../../src/package-version.js';
 import { purgeEntry } from '../../src/commands/purge.js';
 
@@ -260,12 +260,8 @@ test('shipped OpenCode hooks cross the pinned CLI, persist SQLite and feed a new
   const runtimeGlobal = globalThis as typeof globalThis & { Bun?: unknown };
   const original = runtimeGlobal.Bun;
   runtimeGlobal.Bun = { spawn(argv: string[], options: { cwd: string }) {
-    const child = spawn(argv[0]!, argv.slice(1), { cwd: options.cwd,
-      env: { ...process.env, KIOKUKO_DATA_DIR: data, KIOKUKO_SKILL_DISCOVERY: 'off' }, stdio: 'pipe' });
-    return { stdin: { write: (text: string) => { child.stdin.write(text); }, end: () => { child.stdin.end(); } },
-      stdout: Readable.toWeb(child.stdout), stderr: Readable.toWeb(child.stderr),
-      exited: new Promise<number>(resolve => { child.once('exit', code => resolve(code ?? 1)); child.once('error', () => resolve(1)); }),
-      kill: () => { child.kill(); } };
+    return spawnNodeBunChild(argv, { cwd: options.cwd,
+      env: { ...process.env, KIOKUKO_DATA_DIR: data, KIOKUKO_SKILL_DISCOVERY: 'off' } });
   } };
   const fixtureHost = pluginContextFixture(f.root);
   Object.assign(fixtureHost.ctx, { options: { protocolVersion: 1, packageVersion: PACKAGE_VERSION, nodeExecutable: process.execPath, cliScript: cli } });

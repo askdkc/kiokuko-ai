@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import path from 'node:path';
-import { runKiokukoHook } from '../../src/opencode/hook-effect.js';
+import { runKiokukoHook, runKiokukoMemoryOperation } from '../../src/opencode/hook-effect.js';
 import { PACKAGE_VERSION } from '../../src/package-version.js';
 
 function stream(value: string): ReadableStream<Uint8Array> {
@@ -153,3 +153,47 @@ test('hook rejects a replaced CLI package identity before spawning', async () =>
   assert.deepEqual(result, { kind: 'failure', retryable: false, reason: 'version_mismatch' });
   assert.equal(spawned, false);
 });
+
+
+test('memory operation cancelled during runtime validation never spawns or writes', async () => {
+  let checkingStarted!: () => void;
+  const checking = new Promise<void>(resolve => { checkingStarted = resolve; });
+  let validate!: (value: Buffer) => void;
+  const validated = new Promise<Buffer>(resolve => { validate = resolve; });
+  const controller = new AbortController();
+  let spawned = 0;
+  const operation = runKiokukoMemoryOperation('context', { cwd: '/workspace' }, {
+    runtime,
+    signal: controller.signal,
+    lstat: async () => ({ isFile: () => true, isSymbolicLink: () => false, mode: 0o755 } as never),
+    readFile: (() => { checkingStarted(); return validated; }) as never,
+    spawn: () => { spawned += 1; return child(JSON.stringify({ workMayContinue: true })); },
+  });
+  await checking;
+  controller.abort();
+  validate(await packageFile());
+  await assert.rejects(operation);
+  assert.equal(spawned, 0, 'Cancellation during asynchronous validation must prevent subprocess effects');
+});
+
+for (const inputFails of [true, false]) {
+  test(`memory operation owns output failures while stdin ${inputFails ? 'fails' : 'succeeds'}`, async () => {
+    let killed = false;
+    await assert.rejects(runKiokukoMemoryOperation('context', { cwd: '/workspace' }, {
+      runtime,
+      readFile: packageFile as never,
+      lstat: async () => ({ isFile: () => true, isSymbolicLink: () => false, mode: 0o755 } as never),
+      spawn: () => ({
+        stdin: { write: async () => {
+          await new Promise<void>(resolve => setImmediate(resolve));
+          if (inputFails) throw new Error('fixture stdin closed');
+        }, end() {} },
+        stdout: new ReadableStream<Uint8Array>({ start(output) { output.error(new Error('fixture stdout closed')); } }),
+        stderr: stream(''), exited: Promise.resolve(1), kill() { killed = true; },
+      }),
+    }), inputFails ? /fixture stdin closed/ : /fixture stdout closed/);
+    assert.equal(killed, true);
+    // Let Node report any detached output rejection before the test finishes.
+    await new Promise<void>(resolve => setImmediate(resolve));
+  });
+}
