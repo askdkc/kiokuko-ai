@@ -15,6 +15,14 @@ it. `--offline` requires an already verified local installation; `--dry-run` doe
 not download, write, or change the active profile; `--replace` switches from a
 different active profile. Model weights are not included in the npm package.
 
+Runtime dependencies are installed in a private, versioned directory under the
+Kiokuko data directory. Setup checks the staged installation before making it
+available, and reuses it on later runs. It does not rewrite the installed package
+manifest or lockfile, prune project dependencies, or require a global npm install.
+Registry, proxy, and authentication settings remain inherited from npm; installation
+scripts are limited to `onnxruntime-node`, `sharp`, and `protobufjs`. Existing model files stay
+in their current location.
+
 The command also runs the normal OpenCode setup flow: managed MCP blocks and
 project instructions are refreshed.
 An unmanaged or tampered identity requires interactive confirmation; JSON,

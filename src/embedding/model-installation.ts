@@ -41,7 +41,7 @@ export async function installEmbeddingModel(
   preset: LocalEmbeddingPreset,
   options: InstallModelOptions = {},
 ): Promise<InstalledModel> {
-  const downloader = options.downloader ?? createHuggingFaceModelDownloader();
+  const downloader = options.downloader ?? createHuggingFaceModelDownloader({ pathEnvironment: options });
   const finalDirectory = getEmbeddingPresetDirectory(preset.id, preset.revision, options);
   if (await existingDirectory(finalDirectory)) {
     const manifest = await verifyInstalledModelDirectory(finalDirectory, preset);

@@ -27,7 +27,7 @@ import { EmbeddingProviderError } from './provider.js';
 import { normalizeVector } from './vector.js';
 import { readActiveEmbeddingProfile, readEntryEmbedding } from './store.js';
 import { defaultEmbeddingConfig, readPersistedEmbeddingSettings } from './settings.js';
-import { getEmbeddingPresetDirectory } from '../config/paths.js';
+import { getEmbeddingPresetDirectory, type PathEnvironment } from '../config/paths.js';
 import { LocalTransformersEmbeddingProvider } from './local-transformers-provider.js';
 import type {
   EmbeddingConfig,
@@ -49,6 +49,7 @@ const RETRY_BASE_MS = 1_000;
 const RETRY_MAX_MS = 60_000;
 
 export interface EmbeddingRuntimeOptions {
+  readonly pathEnvironment?: PathEnvironment;
   readonly provider?: EmbeddingProvider;
   readonly backend?: VectorSearchBackend;
   readonly now?: () => string;
@@ -168,7 +169,8 @@ function createEnabledRuntime(
   }
   const provider = options.provider ?? new LocalTransformersEmbeddingProvider({
     profile: profile.identity,
-    modelDirectory: getEmbeddingPresetDirectory(profile.identity.presetId, profile.identity.modelRevision),
+    modelDirectory: getEmbeddingPresetDirectory(profile.identity.presetId, profile.identity.modelRevision, options.pathEnvironment),
+    ...(options.pathEnvironment === undefined ? {} : { pathEnvironment: options.pathEnvironment }),
   });
   if (!profileMatches(provider, profile)) throw new KiokukoError('CONFLICT', 'Embedding provider profile does not match the active profile');
   const backend = options.backend ?? (() => {

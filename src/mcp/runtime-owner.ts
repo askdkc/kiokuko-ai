@@ -67,6 +67,7 @@ export class McpRuntimeOwner implements McpDatabaseOwner {
     });
     const config = this.#options.embeddingConfig;
     const opened = await openEmbeddingDatabase(databasePath, {
+      pathEnvironment: this.#options,
       ...(config === undefined ? {} : { config }),
       openDatabase: this.#options.openDatabase ?? openConnection,
       ...(this.#options.embeddingBackend === undefined ? {} : { backend: this.#options.embeddingBackend }),
@@ -79,6 +80,7 @@ export class McpRuntimeOwner implements McpDatabaseOwner {
     let embeddingWorker: EmbeddingWorker | undefined;
     try {
       runtime = createEmbeddingRuntime(database, config, {
+        pathEnvironment: this.#options,
         ...(this.#options.embeddingProvider === undefined ? {} : { provider: this.#options.embeddingProvider }),
         ...(opened.backend === undefined ? {} : { backend: opened.backend }),
         enqueueWrite: <T>(operation: () => T | PromiseLike<T>) => queue.enqueue(operation) as Promise<T>,

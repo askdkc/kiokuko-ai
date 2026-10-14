@@ -1,3 +1,5 @@
+import type { PathEnvironment } from '../config/paths.js';
+import { importOptionalRuntime } from './optional-runtime.js';
 import { KiokukoError } from '../errors.js';
 import { verifyInstalledModelDirectory } from './model-manifest.js';
 import { LOCAL_SMALL_PRESET } from './presets/local-small.js';
@@ -45,6 +47,7 @@ export function createLocalTransformersModelLoader(
   options: {
     readonly pipeline?: (task: string, model: string, options: Record<string, unknown>) => Promise<FeatureExtractionPipeline>;
     readonly verifyInstallation?: boolean;
+    readonly pathEnvironment?: PathEnvironment;
   } = {},
 ): LocalModelLoader {
   return {
@@ -75,7 +78,7 @@ export function createLocalTransformersModelLoader(
       let pipeline = options.pipeline;
       if (pipeline === undefined) {
         try {
-          const transformers = await import('@huggingface/transformers');
+          const transformers = await importOptionalRuntime('@huggingface/transformers', options.pathEnvironment);
           transformers.env.localModelPath = `${modelDirectory.endsWith('/') ? modelDirectory : `${modelDirectory}/`}`;
           transformers.env.allowLocalModels = true;
           transformers.env.allowRemoteModels = false;

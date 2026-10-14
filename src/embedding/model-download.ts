@@ -1,3 +1,5 @@
+import type { PathEnvironment } from '../config/paths.js';
+import { importOptionalRuntime } from './optional-runtime.js';
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { KiokukoError } from '../errors.js';
@@ -35,11 +37,11 @@ function aborted(signal: AbortSignal | undefined): void {
   if (signal?.aborted) throw new KiokukoError('SERVICE_UNAVAILABLE', 'Embedding model download was interrupted');
 }
 
-export function createHuggingFaceModelDownloader(options: { readonly downloadFile?: HubDownloadFile } = {}): ModelDownloader {
+export function createHuggingFaceModelDownloader(options: { readonly downloadFile?: HubDownloadFile; readonly pathEnvironment?: PathEnvironment } = {}): ModelDownloader {
   return {
     download: async (preset, stagingDirectory, downloadOptions = {}) => {
       validatePresetManifest(preset);
-      const downloadFile = options.downloadFile ?? (await import('@huggingface/hub')).downloadFile as HubDownloadFile;
+      const downloadFile = options.downloadFile ?? (await importOptionalRuntime('@huggingface/hub', options.pathEnvironment)).downloadFile as HubDownloadFile;
       const manifest = createModelManifest(preset);
       await mkdir(stagingDirectory, { recursive: true, mode: 0o700 });
       let completedBytes = 0;

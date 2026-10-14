@@ -1,3 +1,5 @@
+import type { PathEnvironment } from '../config/paths.js';
+import { importOptionalRuntime } from './optional-runtime.js';
 import path from 'node:path';
 
 export const SQLITE_VEC_LOADER_ID = 'sqlite-vec' as const;
@@ -37,13 +39,12 @@ export function isSqliteVecLoader(value: unknown): value is SqliteVecLoader {
 }
 
 /** Resolve only the exact, package-owned sqlite-vec loader. */
-export async function createSqliteVecLoader(): Promise<SqliteVecLoader | null> {
+export async function createSqliteVecLoader(options: PathEnvironment = {}): Promise<SqliteVecLoader | null> {
   let candidate: unknown;
   try {
     // Keep the package name constant so optional dependency resolution cannot
     // become an extension-path configuration surface.
-    const packageName: string = 'sqlite-vec';
-    candidate = await import(packageName);
+    candidate = await importOptionalRuntime('sqlite-vec', options);
   } catch {
     return null;
   }

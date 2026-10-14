@@ -1,3 +1,4 @@
+import type { PathEnvironment } from '../config/paths.js';
 import { KiokukoError } from '../errors.js';
 import { normalizeVector } from './vector.js';
 import { createLocalTransformersModelLoader, type LocalModelLoader, type LocalModelRuntime } from './local-model-loader.js';
@@ -22,6 +23,7 @@ export interface LocalTransformersEmbeddingProviderOptions {
   readonly profile: LocalEmbeddingProfileIdentity;
   readonly modelDirectory: string;
   readonly loader?: LocalModelLoader;
+  readonly pathEnvironment?: PathEnvironment;
 }
 
 export class LocalTransformersEmbeddingProvider implements EmbeddingProvider {
@@ -35,7 +37,7 @@ export class LocalTransformersEmbeddingProvider implements EmbeddingProvider {
     if (options.profile.providerKind !== 'local-transformers') throw new KiokukoError('VALIDATION_ERROR', 'Local provider profile is invalid');
     this.profile = Object.freeze({ ...options.profile });
     this.#modelDirectory = options.modelDirectory;
-    this.#loader = options.loader ?? createLocalTransformersModelLoader();
+    this.#loader = options.loader ?? createLocalTransformersModelLoader(options);
   }
 
   async #load(): Promise<LocalModelRuntime> {

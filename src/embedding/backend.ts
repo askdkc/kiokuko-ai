@@ -1,3 +1,4 @@
+import type { PathEnvironment } from '../config/paths.js';
 import type { SqliteDatabase } from '../db/adapter.js';
 import { openConnection, SqliteVecLoadError, type ConnectionOptions } from '../db/connection.js';
 import { KiokukoError } from '../errors.js';
@@ -13,6 +14,7 @@ export type EmbeddingDatabaseOpener = (
 ) => SqliteDatabase | PromiseLike<SqliteDatabase>;
 
 export interface OpenEmbeddingDatabaseOptions {
+  readonly pathEnvironment?: PathEnvironment;
   readonly config?: EmbeddingConfig;
   readonly openDatabase?: EmbeddingDatabaseOpener;
   readonly createLoader?: () => Promise<SqliteVecLoader | null>;
@@ -92,7 +94,7 @@ export async function openEmbeddingDatabase(
     return { database: await openDatabase(databasePath), backend: javascriptBackend };
   }
 
-  const loader = await (options.createLoader ?? createSqliteVecLoader)();
+  const loader = await (options.createLoader ?? (() => createSqliteVecLoader(options.pathEnvironment)))();
   if (loader === null) {
     if (config.vectorBackend === 'sqlite-vec') forcedSqliteVecUnavailable();
     return { database: await openDatabase(databasePath), backend: javascriptBackend };

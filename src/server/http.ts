@@ -401,6 +401,7 @@ export async function startHttpServer(options: HttpServerOptions = {}): Promise<
         : defaultEmbeddingConfig());
     const configuredEmbeddingBackend = options.dependencies?.embeddingBackend ?? options.embeddingBackend;
     const opened = await openEmbeddingDatabase(databasePath, {
+      pathEnvironment: options,
       ...(embeddingConfig === undefined ? {} : { config: embeddingConfig }),
       openDatabase,
       ...(configuredEmbeddingBackend === undefined ? {} : { backend: configuredEmbeddingBackend }),
@@ -429,6 +430,7 @@ export async function startHttpServer(options: HttpServerOptions = {}): Promise<
       ?? options.createEmbeddingRuntime
       ?? ((runtimeDatabase, config, runtimeOptions) => createEmbeddingRuntime(runtimeDatabase, config, runtimeOptions));
     const runtime = await createRuntime(database, embeddingConfig, {
+      pathEnvironment: options,
       ...((options.dependencies?.embeddingProvider ?? options.embeddingProvider) === undefined
         ? {}
         : { provider: options.dependencies?.embeddingProvider ?? options.embeddingProvider }),

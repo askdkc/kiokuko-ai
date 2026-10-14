@@ -1,7 +1,4 @@
 import { summarizeProjectAgentRefresh, formatProjectAgentRefresh } from '../setup/project-agent-refresh.js';
-import { spawn } from 'node:child_process';
-import { dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import type { Command } from 'commander';
 import { KiokukoError } from '../errors.js';
 import type { SqliteDatabase } from '../db/adapter.js';
@@ -15,6 +12,7 @@ import {
   readActiveEmbeddingProfile,
 } from '../embedding/store.js';
 import { LOCAL_SMALL_PRESET } from '../embedding/presets/local-small.js';
+import { checkOptionalRuntime, installOptionalRuntime, optionalRuntimeDirectory } from '../embedding/optional-runtime.js';
 import { createEmbeddingRuntime } from '../embedding/runtime.js';
 import type {
   EmbeddingConfig,
@@ -38,63 +36,6 @@ import {
 
 const MAX_SYNC_JOBS = 64;
 const DRAIN_DEADLINE_MS = 120_000;
-const OPTIONAL_RUNTIME_PACKAGES = [
-  '@huggingface/hub@2.16.1',
-  '@huggingface/transformers@4.2.0',
-  'sqlite-vec@0.1.9',
-] as const;
-const OPTIONAL_RUNTIME_IMPORTS = [
-  '@huggingface/hub',
-  '@huggingface/transformers',
-] as const;
-const OPTIONAL_RUNTIME_SCRIPT_ARGS = ['--allow-scripts=onnxruntime-node,sharp,protobufjs'] as const;
-const OPTIONAL_RUNTIME_INSTALL_ARGS = [
-  'install',
-  '--global',
-  ...OPTIONAL_RUNTIME_PACKAGES,
-  ...OPTIONAL_RUNTIME_SCRIPT_ARGS,
-] as const;
-
-function runningPackageRoot(): string {
-  return dirname(dirname(dirname(fileURLToPath(import.meta.url))));
-}
-
-export interface OptionalRuntimeInstallInvocation {
-  readonly command: 'npm' | 'sudo';
-  readonly args: readonly string[];
-  readonly cwd?: string;
-}
-
-/** Select the npm invocation without assuming that every Unix prefix needs root. */
-export function optionalRuntimeInstallInvocation(
-  platform: NodeJS.Platform = process.platform,
-  packageRoot = runningPackageRoot(),
-): OptionalRuntimeInstallInvocation {
-  if (platform === 'darwin') {
-    return {
-      command: 'npm',
-      args: [
-        'install',
-        '--no-save',
-        '--package-lock=false',
-        '--omit=dev',
-        // These packages are also devDependencies in the source checkout. Without
-        // this hint, npm classifies explicit no-save installs as dev dependencies
-        // and --omit=dev silently leaves them out of a published global install.
-        '--save-prod',
-        '--prefix',
-        packageRoot,
-        ...OPTIONAL_RUNTIME_PACKAGES,
-      ],
-      cwd: packageRoot,
-    };
-  }
-  const args = [...OPTIONAL_RUNTIME_INSTALL_ARGS];
-  return platform === 'linux'
-    ? { command: 'sudo', args: ['npm', ...args] }
-    : { command: 'npm', args };
-}
-
 export type EmbeddingsDatabaseRunner = <T>(operation: (
   database: SqliteDatabase,
   backend?: VectorSearchBackend,
@@ -133,70 +74,16 @@ export interface EmbeddingsCommandDependencies {
   readonly acquireSetupLock?: (options?: PathEnvironment) => Promise<EmbeddingSetupLock>;
 }
 
-export async function checkOptionalRuntime(packageRoot = runningPackageRoot()): Promise<void> {
-  try {
-    await new Promise<void>((resolve, reject) => {
-      const source = `await Promise.all(${JSON.stringify(OPTIONAL_RUNTIME_IMPORTS)}.map((name) => import(name)));`;
-      const child = spawn(process.execPath, ['--input-type=module', '--eval', source], {
-        cwd: packageRoot,
-        stdio: ['ignore', 'ignore', 'pipe'],
-      });
-      let stderr = '';
-      child.stderr.setEncoding('utf8');
-      child.stderr.on('data', (chunk: string) => {
-        if (stderr.length < 16_384) stderr += chunk;
-      });
-      child.once('error', reject);
-      child.once('exit', (code, signal) => {
-        if (code === 0) {
-          resolve();
-          return;
-        }
-        const detail = stderr.trim();
-        reject(new Error(detail || (signal === null ? `exit code ${code ?? 'unknown'}` : `signal ${signal}`)));
-      });
-    });
-  } catch (error) {
-    const cause = error instanceof Error ? `: ${error.message}` : '';
-    throw new KiokukoError(
-      'SERVICE_UNAVAILABLE',
-      `Local semantic retrieval dependencies are unavailable${cause}`,
-    );
-  }
-}
-
-async function installOptionalRuntime(): Promise<void> {
-  const { command, args, cwd } = optionalRuntimeInstallInvocation();
-  try {
-    await new Promise<void>((resolve, reject) => {
-      const child = spawn(command, args, { stdio: ['inherit', process.stderr, 'inherit'], ...(cwd === undefined ? {} : { cwd }) });
-      child.once('error', reject);
-      child.once('exit', (code, signal) => {
-        if (code === 0) {
-          resolve();
-          return;
-        }
-        reject(new Error(signal === null ? `exit code ${code ?? 'unknown'}` : `signal ${signal}`));
-      });
-    });
-  } catch (error) {
-    const cause = error instanceof Error ? `: ${error.message}` : '';
-    throw new KiokukoError(
-      'SERVICE_UNAVAILABLE',
-      `Automatic installation of the local semantic retrieval dependencies failed${cause}. Run this command from an interactive terminal and try again.`,
-    );
-  }
-}
-
 async function ensureOptionalRuntime(dependencies: EmbeddingsCommandDependencies): Promise<void> {
+  const check = dependencies.optionalRuntimeChecker ?? (() => checkOptionalRuntime(optionalRuntimeDirectory(dependencies.pathEnvironment)));
   try {
-    await (dependencies.optionalRuntimeChecker ?? checkOptionalRuntime)();
+    await check();
     return;
   } catch {
     // A failed probe means that the optional runtime needs provisioning.
   }
   try {
-    await (dependencies.optionalRuntimeInstaller ?? installOptionalRuntime)();
+    await (dependencies.optionalRuntimeInstaller ?? (() => installOptionalRuntime(dependencies.pathEnvironment)))();
   } catch (error) {
     if (error instanceof KiokukoError && error.code === 'SERVICE_UNAVAILABLE') throw error;
     const cause = error instanceof Error ? `: ${error.message}` : '';
@@ -206,7 +93,7 @@ async function ensureOptionalRuntime(dependencies: EmbeddingsCommandDependencies
     );
   }
   try {
-    await (dependencies.optionalRuntimeChecker ?? checkOptionalRuntime)();
+    await check();
   } catch (error) {
     const cause = error instanceof Error ? `: ${error.message}` : '';
     throw new KiokukoError(
@@ -247,8 +134,10 @@ function embeddingConfig(environment: NodeJS.ProcessEnv | undefined): EmbeddingC
 function runtimeOptions(dependencies: EmbeddingsCommandDependencies): {
   provider?: EmbeddingProvider;
   backend?: VectorSearchBackend;
+  pathEnvironment?: PathEnvironment;
 } {
   return {
+    ...(dependencies.pathEnvironment === undefined ? {} : { pathEnvironment: dependencies.pathEnvironment }),
     ...(dependencies.provider === undefined ? {} : { provider: dependencies.provider }),
     ...(dependencies.backend === undefined ? {} : { backend: dependencies.backend }),
   };
@@ -420,7 +309,7 @@ export function registerSetupCommand(command: Command, dependencies: EmbeddingsC
       const executeSetup = async () => {
         if (!dryRun && embeddingsEnabled) {
           if (!options.json) (dependencies.setupOutput ?? process.stdout).write('Preparing local semantic search. The first run may download the model; later runs reuse it.\n');
-          if (options.offline) await (dependencies.optionalRuntimeChecker ?? checkOptionalRuntime)();
+          if (options.offline) await (dependencies.optionalRuntimeChecker ?? (() => checkOptionalRuntime(optionalRuntimeDirectory(dependencies.pathEnvironment))))();
           else await ensureOptionalRuntime(dependencies);
         }
         const setup = await runSetupFlow<Pick<SetupResult, 'client' | 'projectAgentFiles'>>({

@@ -198,7 +198,7 @@ async function withDatabase<T>(
 }
 
 async function withEmbeddingDatabase<T>(
-  dependencies: Pick<CliDependencies, 'embeddingEnvironment' | 'embeddingBackend'>,
+  dependencies: Pick<CliDependencies, 'embeddingEnvironment' | 'embeddingBackend' | 'setupEnvironment'>,
   operation: (database: SqliteDatabase, backend?: VectorSearchBackend) => T | Promise<T>,
   options: Parameters<typeof initializeDatabase>[0] = {},
 ): Promise<T> {
@@ -207,6 +207,7 @@ async function withEmbeddingDatabase<T>(
     ? undefined
     : parseEmbeddingConfig(dependencies.embeddingEnvironment);
   const opened = await openEmbeddingDatabase(initialized.databasePath, {
+    ...(dependencies.setupEnvironment === undefined ? {} : { pathEnvironment: dependencies.setupEnvironment }),
     ...(config === undefined ? {} : { config }),
     ...(dependencies.embeddingBackend === undefined ? {} : { backend: dependencies.embeddingBackend }),
   });
@@ -261,7 +262,7 @@ function addWorkspaceOptions(command: Command): Command {
 }
 
 async function withPreparedSemanticRuntime<T>(
-  dependencies: Pick<CliDependencies, 'embeddingEnvironment' | 'embeddingProvider' | 'embeddingBackend'>,
+  dependencies: Pick<CliDependencies, 'embeddingEnvironment' | 'embeddingProvider' | 'embeddingBackend' | 'setupEnvironment'>,
   database: SqliteDatabase,
   selectedBackend: VectorSearchBackend | undefined,
   query: string,
@@ -271,6 +272,7 @@ async function withPreparedSemanticRuntime<T>(
     ? undefined
     : parseEmbeddingConfig(dependencies.embeddingEnvironment);
   const runtime = createEmbeddingRuntime(database, config, {
+    ...(dependencies.setupEnvironment === undefined ? {} : { pathEnvironment: dependencies.setupEnvironment }),
     ...(dependencies.embeddingProvider === undefined ? {} : { provider: dependencies.embeddingProvider }),
     ...((selectedBackend ?? dependencies.embeddingBackend) === undefined
       ? {}

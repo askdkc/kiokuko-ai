@@ -201,7 +201,7 @@ export async function runEmbeddingSetup(
       database.prepare('UPDATE embedding_setup_runs SET active_profile_id = ?, model_installation_id = ?, phase = \'embedding\', updated_at = ? WHERE setup_id = ?').run(profile.profileId, installation, setupNow, setupId);
       return result;
     });
-    const provider = options.provider ?? new (await import('./local-transformers-provider.js')).LocalTransformersEmbeddingProvider({ profile: profile.identity, modelDirectory: installed.directory });
+    const provider = options.provider ?? new (await import('./local-transformers-provider.js')).LocalTransformersEmbeddingProvider({ profile: profile.identity, modelDirectory: installed.directory, pathEnvironment: options });
     let drain;
     try {
       drain = await drainSetupJobs(database, provider, profile.profileId, activation.generation, options);
