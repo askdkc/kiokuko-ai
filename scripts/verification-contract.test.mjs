@@ -111,3 +111,42 @@ test('SIGTERM preserves an interrupted terminal result with no completion succes
    writeFileSync(file,JSON.stringify({...report,...change}));const observed=spawnSync(process.execPath,['scripts/verify.mjs','--status',file],{cwd:root,encoding:'utf8'});assert.equal(observed.status,1);assert.equal(JSON.parse(observed.stdout).completionReady,false);
   }
  });
+
+// Exercise npm itself, without publishing or depending on installed development packages.
+function publishFixture(t, failBuild = false) {
+ const root = mkdtempSync(path.join(tmpdir(), 'publish-lifecycle-'));
+ t.after(async () => (await import('node:fs')).rmSync(root, {recursive:true, force:true}));
+ const original = JSON.parse(readFileSync(new URL('../package.json', import.meta.url)));
+ const scripts = {...original.scripts};
+ for (const name of ['typecheck', 'test', 'test:evaluation']) scripts[name] = `node -e "console.error('duplicate CI check: ${name}');process.exit(73)"`;
+ scripts.build = failBuild ? 'node -e "process.exit(74)"' : 'node build.mjs';
+ writeFileSync(path.join(root, 'package.json'), JSON.stringify({name:original.name,version:original.version,type:'module',files:['dist'],scripts}));
+ writeFileSync(path.join(root, 'build.mjs'), "import{mkdirSync,writeFileSync}from'node:fs';mkdirSync('dist',{recursive:true});writeFileSync('dist/index.js','export const fresh = true;');");
+ return root;
+}
+function runPublishPreparation(root) {
+ return spawnSync(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'prepublishOnly'], {
+  cwd:root, encoding:'utf8', timeout:30000,
+  env:{...process.env,PATH:path.dirname(process.execPath)+path.delimiter+process.env.PATH,npm_config_offline:'true',npm_config_cache:path.join(root,'cache')}
+ });
+}
+test('publish preparation builds and packs without repeating CI checks', t => {
+ const root = publishFixture(t);
+ const result = runPublishPreparation(root);
+ assert.equal(result.status, 0, result.stdout + result.stderr);
+ assert.equal(readFileSync(path.join(root,'dist/index.js'),'utf8'), 'export const fresh = true;');
+ assert.match(result.stdout, /npm pack --dry-run/);
+ assert.match(result.stderr, /dist\/index.js/);
+ const definition = JSON.parse(readFileSync(new URL('verification.json', import.meta.url)));
+ const main = verificationPlan(definition,'main');
+ for (const id of ['typecheck','suite','retrieval']) assert.equal(main.checks.find(c=>c.id===id)?.status,'required', `${id} must remain required in CI main`);
+ const workflow = readFileSync(new URL('../.github/workflows/ci.yml', import.meta.url),'utf8');
+ assert.match(workflow, /npm run verify -- --profile main\b/);
+});
+test('publish preparation fails closed before packing when the build fails', t => {
+ const root = publishFixture(t, true);
+ const result = runPublishPreparation(root);
+ assert.equal(result.status, 74, result.stdout + result.stderr);
+ assert.doesNotMatch(result.stdout, /npm pack --dry-run/);
+ assert.equal(existsSync(path.join(root,'dist')),false);
+});
