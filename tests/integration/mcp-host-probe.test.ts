@@ -31,6 +31,14 @@ createInterface({input: process.stdin}).on('line', line => {
     mark('request');
     if (process.env.PROBE_MODE === 'exit') process.exit(12);
     if (process.env.PROBE_MODE === 'stall') return;
+    if (process.env.PROBE_MODE === 'protocol-error') {
+      process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:request.id,error:{code:-32602,message:'SECRET_TOKEN /private/user/path',data:{password:'SECRET_TOKEN'}}}) + '\\n');
+      return;
+    }
+    if (process.env.PROBE_MODE === 'coded-error' || process.env.PROBE_MODE === 'unsafe-code') {
+      reply(request.id, {isError:true,content:[{type:'text',text:'SECRET_TOKEN /private/user/path'}],structuredContent:{code:process.env.PROBE_MODE === 'coded-error'?'INTEGRITY_ERROR':'SECRET_TOKEN',retryable:false,message:'SECRET_TOKEN',details:{path:'/private/user/path'}}});
+      return;
+    }
     setTimeout(() => {
       mark('response');
       reply(request.id, request.method === 'tools/list'
@@ -71,4 +79,31 @@ test('host MCP probe rejects a tool error and still closes the child', async (t)
   const { options, events } = await fixture(t, 'tool-error');
   await assert.rejects(callMcpTool(options, 'task_prepare', {}), /MCP task_prepare failed/u);
   assert.ok((await readFile(events, 'utf8')).endsWith('eof\n'));
+});
+
+for (const mode of ['coded-error', 'unsafe-code', 'tool-error', 'protocol-error', 'exit', 'stall']) {
+  test(`host MCP diagnostics classify ${mode} without revealing response bodies or paths`, async t => {
+    const {options, events} = await fixture(t, mode);
+    const expectedKind = mode === 'exit' ? 'connection-closed' : mode === 'stall' ? 'timeout' : mode === 'protocol-error' ? 'protocol-error' : 'tool-error';
+    await assert.rejects(callMcpTool({...options, timeoutMs: mode === 'stall' ? 1000 : options.timeoutMs}, 'task_prepare', {}), (error: any) => {
+      assert.equal(error.diagnostic?.kind, expectedKind);
+      assert.equal(error.diagnostic?.phase, 'request');
+      if (mode === 'coded-error') { assert.equal(error.diagnostic?.code, 'INTEGRITY_ERROR'); assert.equal(error.diagnostic?.retryable, false); }
+      if (mode === 'unsafe-code' || mode === 'tool-error') assert.equal(error.diagnostic?.code, undefined);
+      if (mode === 'protocol-error') assert.equal(error.diagnostic?.code, -32602);
+      const serialized = JSON.stringify(error) + String(error.stack);
+      assert.doesNotMatch(serialized, /SECRET_TOKEN|private\/user|Tool returned an error/);
+      assert.ok(error.message.includes(JSON.stringify(error.diagnostic)), 'safe diagnostic must reach the existing CI message sink');
+      return true;
+    });
+    if (mode !== 'exit') assert.ok((await readFile(events, 'utf8')).endsWith('eof\n'));
+  });
+}
+test('host MCP diagnostics distinguish spawn failure from a tool response', async t => {
+  const {options} = await fixture(t);
+  await assert.rejects(callMcpTool({...options, cwd:path.join(options.cwd, 'missing')}, 'task_prepare', {}), (error:any) => {
+    assert.deepEqual(error.diagnostic, {kind:'spawn-error',phase:'connect',code:'ENOENT'});
+    assert.doesNotMatch(JSON.stringify(error) + String(error.stack), /server\.mjs|missing/);
+    return true;
+  });
 });
