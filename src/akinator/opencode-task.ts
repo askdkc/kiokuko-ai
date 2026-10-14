@@ -731,7 +731,7 @@ async function previewMemoryBeforeDiscovery(
         );
       },
     };
-  }, runtime);
+  }, runtime, true);
   return {
     selectionStateHash: preview.selectionStateHash,
     memoryUse: preview.value.memoryUse,
@@ -830,7 +830,7 @@ async function selectFinalTaskContext(
         );
       },
     };
-  }, runtime);
+  }, runtime, true);
   assertCurrentProjectManifest(input.project, input.manifestSnapshot);
   const context = currentOpenCodeTaskContext(input.database, input.runId, value.context);
   const run = authoritativeTaskRun(input.database, input.runId, context.status);

@@ -4,7 +4,7 @@ import { canonicalContentHash, compareCanonicalStrings } from '../serialization/
 import { readEntry, type EntryRecord } from '../memory/entries.js';
 import { decodeStoredStructuredScope, readEntryRevision } from '../memory/revisions.js';
 import { ensureGlobalWorkspace, GLOBAL_WORKSPACE, resolveProjectWorkspace, type ResolvedProjectWorkspace } from '../memory/workspaces.js';
-import { federatedEntries, type FederatedOrigin, type FederatedSearchObservation } from '../memory/federated-retrieval.js';
+import { federatedEntriesSnapshot, type FederatedOrigin, type FederatedSearchObservation } from '../memory/federated-retrieval.js';
 import { isRetrievableEntry } from '../memory/hybrid-retrieval.js';
 import { effectiveRetrievalScope, hasExplicitApplicability } from '../memory/structured-memory.js';
 import type { TaskProfile } from '../akinator/types.js';
@@ -613,12 +613,32 @@ function deliveryRequest(
   };
 }
 
+function assertScopedTaskProfile(database: SqliteDatabase, raw: ScopedContextQuery): void {
+  const run = scopedRunContext(database, raw.runId);
+  if (run !== null && run.profileHash !== canonicalContentHash(raw.taskProfile)) {
+    throw new KiokukoError('CONFLICT', 'Scoped context task profile does not match its run');
+  }
+}
+
 async function prepareScopedContext(
   database: SqliteDatabase,
   raw: ScopedContextQuery,
   requestedRuntime: HybridSearchRuntime,
   refreshDigest?: string,
 ): Promise<PreparedScopedContext> {
+  assertScopedTaskProfile(database, raw);
+  const resolvedProject = raw.project ?? await resolveProjectWorkspace(database, raw.cwd);
+  return prepareScopedContextSnapshot(database, raw, requestedRuntime, resolvedProject, refreshDigest);
+}
+
+// No asynchronous work may split the selection snapshot from its persistence.
+function prepareScopedContextSnapshot(
+  database: SqliteDatabase,
+  raw: ScopedContextQuery,
+  requestedRuntime: HybridSearchRuntime,
+  resolvedProject: ResolvedProjectWorkspace | undefined,
+  refreshDigest?: string,
+): PreparedScopedContext {
   const runtime = snapshotSemanticRuntime(requestedRuntime);
   const semanticIdentity = semanticQueryIdentity(runtime);
   const taskProfileHash = canonicalContentHash(raw.taskProfile);
@@ -626,7 +646,6 @@ async function prepareScopedContext(
   if (run !== null && run.profileHash !== taskProfileHash) {
     throw new KiokukoError('CONFLICT', 'Scoped context task profile does not match its run');
   }
-  const resolvedProject = raw.project ?? await resolveProjectWorkspace(database, raw.cwd);
   const project = resolvedProject === undefined ? undefined : { ...resolvedProject };
   if (run !== null && (project === undefined || run.workspace !== project.workspace)) {
     throw new KiokukoError('VALIDATION_ERROR', 'Scoped context run is invalid');
@@ -718,7 +737,7 @@ async function prepareScopedContext(
   }
   let observation: FederatedSearchObservation | undefined;
   const candidates = new Map<string, ScopedContextItem>();
-  const federated = project === undefined ? [] : await federatedEntries(database, {
+  const federated = project === undefined ? [] : federatedEntriesSnapshot(database, {
     project,
     ...(fingerprint === undefined ? {} : { fingerprint }),
     query: queryText,
@@ -818,9 +837,12 @@ function persistPreparedScopedContext(
   prepared: PreparedScopedContext,
   assertBeforePersist?: () => void,
   afterPersist?: (result: ScopedContextResult) => void,
+  inTransaction = false,
 ): ScopedContextResult {
+  const transact = <T>(operation: () => T): T => inTransaction
+    ? operation() : withImmediateTransaction(database, operation);
   if (prepared.pendingDelivery === null) {
-    return withImmediateTransaction(database, () => {
+    return transact(() => {
       assertPreparedScopedState(database, prepared);
       if (assertBeforePersist !== undefined) {
         assertBeforePersist();
@@ -831,7 +853,7 @@ function persistPreparedScopedContext(
     });
   }
   const request = prepared.pendingDelivery;
-  return withImmediateTransaction(database, () => {
+  return transact(() => {
     if (prepared.run === null) throw new KiokukoError('INTEGRITY_ERROR', 'Stored scoped context run is invalid');
     assertPreparedScopedState(database, prepared);
     if (assertBeforePersist !== undefined) {
@@ -866,7 +888,28 @@ export async function queryScopedContextGated<T>(
   raw: ScopedContextQuery,
   decide: (candidate: ScopedContextResult) => ScopedContextGateDecision<T>,
   runtime: HybridSearchRuntime = {},
+  atomic = false,
 ): Promise<ScopedContextGatedResult<T>> {
+  if (atomic) {
+    assertScopedTaskProfile(database, raw);
+    // Trusted synchronous gates only: they must not start a nested transaction.
+    // Public mutable gates retain the optimistic validation path below.
+    const project = raw.project ?? await resolveProjectWorkspace(database, raw.cwd);
+    return withImmediateTransaction(database, () => {
+      const prepared = prepareScopedContextSnapshot(database, raw, runtime, project);
+      const decision = normalizedScopedGateDecision<T>(decide(prepared.result));
+      if (!decision.persist) {
+        assertPreparedScopedState(database, prepared);
+        decision.assertBeforePersist?.();
+        assertPreparedScopedState(database, prepared);
+      }
+      return {
+        context: decision.persist ? persistPreparedScopedContext(database, prepared, decision.assertBeforePersist, undefined, true) : null,
+        value: decision.value,
+        selectionStateHash: prepared.selectionStateHash,
+      };
+    });
+  }
   const prepared = await prepareScopedContext(database, raw, runtime);
   const decision = normalizedScopedGateDecision<T>(decide(prepared.result));
   if (!decision.persist) {

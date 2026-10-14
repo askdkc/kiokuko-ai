@@ -142,7 +142,7 @@ async function fixture(target = 'budget sentinel', expected = 'bounded context')
   return { database, databasePath, project, runId: opened.runId };
 }
 
-test('rejects a scoped task profile that is not bound to the authoritative run before ranking or mutation', async () => {
+for (const atomic of [false, true]) test(`rejects an unbound scoped profile before mutation (atomic=${atomic})`, async () => {
   const { database, project, runId } = await fixture();
   let gateCalls = 0;
   const counts = () => ({
@@ -165,7 +165,7 @@ test('rejects a scoped task profile that is not bound to the authoritative run b
       }, () => {
         gateCalls += 1;
         return { persist: true, value: null };
-      }),
+      }, {}, atomic),
       (error: unknown) => (error as { code?: string }).code === 'CONFLICT'
         && (error as Error).message === 'Scoped context task profile does not match its run',
     );

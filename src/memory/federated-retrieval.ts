@@ -569,11 +569,11 @@ export interface FederatedSearchObservation {
   selectedMatches: number;
 }
 
-export async function federatedEntries(
+export function federatedEntriesSnapshot(
   database: SqliteDatabase,
   input: { project: ResolvedProjectWorkspace; query: string; limit: number; fingerprint?: ProjectFingerprint; observe?: (observation: FederatedSearchObservation) => void },
   runtime: HybridSearchRuntime = {},
-): Promise<FederatedEntry[]> {
+): FederatedEntry[] {
   const ranked = (workspace: string): RankedRecallHit[] => rankedEntryHits(database, { workspace, query: input.query, limit: Math.min(input.limit, 100) }, runtime).hits;
   const current = ranked(input.project.workspace).map((hit) => ({
     entry: readEntry(database, { workspace: input.project.workspace, entryId: hit.entryId }),
@@ -595,4 +595,13 @@ export async function federatedEntries(
     + retrievableWorkspaceEntryCount(database, GLOBAL_WORKSPACE), scopeExcludedMatches: globalLane.excluded,
     selectedMatches: selected.length });
   return selected;
+}
+
+/** Compatibility wrapper for callers that await federated retrieval. */
+export async function federatedEntries(
+  database: SqliteDatabase,
+  input: { project: ResolvedProjectWorkspace; query: string; limit: number; fingerprint?: ProjectFingerprint; observe?: (observation: FederatedSearchObservation) => void },
+  runtime: HybridSearchRuntime = {},
+): Promise<FederatedEntry[]> {
+  return federatedEntriesSnapshot(database, input, runtime);
 }

@@ -148,3 +148,56 @@ test('binds scoped replay to semantic query and projection state, then rejects a
     database.close();
   }
 });
+
+for (const persist of [false, true]) test(`learning cannot invalidate coherent task context (persist=${persist})`, async t => {
+  const root = await mkdtemp(path.join(tmpdir(), 'kiokuko-context-learning-race-'));
+  t.after(async () => (await import('node:fs/promises')).rm(root, { recursive: true, force: true }));
+  execFileSync('git', ['init', '-q', root]);
+  const database = openConnection(':memory:');
+  t.after(() => database.close());
+  migrateDatabase(database);
+  const project = await resolveProjectWorkspace(database, root);
+  assert.ok(project);
+  const taskProfile = { taskType: 'build' as const, target: 'learning race', expected: 'coherent context', constraints: null };
+  const service = new OpenCodeTaskRunDriver(database, { now: () => timestamp });
+  const opened = service.openRun({
+    idempotencyKey: 'context-learning-race',
+    request: {
+      workspace: project.workspace,
+      client: { kind: 'context-learning-race-test' },
+      task: { title: 'Learning race', query: 'learning race', profileHints: taskProfile },
+      captureProfile: 'minimal',
+      coverage: { run: 'unavailable', tool: 'unavailable', command: 'unavailable', file: 'unavailable', approval: 'unavailable' },
+      metadata: {},
+    },
+  });
+  const query = { project, runId: opened.runId, task: 'learning race', taskProfile };
+  const old = recordEntry(database, { workspace: project.workspace, kind: 'lesson', status: 'verified', title: 'Learning race', body: 'Learning race context should remain coherent.' });
+  const pending = queryScopedContextGated(database, query, candidate => ({ persist, value: candidate }), {}, true);
+  // A real learning write occupies the old asynchronous selection/persistence gap.
+  const learned = recordEntry(database, { workspace: project.workspace, kind: 'lesson', status: 'verified', title: 'Learning race update', body: 'Learning race newly observed context.' });
+  const result = await pending;
+  const delivered = result.context ?? result.value;
+  assert.ok(delivered.items.some(item => item.entryId === old.id));
+  assert.ok(delivered.items.every(item => item.entryId === old.id || item.entryId === learned.id));
+  const deliveryCount = () => database.prepare('SELECT COUNT(*) AS n FROM context_deliveries').get<{ n: number }>()!.n;
+  assert.equal(deliveryCount(), persist ? 1 : 0);
+  if (persist) assert.ok(result.context?.deliveryId);
+  else assert.equal(result.context, null);
+  const next = await queryScopedContext(database, query);
+  assert.ok(next.items.some(item => item.entryId === learned.id));
+
+  const countBeforeRejection = deliveryCount();
+  const stamp = () => database.prepare('SELECT updated_at AS stamp FROM entries WHERE id = ?').get<{ stamp: string }>(old.id)!.stamp;
+  const beforeRejection = stamp();
+  await assert.rejects(queryScopedContextGated(database, { ...query, task: 'rejected delivery' }, () => ({
+    persist: true,
+    value: null,
+    assertBeforePersist: () => {
+      database.prepare('UPDATE entries SET updated_at = ? WHERE id = ?').run('rejected-marker', old.id);
+      throw new Error('gate rejection sentinel');
+    },
+  }), {}, true), /gate rejection sentinel/);
+  assert.equal(stamp(), beforeRejection);
+  assert.equal(deliveryCount(), countBeforeRejection);
+});
