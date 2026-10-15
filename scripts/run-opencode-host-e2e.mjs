@@ -231,6 +231,11 @@ export async function runHostContract(options = {}) {
     OPENCODE_CONFIG_DIR: path.join(config, 'opencode'),
     OPENCODE_CONFIG_CONTENT: '{}',
     XDG_DATA_HOME: data,
+    XDG_CACHE_HOME: path.join(root, 'cache'),
+    XDG_STATE_HOME: path.join(root, 'state'),
+    OPENCODE_DISABLE_AUTOUPDATE: 'true',
+    OPENCODE_DISABLE_DEFAULT_PLUGINS: 'true',
+    OPENCODE_DISABLE_MODELS_FETCH: 'true',
     KIOKUKO_DATA_DIR: data,
     KIOKUKO_SKILL_DISCOVERY: 'off',
     NPM_CONFIG_CACHE: process.env.KIOKUKO_TEST_NPM_CACHE ?? path.join(tmpdir(), 'kiokuko-opencode-npm-cache'),
@@ -316,8 +321,16 @@ export async function runHostContract(options = {}) {
       const sources = configured.map(item => ({ type: item.type, path: item.path, pluginPackages: item.info?.plugins?.map(entry => entry.package) }));
       throw new Error(`packed_plugin_not_active:${plugin?.state.status ?? 'missing'}:source=${JSON.stringify(plugin?.source)}:configured=${JSON.stringify(sources)}:registry=${JSON.stringify(registry.diagnostics())}:${server.diagnostics()}`);
     }
-    const mcp = await server.client.mcp.list({ location });
-    if (mcp.data.find(item => item.name === 'kiokuko')?.status.status !== 'connected') throw new Error('OpenCode Kiokuko MCP is not connected');
+    // Plugin activation and the asynchronous MCP startup settle separately.
+    const mcpDeadline = Date.now() + 30_000;
+    let mcpStatus;
+    do {
+      const mcp = await server.client.mcp.list({ location });
+      mcpStatus = mcp.data.find(item => item.name === 'kiokuko')?.status.status;
+      if (mcpStatus === 'connected') break;
+      await new Promise(resolve => setTimeout(resolve, 100));
+    } while (Date.now() < mcpDeadline);
+    if (mcpStatus !== 'connected') throw new Error(`OpenCode Kiokuko MCP is not connected (${mcpStatus ?? 'missing'})`);
     const doctorRun = await requireSuccess(process.execPath, [cliScript, 'doctor', '--opencode-url', server.url, '--json'], {
       cwd: project, env: { ...environment, OPENCODE_PASSWORD: server.password }, timeoutMs: 45_000, label: 'doctor',
     });
@@ -341,34 +354,32 @@ export async function runHostContract(options = {}) {
     if (!ordinaryContext.some(item => item.type === 'assistant' && item.time.completed !== undefined)) {
       throw new Error('ordinary_untracked_session_did_not_complete');
     }
-    // Observe the real host publisher, pinned CLI and SQLite consumer, not a
-    // fabricated event callback. The deterministic provider remains explicit.
+    // Native completion, feedback, compaction and model switching are not consent.
     const { openConnection: openLearningConnection } = await import('../dist/db/connection.js');
-    const learningDb = openLearningConnection(path.join(data, 'kiokuko-ai.sqlite'), { readOnly: true });
+    const { createApprovedReplayMemoryStore } = await import('../dist/memory/replay-store.js');
+    const { resolveProjectWorkspace } = await import('../dist/memory/workspaces.js');
+    const learningDb = openLearningConnection(path.join(data, 'kiokuko-ai.sqlite'));
     try {
-      const observation = kind => learningDb.prepare(`SELECT observation_json FROM learning_observations
-        WHERE session_id=? AND json_extract(observation_json,'$.kind')=? AND tombstone=0 ORDER BY rowid DESC LIMIT 1`)
-        .get(ordinarySession.id, kind);
-      await waitFor(() => Boolean(observation('completion')), 'native_learning_completion', 15_000);
-      if (parseJson(observation('completion').observation_json, 'learning_completion').verification !== 'unknown') throw new Error('host_turn_was_mistaken_for_verification');
       await server.client.session.switchModel({ sessionID: ordinarySession.id, model: { providerID: 'fixture', id: 'fixture-next-model' } });
-      await waitFor(() => Boolean(observation('model_switch')), 'native_learning_model_switch', 15_000);
-      const switched = parseJson(observation('model_switch').observation_json, 'learning_model_switch');
-      const previousModel = ordinaryContext.findLast(item => item.type === 'assistant').model;
-      const previousReference = `${previousModel.providerID}/${previousModel.id}${previousModel.variant ? '#' + previousModel.variant : ''}`;
-      if (switched.fromModel !== previousReference || switched.toModel !== 'fixture/fixture-next-model') throw new Error('native_model_handoff_identity_missing');
-      const cautionIssue = 'Migration startup is still broken. Check the ordinary startup before reporting completion.';
-      await server.client.session.prompt({ sessionID: ordinarySession.id, text: cautionIssue });
+      await server.client.session.prompt({ sessionID: ordinarySession.id, text: 'Migration startup is still broken. This feedback is not consent to save memory.' });
       await server.client.session.wait({ sessionID: ordinarySession.id });
-      await waitFor(() => Boolean(observation('complaint')), 'native_learning_feedback', 15_000);
-      const learningCautionEventId = parseJson(observation('complaint').observation_json, 'learning_complaint').eventId;
       await server.client.session.compact({ sessionID: ordinarySession.id });
       await server.client.session.wait({ sessionID: ordinarySession.id });
-      await waitFor(() => Boolean(observation('compaction')), 'native_learning_compaction', 15_000);
-      if (parseJson(observation('compaction').observation_json, 'learning_compaction').verification !== 'unknown') throw new Error('compaction_was_mistaken_for_verification');
+      if (learningDb.prepare('SELECT COUNT(*) AS count FROM learning_observations WHERE session_id=?').get(ordinarySession.id).count !== 0) throw new Error('native_event_persisted_without_human_approval');
+      // Approved historical fixture only: this tests delivery, not human UI approval.
+      // Native approval is independently exercised through actual MCP elicitation and TUI/IPC tests.
+      const projectBinding = await resolveProjectWorkspace(learningDb, projectRoot);
+      const issue = 'Verify migration startup using the current repository regression.';
+      const proposalId = 'approved-host-fixture';
+      createApprovedReplayMemoryStore(learningDb, projectBinding.workspace).save({
+        schemaVersion: 1, proposalId, revision: 1,
+        source: { workspace: projectBinding.workspace, taskId: 'historical-fixture', sessionId: 'historical-session', traces: [] },
+        request: { text: 'Migration startup regression', evidenceRefs: [] }, languages: [], attempts: [],
+        findings: [{ kind: 'key_point', text: issue, basis: 'user_corrected', evidenceRefs: [] }],
+        tags: ['migration'], keywords: ['migration', 'startup'],
+      }, createHash('sha256').update(proposalId).digest('hex'));
       const nextSession = await server.client.session.create({ location, model: { providerID: 'fixture', id: 'fixture-next-model' } });
-      // Arm only after compaction: its requests cannot prove next-session delivery.
-      learningProbe = createLearningDeliveryProbe({ sessionId: nextSession.id, eventId: learningCautionEventId, issue: cautionIssue });
+      learningProbe = createLearningDeliveryProbe({ sessionId: nextSession.id, eventId: proposalId, issue, reviewed: true });
       learningDelivery = await waitForLearningDelivery(server.client, nextSession.id, learningProbe);
     } finally { learningDb.close(); }
 
@@ -526,7 +537,7 @@ export async function runHostContract(options = {}) {
       await new Promise(resolve => setTimeout(resolve, 1_200));
       if (fixture.stats.continuationRequests !== requestsBeforeReload) throw new Error('reload_duplicated_continuation');
     }
-    process.stdout.write(`${JSON.stringify({ protocolVersion: 2, status: 'passed', opencodeVersion: health.version, plugin: 'active', mcp: 'connected', toolCatalog: toolNames.length, hook: hookResponse.code, fixtureRequests: fixture.stats.chatCompletions, ordinaryVerified: true, learningVerified: true, learningDelivery, learningCompactionVerified: true, preparedEnnoStatus: ideal.ennoOduno.status, continuationRequests: fixture.stats.continuationRequests, durableReceipts: 1, executionVerified, compactionVerified, reloadVerified: Boolean(options.execution), fixtureDigests: fixture.stats.requestDigests.map((value) => value.slice(0, 16)) })}\n`);
+    process.stdout.write(`${JSON.stringify({ protocolVersion: 2, status: 'passed', opencodeVersion: health.version, plugin: 'active', mcp: 'connected', toolCatalog: toolNames.length, hook: hookResponse.code, fixtureRequests: fixture.stats.chatCompletions, ordinaryVerified: true, learningVerified: true, learningDelivery, automaticLearningWrites: false, nativeHumanReviewVerified: false, learningCompactionVerified: true, preparedEnnoStatus: ideal.ennoOduno.status, continuationRequests: fixture.stats.continuationRequests, durableReceipts: 1, executionVerified, compactionVerified, reloadVerified: Boolean(options.execution), fixtureDigests: fixture.stats.requestDigests.map((value) => value.slice(0, 16)) })}\n`);
     completeVerification({ordinaryVerified:true,executionVerified,compactionVerified,reloadVerified:Boolean(options.execution)});
   } finally {
     await server.close();

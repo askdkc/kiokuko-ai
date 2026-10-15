@@ -11,6 +11,9 @@ import { createKiokukoMcpServer } from "../../src/mcp/server.js";
 import { openConnection } from "../../src/db/connection.js";
 import { parseRetrievalQuery } from "../../src/memory/retrieval-query.js";
 import { recallScopedMemory } from "../../src/memory/scoped-memory.js";
+import { recordEntryInTransaction } from "../../src/memory/entries.js";
+import { reviewCompletedReplay } from "../../src/memory/replay-review.js";
+import { createApprovedReplayMemoryStore } from "../../src/memory/replay-store.js";
 import { resolveProjectWorkspace } from "../../src/memory/workspaces.js";
 
 type TaskPrepareResult = {
@@ -78,19 +81,42 @@ async function startServer(
   return client;
 }
 
+// Retrieval fixtures still assert that model checkpoint arguments cannot save.
+// Only this host-owned review fixture seeds the exact approved policy below.
 async function checkpointRules(
   client: Client,
+  databasePath: string,
+  repoRoot: string,
   title: string,
   body: string,
 ): Promise<MemoryCheckpointResult> {
-  const checkpoint = await client.callTool({
-    name: "memory_checkpoint",
-    arguments: {
-      memories: [{ kind: "lesson", title, body }],
-    },
-  });
-  assert.equal(checkpoint.isError, undefined);
-  return checkpoint.structuredContent as MemoryCheckpointResult;
+  const rejected = await client.callTool({ name: "memory_checkpoint", arguments: { memories: [{ kind: "lesson", title, body }] } });
+  assert.equal((rejected.structuredContent as { recorded?: boolean }).recorded, false);
+  const db = openConnection(databasePath);
+  try {
+    const project = (await resolveProjectWorkspace(db, repoRoot))!;
+    let stored: { status: string; workspace: string } | undefined;
+    const receipt = await reviewCompletedReplay({ completed: true, taskId: "policy-fixture", sessionId: "host-fixture", workspace: project.workspace,
+      ask: async question => {
+        if (question.phase === "review") { assert.ok(question.text.includes(title)); assert.ok(question.text.includes(body)); }
+        return { questionId: question.id, choice: question.phase === "organize" ? "organize" : "approve" };
+      },
+      extract: async () => ({ schemaVersion: 1, proposalId: "fixture", revision: 1,
+        source: { workspace: project.workspace, taskId: "policy-fixture", sessionId: "host-fixture", traces: [] },
+        request: { text: title, evidenceRefs: [] }, languages: [], attempts: [],
+        findings: [{ kind: "key_point", text: body, basis: "user_corrected", evidenceRefs: [] }], tags: ["policy"], keywords: [title] }),
+      save: async (proposal, key) => {
+        createApprovedReplayMemoryStore(db, project.workspace, () => {
+          const entry = recordEntryInTransaction(db, { workspace: project.workspace, kind: "lesson", status: "candidate", title, body,
+            scope: { visibility: "project" }, trustLevel: "untrusted", provenance: { type: "user_reviewed_replay", reference: key } });
+          stored = { status: "candidate", workspace: project.workspace };
+          return entry;
+        }).save(proposal, key);
+      },
+    });
+    assert.equal(receipt.status, "saved"); assert.ok(stored);
+    return { entries: [stored] };
+  } finally { db.close(); }
 }
 
 async function taskPrepare(
@@ -202,7 +228,7 @@ test("delivery smoke: a stored Japanese policy is delivered to the next build ta
   const client = await startServer(databasePath, repo);
   try {
     const stored = await checkpointRules(
-      client,
+      client, databasePath, repo,
       "リポジトリ保守ルール",
       "このリポジトリのマイグレーションは forward-only。過去のマイグレーションファイル(001, 002, 003 など)は絶対に編集・削除・リネームしない。変更は必ず新しい番号のマイグレーションファイルを追加して行う。",
     );
@@ -236,7 +262,7 @@ test(
     const client = await startServer(databasePath, repo);
     try {
       await checkpointRules(
-        client,
+        client, databasePath, repo,
         "データストア移行の方針",
         "データストアのマイグレーションは forward-only。過去のマイグレーションファイルは絶対に編集しない。新しい番号のファイルを追加する。",
       );
@@ -303,7 +329,7 @@ test("scope isolation smoke: writes under KIOKUKO_DATA_DIR never touch the user-
   const runClient = await startServer(runDatabasePath, repo);
   try {
     await checkpointRules(
-      runClient,
+      runClient, runDatabasePath, repo,
       "スコープ分離確認",
       "このエントリはラン専用DBへ書かれたことを確認するためのもの。",
     );

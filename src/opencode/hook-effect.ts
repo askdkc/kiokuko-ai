@@ -158,7 +158,7 @@ async function packageIdentityMatches(cliScript: string, read: typeof readFile):
   }
 }
 
-async function trustedInvocation(
+export async function trustedInvocation(
   dependencies: HookEffectDependencies,
 ): Promise<{ argv?: readonly string[]; failure?: 'cli_unavailable' | 'version_mismatch' }> {
   const check = dependencies.lstat ?? lstat;

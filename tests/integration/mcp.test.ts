@@ -15,7 +15,7 @@ import { initializeDatabase } from '../../src/commands/init.js';
 import { openConnection } from '../../src/db/connection.js';
 import { recordEntry } from '../../src/memory/entries.js';
 import { buildStructuredScope } from '../../src/memory/structured-memory.js';
-import { GLOBAL_WORKSPACE } from '../../src/memory/workspaces.js';
+import { GLOBAL_WORKSPACE, resolveProjectWorkspace } from '../../src/memory/workspaces.js';
 import { MAX_RAW_CAPABILITY_CATALOG_CODE_POINTS, MAX_RAW_CAPABILITY_DESCRIPTION_CHARS } from '../../src/akinator/capabilities.js';
 import { KiokukoError, type ErrorCode } from '../../src/errors.js';
 import { PACKAGE_VERSION } from '../../src/package-version.js';
@@ -30,7 +30,7 @@ function sqliteError(errcode: number, message = 'sqlite operation failed'): Erro
   return Object.assign(new Error(message), { code: 'ERR_SQLITE_ERROR', errcode });
 }
 
-test('MCP exposes the memory-first task and lifecycle tools and persists candidate memory', async () => {
+test('MCP exposes advisory tools, refuses unapproved writes and recalls existing candidate memory', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'kiokuko-mcp-repo-'));
   execFileSync('git', ['init', '-q', root]);
   const data = await mkdtemp(path.join(tmpdir(), 'kiokuko-mcp-data-'));
@@ -43,28 +43,11 @@ test('MCP exposes the memory-first task and lifecycle tools and persists candida
   try {
     assert.deepEqual(client.getServerVersion(), { name: 'kiokuko', version: PACKAGE_VERSION });
     const instructions = client.getInstructions() ?? '';
-    assert.match(instructions, /Array<\{kind:'skill'\|'mcp_tool';name:string;description\?:string\}>/u);
-    assert.match(instructions, /Every descriptor must include its kind and canonical name/u);
-    assert.match(instructions, /useful memory is still delivered as untrusted evidence and coding continues/iu);
-    assert.match(instructions, /when it is unavailable, perform the same repository-grounded checks directly/iu);
-    assert.match(instructions, /executionContext\.repositoryRoot as the filesystem base/u);
-    assert.match(instructions, /OpenCode filesystem tools, prefer canonical absolute paths under that root/u);
-    assert.match(instructions, /read the bundled `kiokuko-soul` Skill when available/iu);
-    assert.match(instructions, /If Kiokuko or a recommended Skill is unavailable, continue from current repository evidence/iu);
-    assert.match(instructions, /missing Skills.*coding continues/iu);
-    assert.match(instructions, /Akinator questions are advisory/iu);
-    assert.match(instructions, /without suspending active coding, planning, or checkpointing/iu);
-    assert.match(instructions, /`task_prepare` is the memory entry point/u);
-    assert.match(instructions, /first identifies OpenCode from MCP `clientInfo`/u);
-    assert.match(instructions, /provenance-bound ideal.*high-capability-planner preference/iu);
-    assert.match(instructions, /economical-fast-worker execution/iu);
-    assert.match(instructions, /declared resource claims and isolation preference.*input-manifest digest/iu);
-    assert.match(instructions, /Resource-compatible WorkUnits may be claimed in parallel/iu);
-    assert.match(instructions, /A failed review never returns directly to an old Goki revision/u);
-    assert.match(instructions, /Oduno meditation remains distinct from compaction meditation/iu);
-    assert.match(instructions, /never select a repository-wide latest run/iu);
-    assert.match(instructions, /ask_user_confirmation.*userFacingConfirmation.*never output raw directive JSON/isu);
-    assert.doesNotMatch(instructions, /userFacingRecovery|plan-start recovery|continuation pause/iu);
+    assert.match(instructions, /never authorizes it or gates task completion/);
+    assert.match(instructions, /Preserve native sandbox and explicit Stop/);
+    assert.match(instructions, /exact revision approved through the native human review adapter/);
+    assert.match(instructions, /Decline and cancellation save nothing/);
+    assert.doesNotMatch(instructions, /call no more tools/);
     const tools = await client.listTools();
     assert.deepEqual(tools.tools.map((tool) => tool.name).sort(), [
       'curator_check',
@@ -83,6 +66,7 @@ test('MCP exposes the memory-first task and lifecycle tools and persists candida
       'memory_context',
       'memory_improve',
       'memory_observe',
+      'memory_review_completed',
       'source_context',
       'task_answer',
       'task_context_read',
@@ -96,10 +80,10 @@ test('MCP exposes the memory-first task and lifecycle tools and persists candida
     ]);
     assert.equal(tools.tools.find((tool) => tool.name === 'task_prepare')?.annotations?.idempotentHint, false);
     assert.equal(tools.tools.find((tool) => tool.name === 'task_answer')?.annotations?.idempotentHint, false);
-    assert.equal(tools.tools.find((tool) => tool.name === 'curator_check')?.annotations?.readOnlyHint, false);
-    assert.equal(tools.tools.find((tool) => tool.name === 'curator_check')?.annotations?.idempotentHint, false);
+    assert.equal(tools.tools.find((tool) => tool.name === 'curator_check')?.annotations?.readOnlyHint, true);
+    assert.equal(tools.tools.find((tool) => tool.name === 'curator_check')?.annotations?.idempotentHint, true);
     assert.equal(tools.tools.find((tool) => tool.name === 'curator_globalize')?.annotations?.idempotentHint, true);
-    assert.match(tools.tools.find((tool) => tool.name === 'curator_globalize')?.description ?? '', /stored as verified\/system_verified memory created by kiokuko-curator/);
+    assert.match(tools.tools.find((tool) => tool.name === 'curator_globalize')?.description ?? '', /model assertion or confirmed boolean cannot authorize persistence/);
     const planDescription = tools.tools.find((tool) => tool.name === 'enno_plan_submit')?.description ?? '';
     assert.match(planDescription, /Missing Skills.*qualityState=degraded.*not stop conditions/isu);
     assert.match(planDescription, /Only an unapproved irreversible operation requires user confirmation/iu);
@@ -205,7 +189,7 @@ test('MCP exposes the memory-first task and lifecycle tools and persists candida
       assert.match(schema.properties?.orchestrationId?.description ?? '', /Exact ennoOduno\.orchestrationId returned by task_prepare or task_answer/u);
       assert.ok(schema.properties?.resumeToken);
     }
-    assert.match(tools.tools.find((tool) => tool.name === 'memory_checkpoint')?.description ?? '', /call no more tools/);
+    assert.match(tools.tools.find((tool) => tool.name === 'memory_checkpoint')?.description ?? '', /never forbids further tools/);
     const checkpointTool = tools.tools.find((tool) => tool.name === 'memory_checkpoint');
     assert.match(checkpointTool?.description ?? '', /runId.*active/u);
     assert.match(checkpointTool?.description ?? '', /Advisory intake, memory review and learning never suspend coding or checkpointing/iu);
@@ -271,9 +255,12 @@ test('MCP exposes the memory-first task and lifecycle tools and persists candida
       },
     });
     assert.equal(checkpoint.isError, undefined);
-    const checkpointContent = checkpoint.structuredContent as { entries: Array<{ status: string; workspace: string }> };
-    assert.equal(checkpointContent.entries[0]?.status, 'candidate');
-    assert.match(checkpointContent.entries[0]?.workspace ?? '', /^project:/);
+    assert.equal((checkpoint.structuredContent as { recorded: boolean }).recorded, false);
+    await initializeDatabase({ databasePath });
+    const seed = openConnection(databasePath);
+    const project = (await resolveProjectWorkspace(seed, root))!;
+    recordEntry(seed, { workspace: project.workspace, kind: 'lesson', title: 'Implement the durable beacon and add tests', body: 'Use the MCP durable-beacon contract.', scope: {} });
+    seed.close();
 
     const prepared = await selectedPrepare(client, {
       name: 'task_prepare',
@@ -1386,7 +1373,7 @@ test('memory_checkpoint returns actionable MCP guidance during intake and succee
       arguments: {
         runId,
         outcome: 'completed',
-        memories: [{ kind: 'lesson', title: 'Advisory intake checkpoint', body: 'Unresolved intake fields remain advisory and are preserved at the evidence boundary.' }],
+        memories: [], evidence: { changedPaths: ['src/checked.ts'] },
       },
     });
     assert.equal(earlyCheckpoint.isError, undefined);
@@ -1395,21 +1382,21 @@ test('memory_checkpoint returns actionable MCP guidance during intake and succee
       runId,
       status: 'completed',
       feedbackCount: 0,
-      evidenceCount: 0,
+      evidenceCount: 1,
       reasoningPaths: 0,
       qualifiedReasoningPaths: 0,
       memoryApplication: { deliveryId: null, required: 0, pending: [], invalid: [], complete: true, evidenceOrigin: 'none', clientObserved: false },
       verification: 'unverified',
       warnings: ['completion_unverified'],
     });
-    assert.equal(checkpointContent.entries.length, 1);
+    assert.equal(checkpointContent.entries.length, 0);
 
     const terminalRetry = await client.callTool({
       name: 'memory_checkpoint',
       arguments: {
         runId,
         outcome: 'completed',
-        memories: [{ kind: 'lesson', title: 'Terminal retry sentinel', body: 'This must not create a second checkpoint.' }],
+        memories: [], evidence: { changedPaths: ['src/checked.ts'] },
       },
     });
     assert.equal(terminalRetry.isError, true);
@@ -1441,10 +1428,11 @@ test('task_prepare degrades safely for oversized and malformed capability items'
   await server.connect(serverTransport);
   await client.connect(clientTransport);
   try {
-    await client.callTool({
-      name: 'memory_checkpoint',
-      arguments: { memories: [{ kind: 'lesson', title: 'Oversized catalog beacon', body: 'Keep capability handling bounded and ephemeral.' }] },
-    });
+    await initializeDatabase({ databasePath });
+    const seed = openConnection(databasePath);
+    const project = (await resolveProjectWorkspace(seed, root))!;
+    recordEntry(seed, { workspace: project.workspace, kind: 'lesson', title: 'Oversized catalog beacon', body: 'Keep capability handling bounded and ephemeral.', scope: {} });
+    seed.close();
     const knownMissing = await client.callTool({
       name: 'task_prepare',
       arguments: {
@@ -2061,7 +2049,7 @@ test('MCP checkpoint keeps unsupported eligibility details on the generic redact
   try {
     const result = await client.callTool({
       name: 'memory_checkpoint',
-      arguments: { memories: [{ kind: 'lesson', title: 'Redaction test', body: 'bounded' }] },
+      arguments: { runId: 'redaction-run', outcome: 'completed', memories: [], evidence: { changedPaths: ['src/checked.ts'] } },
     });
     const serialized = JSON.stringify(result);
     assert.equal(result.isError, true);

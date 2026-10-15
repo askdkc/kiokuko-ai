@@ -1,36 +1,12 @@
+import { createApprovedReplayMemoryStore } from './replay-store.js';
 import * as z from 'zod/v4';
 import path from 'node:path';
-import { realpath } from 'node:fs/promises';
 import type { SqliteDatabase, SqliteRow } from '../db/adapter.js';
-import { withImmediateTransaction } from '../db/transaction.js';
 import { KiokukoError } from '../errors.js';
 import { canonicalContentHash, canonicalJson } from '../serialization/validate.js';
 import { containsPrivateLearningData } from './learning-safety.js';
-import { resolveProjectWorkspace, resolveProjectWorkspaceReadOnly, ensureGlobalWorkspace, GLOBAL_WORKSPACE } from './workspaces.js';
-import { recordEntryInTransaction, updateCandidateEntryInTransaction, readEntry, type RecordEntryInput } from './entries.js';
-import { buildStructuredScope } from './structured-memory.js';
-import { enqueueOrchestrationJob } from '../orchestration/jobs.js';
-import { readTraceAdvisory } from '../trace/advisory.js';
-import { readRegularFile } from '../agent-file/atomic-write.js';
-import { agenticReplayRunIdFromDirectory } from '../trace/agentic-trace.js';
-
-async function activeRecordedTrace(database: SqliteDatabase, root: string) {
-  const configured = process.env.AGENTICREPLAY_RUN_DIR;
-  if (!configured || !path.isAbsolute(configured)) return undefined;
-  try {
-    const directory = await realpath(configured);
-    const relative = path.relative(root, directory);
-    if (!relative || relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) return undefined;
-    const manifest = await readRegularFile(path.join(directory, 'manifest.json'), { containmentRoot: root, maxBytes: 8192 });
-    if (!manifest) return undefined;
-    const value = JSON.parse(manifest.content) as Record<string, unknown>;
-    if (typeof value.run_id !== 'string' || !/^run_[0-9a-f]{6,32}$/u.test(value.run_id)) return undefined;
-    if (agenticReplayRunIdFromDirectory(path.basename(directory)) !== value.run_id) return undefined;
-    const runs = path.dirname(directory);
-    const context = readTraceAdvisory(database, root, path.dirname(runs), value.run_id, runs).context;
-    return context?.sourceAvailable === false ? undefined : context;
-  } catch { return undefined; }
-}
+import { resolveProjectWorkspaceReadOnly, GLOBAL_WORKSPACE } from './workspaces.js';
+import { recordEntryInTransaction, readEntry } from './entries.js';
 
 const id = z.string().min(1).max(256).regex(/^[\w.:/-]+$/u);
 const text = z.string().trim().max(2048).refine(value => !/[\p{Cc}\p{Cf}]/u.test(value.replaceAll('\n', '')));
@@ -72,10 +48,6 @@ const CURRENT_OBSERVATIONS = `SELECT o.* FROM learning_observations o WHERE o.wo
  AND NOT EXISTS(SELECT 1 FROM learning_observations newer WHERE newer.workspace=o.workspace
  AND newer.producer=o.producer AND newer.event_id=o.event_id AND newer.source_revision>o.source_revision)`;
 
-function currentRows(database: SqliteDatabase, workspace: string, limit: number): ObservationRow[] {
-  return database.prepare(`${CURRENT_OBSERVATIONS} ORDER BY o.rowid DESC LIMIT ?`).all<ObservationRow>(workspace, limit);
-}
-
 function observationFromRow(row: ObservationRow): Observation {
   const input = validate(memoryObserveSchema, JSON.parse(row.observation_json));
   if (canonicalContentHash(input) !== row.digest || input.eventId !== row.event_id
@@ -110,87 +82,10 @@ export function withdrawPurgedLearningEntry(database: SqliteDatabase, workspace:
   }
 }
 
-/** Same event/revision replays exactly; a changed identity never overwrites evidence. */
-export async function observeMemory(database: SqliteDatabase, raw: unknown): Promise<LearningReceipt> {
-  try {
-    const input = validate(memoryObserveSchema, raw);
-    const project = await resolveProjectWorkspace(database, input.cwd);
-    if (!project) throw new KiokukoError('NOT_FOUND', 'A project is required for learning');
-    const trace = input.source.producer === 'agenticreplay' && input.source.runId !== undefined
-      ? readTraceAdvisory(database, project.repositoryRoot, input.cwd, input.source.runId).context
-      : input.kind === 'praise' ? await activeRecordedTrace(database, project.repositoryRoot) : undefined;
-    if (input.source.producer === 'agenticreplay' && input.source.runId !== undefined && (!trace || trace.sourceAvailable === false)) {
-      throw new KiokukoError('NOT_FOUND', 'The exact AgenticReplay source was not available in this repository');
-    }
-    if (trace && containsPrivateLearningData(trace.context.summary)) {
-      throw new KiokukoError('SECURITY_REJECTION', 'AgenticReplay learning source contains credentials');
-    }
-    const stored = { ...input, cwd: project.repositoryRoot };
-    const digest = canonicalContentHash(stored);
-    return withImmediateTransaction(database, () => {
-      const previous = database.prepare('SELECT * FROM learning_observations WHERE workspace=? AND producer=? AND event_id=? ORDER BY source_revision DESC LIMIT 1')
-        .get<ObservationRow>(project.workspace, input.source.producer, input.eventId);
-      if (previous && previous.source_revision >= input.source.revision) {
-        if (previous.source_revision === input.source.revision && previous.digest === digest) return { accepted: true, recorded: true, duplicate: true, sourceRevision: input.source.revision, sourceEventId: digest, workMayContinue: true, warnings: [], diagnostics: [] };
-        throw new KiokukoError('CONFLICT', 'Learning source revision is stale or changed');
-      }
-      if (previous && (previous.session_id !== input.sessionId || observationFromRow(previous).source.runId !== input.source.runId)) throw new KiokukoError('CONFLICT', 'Learning source identity changed');
-      const now = new Date().toISOString();
-      let entryId: string | null = null;
-      const verified = input.verification === 'passed' && input.actions.some(action => action.kind === 'test' && action.outcome === 'passed');
-      if (!input.source.tombstone && input.kind !== 'model_switch' && input.kind !== 'compaction') {
-        const caution = input.kind === 'complaint';
-        const proposal: RecordEntryInput = {
-          workspace: project.workspace, kind: 'lesson', status: 'candidate', trustLevel: 'untrusted',
-          title: `${caution ? 'Caution' : input.kind === 'praise' ? 'Procedure candidate' : 'Public work summary'}: ${input.summary.slice(0, 100).replaceAll('\n', ' ')}`,
-          body: [input.summary, ...(caution ? [`Reported failure: ${input.issue ?? input.summary}`, `Prevention: ${input.prevention ?? 'Reproduce this report and verify a regression at the ordinary entry point.'}`] : []),
-            ...input.actions.map(action => `${action.kind}: ${action.outcome}; ${action.summary}`),
-            ...(trace ? [`AgenticReplay recorded action/result summary: ${canonicalJson(trace.context.summary)}; source ${trace.traceRunId}; source digest: ${trace.digest}.`] : []),
-            `Verification: ${verified ? 'producer-reported passed check' : 'unknown or incomplete'}; source: ${input.source.producer}/${input.eventId}@${input.source.revision}.`,
-          ].join('\n'),
-          confidence: verified ? 0.65 : caution ? 0.5 : 0.3,
-          tags: [...new Set(['learning-observation', input.kind, ...input.tags.map(tag => tag.toLowerCase())])],
-          scope: buildStructuredScope({ visibility: 'project', retrievalScope: 'project-only', repositoryId: project.repositoryId, memoryClass: caution ? 'gotcha' : 'workflow' }),
-          provenance: { type: 'learning_observation', reference: digest, sourceRepositoryId: project.repositoryId, sourceWorkspace: project.workspace,
-            clientKind: 'opencode', timestamp: now }, createdBy: 'kiokuko-ai-learning',
-        };
-        const priorEntry = previous?.entry_id ? readEntry(database, { workspace: project.workspace, entryId: previous.entry_id }) : undefined;
-        const entry = priorEntry?.status === 'candidate'
-          ? updateCandidateEntryInTransaction(database, { ...proposal, entryId: priorEntry.id, expectedRevision: priorEntry.revision })
-          : recordEntryInTransaction(database, proposal);
-        if (priorEntry?.status === 'candidate') database.prepare('UPDATE entries SET confidence=? WHERE id=?').run(proposal.confidence!, entry.id);
-        entryId = entry.id;
-      }
-      if (input.source.tombstone && previous?.entry_id) {
-        const prior = readEntry(database, { workspace: project.workspace, entryId: previous.entry_id });
-        if (prior.status === 'candidate') {
-          const withdrawn = updateCandidateEntryInTransaction(database, { workspace: project.workspace, entryId: prior.id, expectedRevision: prior.revision,
-            kind: 'reference', title: 'Withdrawn learning source', body: 'This source evaluation was withdrawn; its previous advice is not current.',
-            scope: prior.scope, provenance: { type: 'learning_retraction', reference: digest }, tags: ['learning-withdrawn'], createdBy: 'kiokuko-ai-learning' });
-          database.prepare('UPDATE entries SET confidence=0 WHERE id=?').run(withdrawn.id);
-          entryId = withdrawn.id;
-        }
-      }
-      if (previous?.entry_id && previous.entry_id !== entryId) retireEntry(database, previous.entry_id, entryId ?? undefined);
-      if (previous) {
-        for (const derived of database.prepare('SELECT entry_id FROM learning_principles WHERE entry_id IS NOT NULL AND EXISTS(SELECT 1 FROM json_each(source_json) WHERE value=?)')
-          .all<{ entry_id: string }>(previous.digest)) retireEntry(database, derived.entry_id);
-      }
-      if (input.kind === 'complaint' && !input.source.tombstone) {
-        for (const related of database.prepare(`${CURRENT_OBSERVATIONS} AND o.session_id=?`).all<ObservationRow>(project.workspace, input.sessionId)) {
-          for (const derived of database.prepare('SELECT entry_id FROM learning_principles WHERE entry_id IS NOT NULL AND EXISTS(SELECT 1 FROM json_each(source_json) WHERE value=?)')
-            .all<{ entry_id: string }>(related.digest)) retireEntry(database, derived.entry_id);
-        }
-      }
-      database.prepare('INSERT INTO learning_observations VALUES(?,?,?,?,?,?,?,?,?,?)').run(project.workspace, input.source.producer, input.eventId,
-        input.source.revision, input.sessionId, digest, canonicalJson(stored), input.source.tombstone ? 1 : 0, entryId, now);
-      // Reuse the existing bounded worker; Global candidates are not promotions.
-      enqueueOrchestrationJob(database, { kind: 'memory_promotion', payload: { source: 'learning', cwd: project.repositoryRoot,
-        sourceDigest: digest, bucket: Math.floor(Date.now() / 300_000) } });
-      return { accepted: true, recorded: true, sourceRevision: input.source.revision, sourceEventId: digest,
-        ...(entryId === null ? {} : { entryId }), workMayContinue: true, warnings: verified ? [] : ['verification_unconfirmed'], diagnostics: verified ? [] : ['verification_unconfirmed'] };
-    });
-  } catch (error) { return learningFailure(error); }
+/** Legacy tool compatibility: automatic events are not consent to create memory. */
+export async function observeMemory(_database: SqliteDatabase, _raw: unknown): Promise<LearningReceipt> {
+  return { accepted: false, recorded: false, workMayContinue: true,
+    warnings: ['post_task_review_required'], diagnostics: ['post_task_review_required'] };
 }
 
 /** Bounded keyword/tag recall is repository scoped; handoff is same-session only. */
@@ -259,59 +154,18 @@ export async function memoryContext(database: SqliteDatabase, raw: unknown) {
           || (tokens.length && !tokens.some(token => `${entry.title} ${entry.body}`.toLowerCase().includes(token))) ? [] : [{ entryId: entry.id, revision: entry.revision, kind: entry.kind, title: entry.title, summary: entry.body.slice(0, 300),
           tags: entry.tags, confidence: entry.confidence, verification: 'unknown', verificationProvenance: 'unknown', scope: 'global', sourceEventIds: entry.provenance.evidenceIds ?? [], source: entry.provenance.reference, untrusted: true }];
       }).slice(0, 2);
-    return { available: true, accepted: true, recorded: false, workMayContinue: true as const, repositoryId: project.repositoryId, entries: [...items, ...routines, ...principles].slice(0, input.limit), items, routines, principles, handoff, warnings: [], diagnostics: [], truncated: selected.length > items.length };
+    const approved = createApprovedReplayMemoryStore(database, project.workspace).query(input.query, input.tags, input.limit).map(proposal => ({
+      entryId: proposal.proposalId, revision: proposal.revision, kind: 'reviewed_replay',
+      summary: proposal.findings.map(finding => finding.text).join('\n').slice(0, 2000),
+      request: proposal.request.text.slice(0, 500), tags: proposal.tags, source: proposal.source,
+      verification: 'user_reviewed_not_task_verified', untrusted: true,
+    }));
+    return { available: true, accepted: true, recorded: false, workMayContinue: true as const, repositoryId: project.repositoryId, entries: [...approved, ...items, ...routines, ...principles].slice(0, input.limit), items, routines, principles, handoff, warnings: [], diagnostics: [], truncated: selected.length > items.length };
   } catch (error) { return { ...learningFailure(error), available: false, entries: [], items: [], handoff: null }; }
 }
 
-/** Extract fixed portable principles, never copy project text, personal data or log bodies into Global. */
-export async function improveMemory(database: SqliteDatabase, raw: unknown) {
-  try {
-    const input = validate(memoryImproveSchema, raw);
-    const project = await resolveProjectWorkspaceReadOnly(database, input.cwd);
-    if (!project) throw new KiokukoError('NOT_FOUND', 'A project is required for memory improvement');
-    return withImmediateTransaction(database, () => {
-      const rows = currentRows(database, project.workspace, input.limit);
-      const groups = new Map<string, ObservationRow[]>();
-      for (const row of rows) {
-        const value = observationFromRow(row);
-        if (value.kind !== 'completion' || value.outcome !== 'passed' || !value.actions.length) continue;
-        const fingerprint = canonicalContentHash(value.actions.map(action => action.kind));
-        const group = groups.get(fingerprint) ?? []; group.push(row); groups.set(fingerprint, group);
-      }
-      let routines = 0, principles = 0;
-      const save = (workspace: string, sources: ObservationRow[], title: string, body: string, confidence: number, tags: string[]) => {
-        const references = sources.map(row => row.digest).sort();
-        const digest = canonicalContentHash({ title, references });
-        if (database.prepare('SELECT 1 FROM learning_principles WHERE workspace=? AND digest=?').get(workspace, digest)) return;
-        const entry = recordEntryInTransaction(database, { workspace, kind: 'lesson', status: 'candidate', trustLevel: 'untrusted', title, body,
-          tags, confidence, scope: buildStructuredScope({ visibility: workspace === GLOBAL_WORKSPACE ? 'global' : 'project',
-            retrievalScope: workspace === GLOBAL_WORKSPACE ? 'global' : 'project-only', ...(workspace === GLOBAL_WORKSPACE ? { portableReason: 'A fixed generic principle with opaque evidence links; no source text is exported.' } : { repositoryId: project.repositoryId }), memoryClass: 'workflow' }),
-          provenance: { type: 'learning_principle', reference: digest, evidenceIds: references }, createdBy: 'kiokuko-ai-learning' });
-        database.prepare('INSERT INTO learning_principles VALUES(?,?,?,?)').run(workspace, digest, entry.id, canonicalJson(references));
-        if (workspace === GLOBAL_WORKSPACE) principles++; else routines++;
-      };
-      ensureGlobalWorkspace(database);
-      for (const group of groups.values()) {
-        if (new Set(group.map(row => row.session_id)).size < 2) continue;
-        const source = observationFromRow(group[0]!);
-        const sessions = new Set(group.map(row => row.session_id));
-        if (rows.some(row => sessions.has(row.session_id) && observationFromRow(row).kind === 'complaint')) continue;
-        const verified = group.every(row => {
-          const value = observationFromRow(row);
-          return value.verification === 'passed' && value.actions.some(action => action.kind === 'test' && action.outcome === 'passed');
-        });
-        save(project.workspace, group, 'Repeated procedure candidate', `Observed action sequence: ${source.actions.map(action => action.kind).join(' → ')}.\nIndependent sessions: ${new Set(group.map(row => row.session_id)).size}.\nVerification: ${verified ? 'producer-reported checks passed' : 'unknown; silence is not success evidence'}.\nSources: ${group.map(row => row.digest).join(', ')}.`, verified ? 0.6 : 0.3, ['learning-routine', 'candidate']);
-        save(GLOBAL_WORKSPACE, group, 'Treat repeated completion as a candidate',
-          'Repeated actions and completion signals suggest a possible routine. Absence of complaints is not verification. Keep source links and actual check results, and retest the ordinary entry point before reuse.', verified ? 0.6 : 0.3, ['learning-principle', 'verification']);
-      }
-      ensureGlobalWorkspace(database);
-      const complaints = rows.filter(row => observationFromRow(row).kind === 'complaint');
-      if (complaints.length) save(GLOBAL_WORKSPACE, complaints, 'Verify a reported correction at the ordinary entry point',
-        'A complaint is evidence of a reported failure, not proof of its cause. Reproduce the reported behavior, retain a focused regression, and distinguish observed checks from an unverified completion claim. Memory observation must not suspend otherwise authorized work.', 0.45, ['learning-principle', 'verification']);
-      const praised = rows.filter(row => observationFromRow(row).kind === 'praise');
-      if (praised.length) save(GLOBAL_WORKSPACE, praised, 'Preserve procedures with evidence and uncertainty',
-        'Keep reusable action, result and short public explanation summaries with source references and verification results. Praise and absence of complaints do not prove correctness. Exclude private reasoning, secrets, personal information and raw logs from shared principles.', 0.35, ['learning-principle', 'provenance']);
-      return { accepted: true, recorded: routines + principles > 0, workMayContinue: true as const, saved: routines + principles, withdrawn: 0, routines, principles, warnings: [], diagnostics: [] };
-    });
-  } catch (error) { return learningFailure(error); }
+/** New derived principles require the same native human review as other memories. */
+export async function improveMemory(_database: SqliteDatabase, _raw: unknown) {
+  return { accepted: false, recorded: false, workMayContinue: true,
+    warnings: ['post_task_review_required'], diagnostics: ['post_task_review_required'] };
 }

@@ -1,3 +1,4 @@
+import { purgeReplayMemoryForEntryInTransaction } from '../memory/replay-store.js';
 import type { SqliteDatabase } from '../db/adapter.js';
 import { withImmediateTransaction } from '../db/transaction.js';
 import { KiokukoError } from '../errors.js';
@@ -22,6 +23,7 @@ export function purgeEntry(database: SqliteDatabase, input: PurgeInput): void {
     const managedExternal = database.prepare('SELECT 1 AS present FROM external_skill_entries WHERE entry_id = ? LIMIT 1').get<{ present: number }>(input.entryId);
     if (managedExternal) throw new KiokukoError('CONFLICT', 'Managed external Skill entries cannot be purged individually; disable the external Skill instead');
     withdrawPurgedLearningEntry(database, input.workspace, input.entryId, now);
+    purgeReplayMemoryForEntryInTransaction(database, input.entryId);
     database.prepare('DELETE FROM entry_links WHERE from_entry_id = ? OR to_entry_id = ?').run(input.entryId, input.entryId);
     database.prepare('DELETE FROM audit_events WHERE entry_id = ?').run(input.entryId);
     database.prepare('DELETE FROM entries WHERE id = ? AND workspace = ?').run(input.entryId, input.workspace);

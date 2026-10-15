@@ -10,7 +10,11 @@
       "types": "./dist/opencode/plugin.d.ts",
       "import": "./dist/opencode/plugin.js"
     },
-    "./cli": "./dist/bin/kiokuko.js"
+    "./cli": "./dist/bin/kiokuko.js",
+    "./tui": {
+      "types": "./dist/opencode/tui.d.ts",
+      "import": "./dist/opencode/tui.js"
+    }
   },
   "bin": {
     "kiokuko-ai": "dist/bin/kiokuko.js"
@@ -84,9 +88,9 @@
     "protobufjs": true
   },
   "peerDependencies": {
-    "@huggingface/hub": "2.16.1",
-    "@huggingface/transformers": "4.2.0",
-    "sqlite-vec": "0.1.9"
+    "@huggingface/hub": "^2.16.1",
+    "@huggingface/transformers": "^4.2.0",
+    "sqlite-vec": "^0.1.9"
   },
   "peerDependenciesMeta": {
     "@huggingface/hub": {

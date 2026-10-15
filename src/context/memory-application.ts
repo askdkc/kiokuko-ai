@@ -168,12 +168,12 @@ export interface MemoryApplicationStatus {
   clientObserved: false;
 }
 
-/** A missing review degrades completion evidence, never permission to continue ordinary work. */
+/** Memory application is advisory and independent from actual verification evidence. */
 export function memoryApplicationStatus(database: SqliteDatabase, runId: string, root: string): MemoryApplicationStatus {
-  const state = readContextRunRetrievalState(database, runId);
   const deliveryId = latestMemoryDeliveryId(database, runId);
   const result: MemoryApplicationStatus = { deliveryId, required: 0, pending: [], invalid: [], complete: true, evidenceOrigin: 'none', clientObserved: false };
   if (!deliveryId) return result;
+  const state = readContextRunRetrievalState(database, runId);
   const delivery = readContextDelivery(database, { workspace: state.run.workspace, deliveryId });
   const applicable = memoryReasoningRequired(state.profile, 'actionable');
   if (!applicable) return result;

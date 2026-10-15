@@ -30,11 +30,10 @@ test('renders the non-blocking memory-first lifecycle without legacy gateway com
     cliCommand: 'kiokuko-ai',
   });
 
-  assert.match(rendered, /<!-- kiokuko-ai-template-version: 26 -->/);
-  assert.match(rendered, /At the start of any coding work, before writing or changing code, read and apply `one-shot-software-completion`; use its compact contract and only the references selected for the current risk\./u);
-  assert.match(rendered, /memory-and-plan sidecar, not a coding gate/);
-  assert.match(rendered, /unresolved advisory intake, missing Skills, failed enrichment, verifier disagreement, and meditation delay/);
-  assert.match(rendered, /Only safety, missing authorization for an irreversible effect, path or identity violations, database corruption, and stale revision or lease identity may block adoption/);
+  assert.match(rendered, /<!-- kiokuko-ai-template-version: 27 -->/);
+  assert.match(rendered, /none is a prerequisite for editing, execution or task completion/);
+  assert.match(rendered, /Save only the revision approved by the actual user/);
+  assert.doesNotMatch(rendered, /terminal for tool use|stop tool use/);
   assert.match(rendered, /Akinator questions are advisory when `continuationPolicy\.codingAllowed=true`/);
   assert.match(rendered, /claim resource-compatible Goki WorkUnits atomically/);
   assert.match(rendered, /exact revision, WorkUnit, attempt, lease token, route epoch, and input-manifest digest/);

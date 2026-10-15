@@ -58,7 +58,7 @@ test('foreign, stale, non-system and incomplete cautions cannot satisfy delivery
   assert.equal(probe.requests, before, 'foreign session requests are not probe receipts');
 });
 
-test('persisted observations do not imply recall readiness, and delayed real hooks deliver on the fourth request', { timeout: 2_000 }, async t => {
+test('ephemeral completion does not imply recall readiness, and delayed real hooks deliver on the fourth request', { timeout: 2_000 }, async t => {
   const fixture = pluginContextFixture();
   const lifecycle = new OpenCodePluginLifecycle();
   t.after(() => lifecycle.dispose(() => undefined));
@@ -89,7 +89,7 @@ test('persisted observations do not imply recall readiness, and delayed real hoo
       waits++;
       adapter.observeEvent({ id: `completed-${waits}`, type: 'session.execution.succeeded', sessionId: sessionID });
       await tick();
-      assert.equal(observations.length, waits, 'completion has already been observed and persisted');
+      assert.equal(observations.length, 0, 'completion does not authorize persistence');
       if (waits <= 3) assert.equal(probe.seen, false, 'the completed observation cannot prove recall delivery');
       if (waits === 3) { release(context); await tick(); }
     },

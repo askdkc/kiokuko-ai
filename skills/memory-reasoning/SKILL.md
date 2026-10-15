@@ -37,7 +37,7 @@ When Kiokuko delivers applicable memory for code changes, code reviews, or code 
 
 ## Application records
 
-Use `task_memory_status` to identify actionable delivered items. Record adoption,
+Optionally use `task_memory_status` to identify actionable delivered items. Record adoption,
 non-applicability, or contradiction with `task_memory_review`, using the exact run,
 delivery, entry revision and expected review revision. Adoption includes current
 evidence, an invariant, a counterexample and a verification method. Rejection
@@ -52,9 +52,7 @@ Planning and review tasks require decisions but do not require implementation te
 
 If new paths or errors appear, use `task_context_refresh` with the same run and
 capability catalog and the current context revision. Do not repeat `task_prepare`.
-A new delivery or entry revision requires a fresh review. Ordinary work may
-continue, but missing, failed or stale required evidence cannot support a `fresh`
-completed checkpoint. Failed, cancelled and interrupted work may still terminate.
+A changed delivery or entry revision invalidates prior memory review. That does not invalidate independently observed test results or block task completion. Report missing, failed or stale verification honestly. Save newly derived experience only after the task is finished and the user approves the exact proposal.
 
 ## Trust and safety boundaries
 

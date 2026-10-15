@@ -1,300 +1,74 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { openConnection } from '../../src/db/connection.js';
 import { migrateDatabase } from '../../src/db/migrate.js';
-import { observeMemory, memoryContext, improveMemory } from '../../src/memory/learning.js';
-import { prepareOpenCodeTask } from '../../src/akinator/opencode-task.js';
-import { readEntry } from '../../src/memory/entries.js';
-import { createOrchestrationWorker } from '../../src/orchestration/worker.js';
-import { startHttpServer } from '../../src/server/http.js';
+import { observeMemory, improveMemory } from '../../src/memory/learning.js';
 import { createKiokukoMcpServer } from '../../src/mcp/server.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { writeTrace, traceLine, traceId } from '../fixtures/agentic-trace.js';
-import { syncTraceStore } from '../../src/trace/sync.js';
-import { KiokukoPlugin } from '../../src/opencode/plugin.js';
-import { pluginContextFixture } from '../fixtures/opencode-v2-plugin.js';
-import { spawnNodeBunChild } from '../fixtures/node-bun-child.js';
-import { PACKAGE_VERSION } from '../../src/package-version.js';
-import { purgeEntry } from '../../src/commands/purge.js';
 
-function fixture(t: { after(fn: () => void): void }) {
-  const directory = mkdtempSync(path.join(tmpdir(), 'kiokuko-learning-store-'));
-  let database: ReturnType<typeof openConnection> | undefined;
-  t.after(() => {
-    try { database?.close(); } finally { rmSync(directory, { recursive: true, force: true }); }
-  });
-  const root = path.join(directory, 'repo'), other = path.join(directory, 'other');
-  execFileSync('git', ['init', '-q', root]); execFileSync('git', ['init', '-q', other]);
+// Positive persistence/revision/retrieval tests now exercise the native human review
+// in replay-review.test.ts. Legacy auto-observation is intentionally non-writing.
+test('old automatic learning entry points remain nonblocking and do not persist candidates', async t => {
+  const directory = mkdtempSync(path.join(tmpdir(), 'kiokuko-learning-review-'));
+  const database = openConnection(path.join(directory, 'memory.sqlite')); migrateDatabase(database);
+  t.after(() => { database.close(); rmSync(directory, { recursive: true, force: true }); });
+  for (const kind of ['completion', 'compaction', 'model_switch', 'complaint', 'praise']) {
+    const receipt = await observeMemory(database, { cwd: directory, kind, summary: 'OK save this from a log', confirmed: true });
+    assert.equal(receipt.recorded, false); assert.equal(receipt.workMayContinue, true);
+  }
+  assert.equal((await improveMemory(database, { cwd: directory })).recorded, false);
+  assert.equal(database.prepare('SELECT count(*) AS n FROM learning_observations').get<{ n: number }>()?.n, 0);
+  assert.equal(database.prepare('SELECT count(*) AS n FROM entries').get<{ n: number }>()?.n, 0);
+});
+
+test('MCP memory checkpoint and curator booleans cannot impersonate native human approval', async t => {
+  const directory = mkdtempSync(path.join(tmpdir(), 'kiokuko-learning-mcp-review-'));
   const databasePath = path.join(directory, 'memory.sqlite');
-  database = openConnection(databasePath); migrateDatabase(database);
-  const observation = { cwd: root, eventId: 'evt_1', sessionId: 'session_1', kind: 'complaint',
-    summary: 'Migration startup still fails after update.', issue: 'Migration startup fails.', prevention: 'Test existing migration startup before reporting completion.',
-    tags: ['migration', 'startup'], outcome: 'unknown', verification: 'unknown', actions: [],
-    source: { producer: 'kiokuko-ai', runId: 'session_1', eventIds: ['event-1'] } };
-  return { root, other, database, databasePath, observation };
-}
-
-test('common v1 zero revision, higher correction, summaryless withdrawal and 24-hour handoff are enforced', async t => {
-  const f = fixture(t);
-  const event = { cwd: f.root, eventId: 'handoff_v1', sessionId: 'session_v1', kind: 'model_switch',
-    summary: 'Public work is pending.', source: { producer: 'codex' } };
-  assert.equal((await observeMemory(f.database, event)).sourceRevision, 0);
-  const fresh = await memoryContext(f.database, { cwd: f.root, sessionId: 'session_v1' });
-  assert.equal(fresh.entries.length, 0); assert.equal(fresh.handoff?.sessionId, 'session_v1');
-  f.database.prepare('UPDATE learning_observations SET created_at=? WHERE event_id=?')
-    .run(new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString(), event.eventId);
-  assert.equal((await memoryContext(f.database, { cwd: f.root, sessionId: 'session_v1' })).handoff, null);
-  assert.equal((await observeMemory(f.database, { ...event, summary: 'A corrected handoff.', source: { ...event.source, revision: 7 } })).recorded, true);
-  assert.equal((await observeMemory(f.database, { cwd: f.root, eventId: event.eventId, sessionId: event.sessionId,
-    kind: event.kind, source: { ...event.source, revision: 8, tombstone: true } })).recorded, true);
-  assert.equal((await memoryContext(f.database, { cwd: f.root, sessionId: event.sessionId })).handoff, null);
-});
-
-test('SQLite observation replay, conflicting identity, tagged recall and new-task delivery use the same repository', async t => {
-  const f = fixture(t);
-  const first = await observeMemory(f.database, f.observation);
-  assert.equal(first.recorded, true);
-  assert.equal((await observeMemory(f.database, f.observation)).duplicate, true);
-  const conflict = await observeMemory(f.database, { ...f.observation, summary: 'changed without a revision' });
-  assert.equal(conflict.recorded, false); assert.equal(conflict.workMayContinue, true);
-  assert.deepEqual(conflict.diagnostics, ['CONFLICT']);
-  const recall = await memoryContext(f.database, { cwd: f.root, query: 'startup', tags: ['migration'], sessionId: 'session_1' });
-  assert.equal(recall.items.length, 1); assert.equal(recall.handoff, null);
-  assert.equal((await memoryContext(f.database, { cwd: f.root, tags: ['unrelated'] })).items.length, 0);
-  assert.equal((await memoryContext(f.database, { cwd: f.other, query: 'startup' })).items.length, 0);
-  const reopened = openConnection(f.databasePath);
-  try { assert.equal((await memoryContext(reopened, { cwd: f.root, sessionId: 'new_session' })).handoff, null); }
-  finally { reopened.close(); }
-  const task = await prepareOpenCodeTask(f.database, { cwd: f.root, requestId: 'next_task', task: 'Fix migration startup code',
-    profileHints: { taskType: 'debug', target: 'migration startup code', expected: 'migration startup works after update', constraints: null },
-    capabilities: [{ kind: 'skill', name: 'kiokuko-soul' }, { kind: 'skill', name: 'memory-reasoning' }], skillDiscoveryMode: 'off' });
-  assert.ok(task.context?.items.some(item => item.entryId === recall.items[0]?.entryId));
-  assert.equal(task.continuationPolicy.codingAllowed, true);
-});
-
-test('feedback revision and tombstone retain evidence but remove withdrawn advice and derived Global candidates immediately', async t => {
-  const f = fixture(t);
-  assert.equal((await observeMemory(f.database, f.observation)).recorded, true);
-  const old = (await memoryContext(f.database, { cwd: f.root })).items[0]!;
-  const improved = await improveMemory(f.database, { cwd: f.root });
-  assert.equal(improved.recorded, true);
-  assert.equal((await memoryContext(f.database, { cwd: f.root })).principles?.length, 1);
-  const globalId = f.database.prepare("SELECT entry_id FROM learning_principles WHERE workspace='global'").get<{ entry_id: string }>()!.entry_id;
-  const edited = { ...f.observation, issue: 'Correction: startup actually succeeds.', summary: 'The earlier failure report was mistaken.',
-    source: { ...f.observation.source, revision: 2 } };
-  assert.equal((await observeMemory(f.database, edited)).recorded, true);
-  assert.equal(readEntry(f.database, { workspace: 'global', entryId: globalId }).status, 'superseded');
-  const project = f.database.prepare('SELECT workspace FROM learning_observations LIMIT 1').get<{ workspace: string }>()!.workspace;
-  assert.equal(readEntry(f.database, { workspace: project, entryId: old.entryId! }).revision, 2);
-  assert.equal((await memoryContext(f.database, { cwd: f.root })).items[0]?.entryId, old.entryId);
-  assert.equal((await observeMemory(f.database, { ...edited, source: { ...edited.source, revision: 3, tombstone: true } })).recorded, true);
-  assert.equal((await memoryContext(f.database, { cwd: f.root })).items.length, 0);
-  assert.equal(f.database.prepare('SELECT count(*) AS n FROM learning_observations').get<{ n: number }>()!.n, 3);
-  assert.equal((await observeMemory(f.database, f.observation)).recorded, false);
-});
-
-test('confirmed entry purge retracts observation recall while preserving source tombstone history', async t => {
-  const f = fixture(t);
-  await observeMemory(f.database, f.observation);
-  const context = await memoryContext(f.database, { cwd: f.root });
-  const workspace = f.database.prepare('SELECT workspace FROM learning_observations LIMIT 1').get<{ workspace: string }>()!.workspace;
-  purgeEntry(f.database, { workspace, entryId: context.items[0]!.entryId!, confirm: true });
-  assert.equal((await memoryContext(f.database, { cwd: f.root })).items.length, 0);
-  assert.equal(f.database.prepare('SELECT tombstone FROM learning_observations ORDER BY source_revision DESC LIMIT 1').get<{ tombstone: number }>()!.tombstone, 1);
-});
-
-test('corrupted stored observation cannot become advice or a Global principle', async t => {
-  const f = fixture(t);
-  await observeMemory(f.database, f.observation);
-  f.database.prepare("UPDATE learning_observations SET observation_json=json_set(observation_json,'$.summary','tampered evidence')").run();
-  const context = await memoryContext(f.database, { cwd: f.root });
-  assert.equal(context.accepted, false); assert.deepEqual(context.items, []);
-  assert.equal(context.workMayContinue, true);
-  assert.equal((await improveMemory(f.database, { cwd: f.root })).recorded, false);
-});
-
-test('independent repeated completions create low-confidence candidates without promoting silence to verification', async t => {
-  const f = fixture(t);
-  for (const n of [1, 2]) assert.equal((await observeMemory(f.database, { cwd: f.root, eventId: `complete-${n}`, sessionId: `task-${n}`,
-    kind: 'completion', summary: 'Public completion with no reported tests.', outcome: 'passed',
-    actions: [{ kind: 'inspect', outcome: 'passed', summary: 'Read current implementation.' }, { kind: 'edit', outcome: 'unknown', summary: 'Applied a fix.' }],
-    source: { producer: 'kiokuko-ai', runId: `task-${n}`, eventIds: [`complete-${n}`] } })).recorded, true);
-  const improved = await improveMemory(f.database, { cwd: f.root });
-  assert.ok('routines' in improved); assert.equal(improved.routines, 1);
-  const row = f.database.prepare("SELECT workspace,entry_id FROM learning_principles WHERE workspace!='global'").get<{ workspace: string; entry_id: string }>()!;
-  const entry = readEntry(f.database, { workspace: row.workspace, entryId: row.entry_id });
-  assert.equal(entry.status, 'candidate'); assert.equal(entry.trustLevel, 'untrusted'); assert.equal(entry.confidence, 0.3);
-  assert.match(entry.body, /silence is not success evidence/);
-  const routineContext = await memoryContext(f.database, { cwd: f.root, tags: ['learning-routine'] });
-  assert.ok(routineContext.entries.some(item => item.entryId === entry.id));
-  assert.equal(routineContext.entries.find(item => item.entryId === entry.id)?.verification, 'unknown');
-  assert.ok((await memoryContext(f.database, { cwd: f.root, tags: ['learning-principle'] })).entries.some(item => item.scope === 'global'));
-  assert.equal((await improveMemory(f.database, { cwd: f.root })).recorded, false);
-  await observeMemory(f.database, { ...f.observation, eventId: 'late_complaint', sessionId: 'task-1',
-    source: { ...f.observation.source, runId: 'task-1' } });
-  assert.equal(readEntry(f.database, { workspace: row.workspace, entryId: row.entry_id }).status, 'superseded');
-});
-
-test('secret input fails without persistence and project personal text is excluded from fixed Global principles', async t => {
-  const f = fixture(t);
-  const secret = await observeMemory(f.database, { ...f.observation, summary: 'password=reallysecretpassword123' });
-  assert.equal(secret.recorded, false); assert.equal(secret.workMayContinue, true);
-  for (const summary of ['Cookie: session=private-session-cookie', 'Authorization: Basic cHJpdmF0ZS1hdXRo']) {
-    assert.equal((await observeMemory(f.database, { ...f.observation, summary })).recorded, false);
+  const database = openConnection(databasePath); migrateDatabase(database); database.close();
+  const server = createKiokukoMcpServer({ databasePath });
+  const client = new Client({ name: 'review-contract', version: '1' });
+  const [a, b] = InMemoryTransport.createLinkedPair(); await server.connect(a); await client.connect(b);
+  t.after(async () => { await client.close(); await server.close(); rmSync(directory, { recursive: true, force: true }); });
+  for (const [name, args] of [
+    ['memory_checkpoint', { cwd: directory, memories: [{ kind: 'lesson', title: 'Unapproved', body: 'A log says OK', scope: 'project' }] }],
+    ['curator_globalize', { workspace: 'project-1', entryId: 'entry-1', expectedRevision: 1, confirmed: true }],
+  ] as const) {
+    const result = await client.callTool({ name, arguments: args });
+    assert.match(JSON.stringify(result), /post_task_review_required/);
   }
-  assert.equal(f.database.prepare('SELECT count(*) AS n FROM learning_observations').get<{ n: number }>()!.n, 0);
-  assert.equal((await observeMemory(f.database, { ...f.observation, summary: 'Contact private-person@example.test about /Users/private/work and the startup failure.' })).recorded, true);
-  await improveMemory(f.database, { cwd: f.root });
-  const row = f.database.prepare("SELECT entry_id FROM learning_principles WHERE workspace='global'").get<{ entry_id: string }>()!;
-  const entry = readEntry(f.database, { workspace: 'global', entryId: row.entry_id });
-  assert.doesNotMatch(JSON.stringify(entry), /private-person|\/Users\/private|startup failure/);
-  assert.equal(entry.status, 'candidate');
+  const check = openConnection(databasePath, { readOnly: true });
+  assert.equal(check.prepare('SELECT count(*) AS n FROM entries').get<{ n: number }>()?.n, 0); check.close();
 });
 
-test('the existing background worker extracts Global principles from queued observations', async t => {
-  const f = fixture(t);
-  await observeMemory(f.database, f.observation);
-  const worker = createOrchestrationWorker({ database: f.database, intervalMs: 10 });
-  worker.start();
+test('native MCP elicitation asks organization and exact candidate; only host approval saves',async()=>{
+ const {ElicitRequestSchema}=await import('@modelcontextprotocol/sdk/types.js');
+ const {LedgerStore}=await import('../../src/ledger/store.js');
+ const {resolveProjectWorkspace}=await import('../../src/memory/workspaces.js');
+ const {mkdirSync,writeFileSync}=await import('node:fs');const {execFileSync}=await import('node:child_process');const {createHash}=await import('node:crypto');
+ const root=mkdtempSync(path.join(tmpdir(),'replay-elicitation-'));execFileSync('git',['init','-q',root]);const file=path.join(root,'db.sqlite3');const db=openConnection(file);migrateDatabase(db);
+ const project=await resolveProjectWorkspace(db,root);assert.ok(project);const ledger=new LedgerStore(db);
+ ledger.createRunInTransaction({runId:'completed-run',workspace:project.workspace,protocolVersion:'1',client:{kind:'opencode',sessionId:'session'},captureProfile:'minimal',coverage:{run:'best_effort',tool:'declared',command:'declared',file:'declared',approval:'unavailable'},task:{title:'Check sqlite',query:'Check sqlite',profileHints:{taskType:null,target:null,expected:null,constraints:null}},metadata:{intakeRequired:false}});ledger.updateRunStatusInTransaction('completed-run','completed');
+ const trace=path.join(root,'.agenticreplay','runs','run_abcdef');mkdirSync(trace,{recursive:true});const bytes=JSON.stringify({seq:1,type:'user.message',payload:{text:'Check sqlite'}})+'\n';writeFileSync(path.join(trace,'events.jsonl'),bytes);writeFileSync(path.join(trace,'manifest.json'),JSON.stringify({schema_version:'0.4.0',run_id:'run_abcdef',cwd:root,integrity:{events_sha256:createHash('sha256').update(bytes).digest('hex')}}));
+ const server=createKiokukoMcpServer({databasePath:file,cwd:()=>root});const client=new Client({name:'human-ui-host',version:'1'},{capabilities:{elicitation:{form:{}}}});let prompts=0;
+ client.setRequestHandler(ElicitRequestSchema,async request=>{prompts++;assert.equal(db.prepare('SELECT COUNT(*) AS n FROM entries').get<{n:number}>()?.n,0);if(prompts===1)return{action:'accept',content:{choice:'organize'}};assert.ok(request.params.message.includes('SHA-256'));assert.ok(request.params.message.includes('Check sqlite'));return{action:'accept',content:{choice:'approve'}};});
+ const [a,b]=InMemoryTransport.createLinkedPair();await server.connect(b);await client.connect(a);
+ try{const result=await client.callTool({name:'memory_review_completed',arguments:{runId:'completed-run',cwd:root,traceDirectory:trace}});assert.equal((result.structuredContent as Record<string,unknown>|undefined)?.status,'saved');assert.equal(prompts,2);assert.equal(db.prepare('SELECT COUNT(*) AS n FROM entries').get<{n:number}>()?.n,1);assert.equal(ledger.readRun('completed-run')?.status,'completed');
+  ledger.createRunInTransaction({runId:'queued-run',workspace:project.workspace,protocolVersion:'1',client:{kind:'opencode',sessionId:'queued-session'},captureProfile:'minimal',coverage:{run:'best_effort',tool:'declared',command:'declared',file:'declared',approval:'unavailable'},task:{title:'Check sqlite again',query:'Check sqlite again',profileHints:{taskType:null,target:null,expected:null,constraints:null}},metadata:{intakeRequired:false}});ledger.updateRunStatusInTransaction('queued-run','active');
+  let dismiss!:(value:{action:'decline'})=>void;let offered!:()=>void;const offer=new Promise<void>(r=>offered=r);
+  client.setRequestHandler(ElicitRequestSchema,async()=>{offered();return await new Promise<{action:'decline'}>(r=>dismiss=r);});
+  const oldTrace=process.env.AGENTICREPLAY_RUN_DIR;process.env.AGENTICREPLAY_RUN_DIR=trace;
   try {
-    const deadline = Date.now() + 3000;
-    while (!f.database.prepare("SELECT 1 FROM learning_principles WHERE workspace='global'").get() && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 20));
-    assert.ok(f.database.prepare("SELECT 1 FROM learning_principles WHERE workspace='global'").get());
-  } finally { await worker.close(); }
-});
+    const completed=await client.callTool({name:'memory_checkpoint',arguments:{cwd:root,runId:'queued-run',outcome:'completed',memories:[],evidence:{tests:[{runner:'node',target:'sqlite',outcome:'passed'}]}}});
+    assert.equal(completed.isError,undefined,JSON.stringify(completed));assert.equal((completed.structuredContent as any).run.status,'completed');
+    await offer;
+    const ordinary=await client.callTool({name:'memory_context',arguments:{cwd:root,query:'sqlite'}});assert.equal(ordinary.isError,undefined);
+    assert.equal(db.prepare('SELECT COUNT(*) AS n FROM entries').get<{n:number}>()?.n,1,'optional question did not hold task completion or save new memory');
+    dismiss({action:'decline'});await new Promise(r=>setTimeout(r,20));assert.equal(ledger.readRun('queued-run')?.status,'completed');
+  }finally{if(oldTrace===undefined)delete process.env.AGENTICREPLAY_RUN_DIR;else process.env.AGENTICREPLAY_RUN_DIR=oldTrace;}
 
-test('real local HTTP endpoints enforce existing Bearer authorization and persist SQLite receipts', async t => {
-  const f = fixture(t);
-  const token = 'c'.repeat(64);
-  const server = await startHttpServer({ databasePath: f.databasePath, runtimeDirectory: path.join(f.root, 'isolated-runtime'),
-    host: '127.0.0.1', port: 0, capabilityToken: token });
-  const post = (name: string, input: unknown, authorized = true) => fetch(`${server.url}/api/memory/${name}`, {
-    method: 'POST', headers: { 'content-type': 'application/json', ...(authorized ? { authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify(input),
-  });
-  try {
-    assert.equal((await post('observe', f.observation, false)).status, 401);
-    assert.equal(f.database.prepare('SELECT count(*) AS n FROM learning_observations').get<{ n: number }>()!.n, 0);
-    const saved = await (await post('observe', f.observation)).json();
-    assert.equal(saved.recorded, true); assert.equal(saved.workMayContinue, true);
-    await post('observe', { ...f.observation, eventId: 'model-switch', kind: 'model_switch', tags: ['handoff'] });
-    const context = await (await post('context', { cwd: f.root, sessionId: 'session_1' })).json();
-    assert.equal(context.items.length, 1); assert.equal(context.handoff.sessionId, 'session_1');
-    const conflict = await (await post('observe', { ...f.observation, summary: 'conflicting reuse' })).json();
-    assert.equal(conflict.recorded, false); assert.equal(conflict.workMayContinue, true);
-    assert.equal((await (await post('improve', { cwd: f.root })).json()).accepted, true);
-  } finally { await server.close(); }
-});
-
-test('MCP exposes the same local observation, context and improvement semantics', async t => {
-  const f = fixture(t);
-  const server = createKiokukoMcpServer({ databasePath: f.databasePath, cwd: () => f.root });
-  const client = new Client({ name: 'opencode', version: '2.0.18' });
-  const [a, b] = InMemoryTransport.createLinkedPair();
-  await server.connect(b); await client.connect(a);
-  try {
-    const saved = await client.callTool({ name: 'memory_observe', arguments: f.observation });
-    assert.equal(saved.isError, undefined); assert.equal((saved.structuredContent as Record<string, unknown>)?.recorded, true);
-    const recalled = await client.callTool({ name: 'memory_context', arguments: { cwd: f.root, tags: ['migration'] } });
-    assert.equal(((recalled.structuredContent as Record<string, unknown>)?.items as unknown[]).length, 1);
-    const improved = await client.callTool({ name: 'memory_improve', arguments: { cwd: f.root } });
-    assert.equal((improved.structuredContent as Record<string, unknown>)?.workMayContinue, true);
-  } finally { await client.close(); await server.close(); }
-});
-
-test('ordinary local CLI works with an isolated database and requires no external core service', async t => {
-  const f = fixture(t);
-  const environment = { ...process.env, KIOKUKO_DATA_DIR: path.join(f.root, 'cli-data'), KIOKUKO_SKILL_DISCOVERY: 'off' };
-  const cli = process.env.KIOKUKO_TEST_BUILT_CLI ?? path.resolve('src/bin/kiokuko.ts');
-  const run = (operation: string, input: unknown) => JSON.parse(execFileSync(process.execPath,
-    ['--import', import.meta.resolve('tsx'), cli, 'memory', operation, '--input-json', '-'], { cwd: f.root, env: environment,
-      input: JSON.stringify(input), encoding: 'utf8' }));
-  assert.equal(run('observe', f.observation).recorded, true);
-  assert.equal(run('observe', f.observation).duplicate, true);
-  assert.equal(run('context', { cwd: f.root, sessionId: 'session_1' }).handoff, null);
-  assert.equal(run('improve', { cwd: f.root }).accepted, true);
-});
-
-test('praise uses the exact ingested AgenticReplay source without guessing a latest run', async t => {
-  const f = fixture(t);
-  await writeTrace(path.join(f.root, '.agenticreplay/runs'), [traceLine(0, 'run.start'),
-    traceLine(1, 'tool.call', { name: 'read' }), traceLine(2, 'run.end', { exit_code: 0 })]);
-  assert.equal((await syncTraceStore(f.database, { captureCwd: f.root, traceRunId: traceId, timeoutMs: 5000 })).exitCode, 0);
-  const praise = { ...f.observation, kind: 'praise', summary: 'Thank you, that worked.',
-    source: { producer: 'agenticreplay', runId: traceId, eventIds: ['seq:1'] } };
-  assert.equal((await observeMemory(f.database, praise)).recorded, true);
-  const context = await memoryContext(f.database, { cwd: f.root });
-  const workspace = f.database.prepare('SELECT workspace FROM learning_observations LIMIT 1').get<{ workspace: string }>()!.workspace;
-  const entry = readEntry(f.database, { workspace, entryId: context.items[0]!.entryId! });
-  assert.match(entry.body, /AgenticReplay recorded action\/result summary/);
-  assert.match(entry.body, /"read"/);
-  assert.equal(entry.confidence, 0.3);
-  const previousDirectory = process.env.AGENTICREPLAY_RUN_DIR;
-  try {
-    process.env.AGENTICREPLAY_RUN_DIR = path.join(f.root, '.agenticreplay/runs', traceId);
-    const nativePraise = { ...praise, eventId: 'native-praise', source: { producer: 'kiokuko-ai', runId: 'host-session', eventIds: ['host-message'] } };
-    assert.equal((await observeMemory(f.database, nativePraise)).recorded, true);
-    const native = (await memoryContext(f.database, { cwd: f.root })).items.find(item => item.source.eventId === 'native-praise')!;
-    assert.match(readEntry(f.database, { workspace, entryId: native.entryId }).body, /source run_abcdef123456/);
-  } finally {
-    if (previousDirectory === undefined) delete process.env.AGENTICREPLAY_RUN_DIR; else process.env.AGENTICREPLAY_RUN_DIR = previousDirectory;
-  }
-  assert.equal((await observeMemory(f.database, { ...praise, eventId: 'missing-trace', source: { ...praise.source, runId: 'run_00000000' } })).recorded, false);
-  assert.equal((await observeMemory(f.database, { ...praise, cwd: f.other, eventId: 'wrong-repo' })).recorded, false);
-  const privateTraceId = 'run_abcdef999999';
-  await writeTrace(path.join(f.root, '.agenticreplay/runs'), [traceLine(0, 'run.start'),
-    traceLine(1, 'note', { rule: 'private', detail: 'Cookie: private-session-value' }), traceLine(2, 'run.end', { exit_code: 0 })], '0.4.0', privateTraceId);
-  await syncTraceStore(f.database, { captureCwd: f.root, traceRunId: privateTraceId, timeoutMs: 5000 });
-  const unsafe = await observeMemory(f.database, { ...praise, eventId: 'private-trace', source: { ...praise.source, runId: privateTraceId } });
-  assert.equal(unsafe.recorded, false); assert.equal(unsafe.workMayContinue, true);
-});
-
-test('shipped OpenCode hooks cross the pinned CLI, persist SQLite and feed a new session without a core service', async t => {
-  const f = fixture(t);
-  const data = path.join(f.root, 'host-data');
-  const cli = path.resolve('dist/bin/kiokuko.js');
-  const runtimeGlobal = globalThis as typeof globalThis & { Bun?: unknown };
-  const original = runtimeGlobal.Bun;
-  runtimeGlobal.Bun = { spawn(argv: string[], options: { cwd: string }) {
-    return spawnNodeBunChild(argv, { cwd: options.cwd,
-      env: { ...process.env, KIOKUKO_DATA_DIR: data, KIOKUKO_SKILL_DISCOVERY: 'off' } });
-  } };
-  const fixtureHost = pluginContextFixture(f.root);
-  Object.assign(fixtureHost.ctx, { options: { protocolVersion: 1, packageVersion: PACKAGE_VERSION, nodeExecutable: process.execPath, cliScript: cli } });
-  fixtureHost.ctx.session.context = async () => [{ type: 'assistant', content: [{ type: 'text', text: 'Migration startup remains broken. A regression is pending.' }] }] as never;
-  const cleanup = await KiokukoPlugin.setup(fixtureHost.ctx);
-  const until = async (condition: () => boolean | Promise<boolean>) => {
-    const deadline = Date.now() + 8000;
-    while (!await condition()) { if (Date.now() > deadline) throw new Error('Host learning timed out'); await new Promise(resolve => setTimeout(resolve, 25)); }
-  };
-  let observed: ReturnType<typeof openConnection> | undefined;
-  try {
-    await fixtureHost.hooks.get('session:prompt')!({ sessionID: 'ses_1', messageID: 'msg_failure', prompt: { text: 'まだ起動失敗する。migration startupを確認して。' } } as never);
-    await until(async () => {
-      try { observed ??= openConnection(path.join(data, 'kiokuko-ai.sqlite'), { readOnly: true });
-        return !!observed.prepare('SELECT 1 FROM learning_observations WHERE event_id=?').get('msg_failure'); }
-      catch { observed?.close(); observed = undefined; return false; }
-    });
-    assert.equal(observed!.prepare('SELECT count(*) AS n FROM learning_observations WHERE event_id=?').get<{ n: number }>('msg_failure')!.n, 1);
-    fixtureHost.ctx.session.get = async ({ sessionID }) => ({ id: sessionID, location: { directory: f.root }, projectID: 'prj' }) as never;
-    await fixtureHost.hooks.get('session:prompt')!({ sessionID: 'ses_new', messageID: 'msg_new', prompt: { text: '別の新機能を追加して' } } as never);
-    const system: Array<{ type: string; text: string }> = [];
-    await until(async () => { system.length = 0;
-      await fixtureHost.hooks.get('session:context')!({ sessionID: 'ses_new', system, model: { providerID: 'p', id: 'new' } } as never);
-      return system.some(part => part.text.includes('msg_failure')); });
-    assert.match(JSON.stringify(system), /まだ起動失敗/);
-    assert.doesNotMatch(JSON.stringify(system), /"sessionId":"ses_1"/);
-    fixtureHost.emit({ id: 'evt_compact', type: 'session.compaction.ended', location: { directory: f.root },
-      data: { sessionID: 'ses_new', text: 'Migration correction pending; check existing startup before reporting completion.' } });
-    await until(() => !!observed!.prepare('SELECT 1 FROM learning_observations WHERE event_id=?').get('evt_compact'));
-    fixtureHost.emit({ id: 'evt_model', type: 'session.model.selected', location: { directory: f.root },
-      data: { sessionID: 'ses_new', previous: { providerID: 'p', id: 'old' }, model: { providerID: 'p', id: 'new' } } });
-    await until(() => !!observed!.prepare('SELECT 1 FROM learning_observations WHERE event_id=?').get('evt_model'));
-    const switched = JSON.parse(observed!.prepare('SELECT observation_json FROM learning_observations WHERE event_id=?').get<{ observation_json: string }>('evt_model')!.observation_json);
-    assert.equal(switched.fromModel, 'p/old'); assert.equal(switched.toModel, 'p/new'); assert.equal(switched.sessionId, 'ses_new');
-  } finally { await cleanup?.(); observed?.close(); runtimeGlobal.Bun = original; }
+ }finally{await client.close();await server.close();db.close();rmSync(root,{recursive:true,force:true});}
 });

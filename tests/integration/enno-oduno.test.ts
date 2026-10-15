@@ -1837,9 +1837,21 @@ test('run identity rejects cross-run progress while trusted repository routing c
         workPlan: 'explicit_user', skillSet: 'explicit_user', finalVerifiers: 'explicit_user', maxAttempts: 'explicit_user',
       }, capabilities,
     }), /does not own/u);
-    assert.throws(() => decideAdapterContinuation(database, 'opencode', {
-      session_id: 'outside-repository', cwd: path.dirname(root),
-    }), /No repository root found/u);
+    // A temp directory's parent can legitimately have a Git/binding ancestor.
+    // Assert the routing boundary, not the machine's global directory layout.
+    let outsideDecision: ReturnType<typeof decideAdapterContinuation> | undefined;
+    let outsideError: unknown;
+    try {
+      outsideDecision = decideAdapterContinuation(database, 'opencode', {
+        session_id: 'outside-repository', cwd: path.dirname(root),
+      });
+    } catch (error) { outsideError = error; }
+    if (outsideError !== undefined) assert.match(String(outsideError), /No repository root found/u);
+    else {
+      assert.equal(outsideDecision?.disposition, 'stop');
+      assert.equal(outsideDecision?.code, 'no_active_run');
+      assert.equal(outsideDecision?.continue, false);
+    }
     const sameClient = decideAdapterContinuation(database, 'opencode', { session_id: 'another-session', cwd: root });
     assert.equal(sameClient.continue, true);
     assert.equal(sameClient.runId, prepared.run.runId);

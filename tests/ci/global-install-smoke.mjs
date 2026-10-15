@@ -146,7 +146,7 @@ try {
     assert.match(content, /<!-- KIOKUKO MANAGED STANDARD SKILL: coding-ideal-routine-skill -->/u);
   }
   const instructions = setupResult.files.find(file => file.purpose === 'instructions');
-  assert.match(await readFile(instructions.path, 'utf8'), /before writing or changing code, read and apply `coding-ideal-routine-skill`/u);
+  assert.match(await readFile(instructions.path, 'utf8'), /When useful for the current coding risk, read and apply `coding-ideal-routine-skill`/u);
   const repeated = await run(cliPath, ['setup', '--no-embeddings', '--json'], temporaryRoot, isolatedEnvironment);
   assert.equal(JSON.parse(repeated.stdout).data.files.every(file => file.action === 'unchanged'), true);
 

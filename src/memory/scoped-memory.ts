@@ -581,7 +581,7 @@ export async function checkpointScopedMemory(database: SqliteDatabase, input: Sc
     // Learning bookkeeping must never gate completion. Keep the evidence honest:
     // a fresh assertion alone, missing reviews or failed checks is not verification.
     const fresh = evidence.verification?.outcome === 'fresh'
-      && memoryApplication?.complete !== false && !unsuccessful
+      && !unsuccessful
       && evidence.tests.length + evidence.commands.length > 0;
     const warnings = [
       ...(memoryApplication?.complete === false ? ['memory_application_incomplete'] : []),

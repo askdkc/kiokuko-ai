@@ -42,19 +42,14 @@ export const KiokukoPlugin: Plugin.Plugin = {
       : { runtimeFailure: 'version_mismatch', signal: lifecycle.signal, timeoutMs: 10_000 };
     const warn = (reason: string) => { console.warn(`kiokuko-ai: ${reason}`); };
     const learning = await registerOpenCodeLearning(ctx, directory, lifecycle, {
-      observe: async observation => {
-        const receipt = await runKiokukoMemoryOperation('observe', { cwd: directory, ...observation }, dependencies);
-        if (receipt.accepted !== true || receipt.recorded !== true) throw new Error('learning_not_recorded');
-      },
       recall: async (query, sessionId) => {
         const contexts = await Promise.allSettled([
           runKiokukoMemoryOperation('context', { cwd: directory, query: query.slice(0, 500), sessionId, limit: 5 }, dependencies),
-          runKiokukoMemoryOperation('context', { cwd: directory, tags: ['complaint'], limit: 3 }, dependencies),
         ]);
         const valid = contexts.flatMap(result => result.status === 'fulfilled' && result.value.available === true ? [result.value] : []);
         if (!valid.length) throw new Error('learning_context_unavailable');
         const unique = new Map<string, unknown>();
-        // Current repository cautions are included even for an unrelated new task.
+        // Recall follows this task context; unrelated cautions do not override it.
         for (const value of [...valid].reverse()) for (const entry of Array.isArray(value.entries) ? value.entries : []) {
           if (entry && typeof entry === 'object') unique.set(String((entry as Record<string, unknown>).entryId), entry);
         }

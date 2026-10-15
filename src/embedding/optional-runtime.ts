@@ -1,3 +1,4 @@
+import semver from 'semver';
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -41,13 +42,19 @@ interface RuntimeContract {
 function runtimeContract(packageRoot: string, platform: NodeJS.Platform): RuntimeContract {
   const source = JSON.parse(readFileSync(path.join(packageRoot, 'package.json'), 'utf8')) as {
     peerDependencies?: Record<string, unknown>;
+    devDependencies?: Record<string, unknown>;
     overrides?: Record<string, unknown>;
   };
   const dependencies: Record<string, string> = {};
   for (const name of packageNames) {
-    const version = source.peerDependencies?.[name];
+    // Consumer peers are ranges; this owned, reproducible runtime uses the shipped development lock.
+    const version = source.devDependencies?.[name] ?? source.peerDependencies?.[name];
     if (typeof version !== 'string' || !/^\d+\.\d+\.\d+(?:-[a-zA-Z0-9.-]+)?$/u.test(version)) {
       throw new KiokukoError('INTEGRITY_ERROR', `The optional runtime requires an exact shipped version for ${name}`);
+    }
+    const peerRange = source.peerDependencies?.[name];
+    if (typeof peerRange !== 'string' || !semver.satisfies(version, peerRange)) {
+      throw new KiokukoError('INTEGRITY_ERROR', `The shipped optional runtime version for ${name} is outside its public peer range`);
     }
     dependencies[name] = version;
   }

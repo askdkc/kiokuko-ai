@@ -19,7 +19,9 @@ test('Node Bun adapter rejects early stdin closure instead of emitting an uncaug
     assert.equal(Buffer.from(ready.value!).toString(), 'stdin-closed');
   } finally { reader.releaseLock(); }
 
-  await assert.rejects(child.stdin.write('request after peer closure'), { code: 'EPIPE' });
+  // A short write may be accepted into Node's local buffer before peer closure
+  // propagates. Cross the writable high-water mark to await the pipe outcome.
+  await assert.rejects(child.stdin.write('request after peer closure'.repeat(65536)), { code: 'EPIPE' });
   await assert.rejects(child.stdin.end(), { code: 'ERR_INVALID_STATE' });
   child.kill();
   assert.equal(await child.exited, 1);

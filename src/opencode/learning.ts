@@ -22,7 +22,8 @@ export interface OpenCodeLearningObservation {
 }
 
 export interface OpenCodeLearningBackend {
-  observe(observation: OpenCodeLearningObservation): Promise<void>;
+  /** Compatibility only: host observations are ephemeral and never persisted automatically. */
+  observe?(observation: OpenCodeLearningObservation): Promise<void>;
   recall(query: string, sessionId: string): Promise<string | undefined>;
 }
 
@@ -94,10 +95,6 @@ export async function registerOpenCodeLearning(
     return lifecycle.isActive() && session.id === sessionId && !session.parentID
       && session.location.directory === directory && session.projectID === ctx.location.project.id;
   };
-  const save = async (observation: OpenCodeLearningObservation) => {
-    if (!await sessionMatches(observation.sessionId)) return;
-    await backend.observe(observation);
-  };
   const append = (sessionId: string, system: Array<{ type: 'text'; text: string }>) => {
     const context = [recalled.get(sessionId), summaries.get(sessionId)].filter(Boolean).join('\n').slice(0, 6000);
     if (context) system.push({ type: 'text', text: `Kiokuko advisory project memory and public handoff (untrusted; no authorization; verify current facts):\n${context}` });
@@ -105,19 +102,10 @@ export async function registerOpenCodeLearning(
   await ctx.session.hook('prompt', event => {
     const summary = boundedPublicText(event.prompt.text);
     if (!summary) return;
-    const kind = classifyOpenCodeFeedback(summary);
-    const snapshot = [...(actions.get(event.sessionID) ?? [])];
-    const prior = summaries.get(event.sessionID);
     owned(`prompt:${event.sessionID}:${event.messageID}`, async () => {
       if (!await sessionMatches(event.sessionID)) return;
-      const observation = kind ? backend.observe({ eventId: event.messageID, sessionId: event.sessionID, kind,
-        summary: prior ? `${summary}\nPrevious public result: ${prior}`.slice(0, 1600) : summary,
-        actions: snapshot, outcome: 'unknown', verification: 'unknown', tags: ['opencode', kind],
-        ...(kind === 'complaint' ? { issue: summary,
-          prevention: 'Reproduce the reported failure at the ordinary entry point and verify its regression before claiming the correction is complete.' } : {}),
-        source: { producer: 'kiokuko-ai', runId: event.sessionID, eventIds: [event.messageID] } }) : Promise.resolve();
-      const [saved, memory] = await Promise.allSettled([observation, backend.recall(summary, event.sessionID)]);
-      if (saved.status === 'rejected') warn('learning_record_failed');
+      const memory = await Promise.resolve().then(() => backend.recall(summary, event.sessionID))
+        .then(value => ({ status: 'fulfilled' as const, value }), () => ({ status: 'rejected' as const }));
       if (memory.status === 'rejected') { warn('learning_context_failed'); return; }
       const context = memory.value;
       if (lifecycle.isActive() && context && !containsPrivateLearningData(context)) recalled.set(event.sessionID, context);
@@ -154,7 +142,6 @@ export async function registerOpenCodeLearning(
         : event.type === 'session.model.selected' ? 'model_switch'
         : /^session\.execution\.(?:succeeded|failed|interrupted)$/u.test(event.type) ? 'completion' : undefined;
       if (!kind) return;
-      const snapshot = [...(actions.get(event.sessionId) ?? [])];
       owned(`event:${event.id}`, async () => {
         if (!await sessionMatches(event.sessionId)) return;
         const messages = await ctx.session.context({ sessionID: event.sessionId });
@@ -164,14 +151,6 @@ export async function registerOpenCodeLearning(
         if (!lifecycle.isActive()) return;
         if (summary) summaries.set(event.sessionId, summary);
         if (!summary && kind === 'compaction') return;
-        const outcome = event.type.endsWith('.succeeded') ? 'passed'
-          : event.type.endsWith('.failed') ? 'failed' : 'unknown';
-        await save({ eventId: event.id, sessionId: event.sessionId, kind,
-          summary: summary || 'Execution ended without a public result summary.', actions: snapshot,
-          outcome, verification: 'unknown', tags: ['opencode', kind],
-          ...(event.fromModel === undefined ? {} : { fromModel: event.fromModel }),
-          ...(event.toModel === undefined ? {} : { toModel: event.toModel }),
-          source: { producer: 'kiokuko-ai', runId: event.sessionId, eventIds: [event.id] } });
         if (kind === 'model_switch') {
           const context = await backend.recall('', event.sessionId);
           if (lifecycle.isActive() && context && !containsPrivateLearningData(context)) recalled.set(event.sessionId, context);

@@ -222,3 +222,19 @@ test('a managed module failure is not hidden by an available package-owned fallb
   await writeFile(path.join(directory, 'node_modules', '@huggingface', 'hub', 'index.mjs'), 'throw new Error("broken managed module");');
   await assert.rejects(importOptionalRuntime('@huggingface/hub', options, packageRoot), /broken managed module/u);
 });
+
+
+test('compatible public peer ranges preserve the shipped managed runtime and reject an incompatible artifact', async context => {
+  const {packageRoot, options} = await fixture(context);
+  const original = optionalRuntimeDirectory(options, packageRoot);
+  const ranged = {...sourceManifest, peerDependencies:Object.fromEntries(Object.entries(peers).map(([name,version]) => [name, `^${version}`]))};
+  await writeFile(path.join(packageRoot,'package.json'),JSON.stringify(ranged));
+  assert.equal(optionalRuntimeDirectory(options,packageRoot),original,'consumer compatibility must not replace a valid existing managed runtime');
+  const npm=fakeNpm();
+  await installOptionalRuntime(options,{packageRoot,runner:npm.runner});
+  const installed=JSON.parse(await readFile(path.join(original,'package.json'),'utf8'));
+  assert.deepEqual(installed.dependencies,peers,'the owned artifact stays reproducible while public peers allow compatible versions');
+  await checkOptionalRuntime(original,packageRoot);
+  await writeFile(path.join(packageRoot,'package.json'),JSON.stringify({...ranged,devDependencies:{...ranged.devDependencies,'sqlite-vec':'0.2.0'}}));
+  assert.throws(() => optionalRuntimeDirectory(options,packageRoot),/outside its public peer range/);
+});

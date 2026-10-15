@@ -168,7 +168,8 @@ test('bundles every managed standard skill from a fixed manifest', async () => {
   assert.equal(STANDARD_SKILL_MANIFESTS.at(-1)?.name, STANDARD_SOUL_SKILL_NAME);
   const soulSkill = soulFiles.find((file) => file.relativePath === 'SKILL.md')?.content ?? '';
   assert.match(soulSkill, new RegExp(`^---\\nname: ${STANDARD_SOUL_SKILL_NAME}\\ndescription: [^\\n]+\\n---\\n`));
-  assert.match(soulSkill, /Read this Skill before any other bundled Kiokuko Skill/);
+  assert.match(soulSkill, /When using bundled Kiokuko guidance, read this Skill before its specialist routes/);
+  assert.match(soulSkill, /No Skill, memory read, or intake is a prerequisite for ordinary execution/);
   assert.match(soulSkill, /Akinator fills knowledge gaps from task and repository fingerprints/);
   assert.match(soulSkill, /advisory unless an answer is required to authorize an irreversible action or enforce a safety boundary/);
   assert.match(soulSkill, /Call `task_prepare` at most once.*complete capability catalog available in the current client/su);
@@ -191,8 +192,8 @@ test('bundles every managed standard skill from a fixed manifest', async () => {
     soulSkill,
     /1\. `kiokuko-soul`;[\s\S]*2\. one Akinator `task_prepare`[\s\S]*3\. `kiokuko-enno-oduno`[\s\S]*4\. `kiokuko-simple-work`[\s\S]*5\. `one-shot-software-completion`[\s\S]*6\. `kiokuko-single-purpose-functions`[\s\S]*7\. `coding-ideal-routine-skill`[\s\S]*8\. `kiokuko-ui-design-soul`/u,
   );
-  assert.match(soulSkill, /At the start of any coding work, before writing or changing code, read and apply `one-shot-software-completion`; use its compact contract and only the references selected for the current risk\./u);
-  assert.match(SOUL_ROUTING_ENTRY_CONTRACT, /At the start of any coding work, before writing or changing code, read and apply `one-shot-software-completion`; use its compact contract and only the references selected for the current risk\./u);
+  assert.match(soulSkill, /For coding work, optionally read and apply `one-shot-software-completion`; use its compact contract and only the references selected for the current risk\./u);
+  assert.match(SOUL_ROUTING_ENTRY_CONTRACT, /For coding work, optionally read and apply `one-shot-software-completion`; use its compact contract and only the references selected for the current risk\./u);
   assert.match(SOUL_ROUTING_ENTRY_CONTRACT, /memory-and-plan sidecar, not a coding gate/);
   assert.match(SOUL_ROUTING_ENTRY_CONTRACT, /unresolved advisory intake, missing Skills, failed enrichment, verifier disagreement, and meditation delay/);
   assert.match(SOUL_ROUTING_ENTRY_CONTRACT, /Only safety, missing authorization for an irreversible effect, path or identity violations, database corruption, and stale revision or lease identity may block adoption/);

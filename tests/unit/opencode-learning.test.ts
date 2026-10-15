@@ -31,7 +31,7 @@ test('record failure, conflict and unavailable context cannot reject the host pr
     await fixture.hooks.get('session:context')!({ sessionID: 'ses_1', system, model: { providerID: 'p', id: 'new' } } as never);
     await tick();
     assert.deepEqual(system, []);
-    assert.deepEqual(warnings.sort(), ['learning_context_failed', 'learning_record_failed']);
+    assert.deepEqual(warnings.sort(), ['learning_context_failed']);
     await lifecycle.dispose(() => undefined);
   }
 });
@@ -71,11 +71,7 @@ test('same-session model changes carry public results, real event identity and u
   assert.match(JSON.stringify(system), /Fixed retry handling/);
   assert.match(JSON.stringify(system), /Prior caution/);
   assert.doesNotMatch(JSON.stringify({ system, observations }), /PRIVATE_REASONING/);
-  assert.equal(observations[1]?.eventId, 'event-switch');
-  assert.equal(observations[1]?.fromModel, 'p/old');
-  assert.equal(observations[1]?.toModel, 'p/new');
-  assert.equal(observations[1]?.source.runId, 'ses_1');
-  assert.equal(observations[0]?.verification, 'unknown');
+  assert.deepEqual(observations, [], 'completion and model-switch are ephemeral, not consent to persist');
   const foreignSystem: unknown[] = [];
   adapter.append('ses_other', foreignSystem as never);
   assert.deepEqual(foreignSystem, []);
@@ -124,10 +120,7 @@ test('host-executed focused verifier results retain evidence without claiming fu
   }) } });
   adapter.observeEvent({ id: 'evt_verified', type: 'session.execution.succeeded', sessionId: 'ses_1' });
   await tick();
-  assert.equal(observations[0]?.actions[0]?.kind, 'test');
-  assert.equal(observations[0]?.actions[0]?.outcome, 'passed');
-  assert.match(observations[0]!.actions[0]!.summary, /evidence-123/);
-  assert.equal(observations[0]?.verification, 'unknown');
+  assert.deepEqual(observations, [], 'verification evidence does not authorize automatic memory writes');
   await lifecycle.dispose(() => undefined);
 });
 

@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import childProcess from 'node:child_process';
+import { syncBuiltinESMExports } from 'node:module';
 import { mkdir, mkdtemp, realpath, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -33,10 +36,19 @@ test('prefers an ancestor binding over a git root', async () => {
   assert.equal(detectRepositoryRoot({ cwd: nested }).root, root);
 });
 
-test('requires allowDirectory when no binding or git root exists', async () => {
+test('requires allowDirectory when no binding or git root exists', async t => {
   const directory = await temp('directory');
-  assert.throws(() => detectRepositoryRoot({ cwd: directory }), /allow-directory|repository root/i);
-  assert.equal(detectRepositoryRoot({ cwd: directory, allowDirectory: true }).root, directory);
+  // The host may put the temporary root beneath a Git checkout or a synthetic
+  // .git marker. Isolate discovery, while retaining real directory validation.
+  const exists = fs.existsSync;
+  t.mock.method(fs, 'existsSync', (file: Parameters<typeof fs.existsSync>[0]) =>
+    ['.git', '.kiokuko-ai.json', '.kiokuko.json'].includes(path.basename(String(file))) ? false : exists(file));
+  t.mock.method(childProcess, 'execFileSync', () => { throw new Error('fixture has no Git root'); });
+  syncBuiltinESMExports();
+  try {
+    assert.throws(() => detectRepositoryRoot({ cwd: directory }), /allow-directory|repository root/i);
+    assert.equal(detectRepositoryRoot({ cwd: directory, allowDirectory: true }).root, directory);
+  } finally { t.mock.restoreAll(); syncBuiltinESMExports(); }
 });
 
 test('canonical directory rejects relative and missing paths with typed failures', async () => {

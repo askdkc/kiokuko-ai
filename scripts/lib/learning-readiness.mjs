@@ -5,8 +5,8 @@ const contentText = content => typeof content === 'string' ? content
   : Array.isArray(content) ? content.filter(part => part?.type === 'text').map(part => part.text).join('\n') : '';
 
 /** A receipt must come from this next-session probe, with the exact source and caution. */
-export function createLearningDeliveryProbe({ sessionId, eventId, issue }) {
-  const text = `Review an unrelated new feature in this repository. Kiokuko next-session probe: ${sessionId}.`;
+export function createLearningDeliveryProbe({ sessionId, eventId, issue, reviewed = false }) {
+  const text = `${reviewed ? "Review migration startup" : "Review an unrelated new feature"} in this repository. Kiokuko next-session probe: ${sessionId}.`;
   let seen = false;
   let requests = 0;
   return {
@@ -25,7 +25,7 @@ export function createLearningDeliveryProbe({ sessionId, eventId, issue }) {
         let context;
         try { context = JSON.parse(system.slice(offset + advisory.length).split('\n', 1)[0]); }
         catch { continue; }
-        if (Array.isArray(context?.entries) && context.entries.some(entry => entry?.kind === 'complaint'
+        if (Array.isArray(context?.entries) && context.entries.some(entry => reviewed ? entry?.kind === 'reviewed_replay' && entry.entryId === eventId && entry.summary === issue : entry?.kind === 'complaint'
           && entry.source?.eventId === eventId && entry.issue === issue
           && typeof entry.prevention === 'string' && entry.prevention.length > 0)) seen = true;
       }

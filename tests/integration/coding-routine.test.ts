@@ -19,11 +19,12 @@ test('bundles the coding routine and both attached references', async () => {
   for (const file of files) assert.equal(file.content.split(file.managedMarker).length - 1, 1);
 });
 
-test('global and project instructions require the routine before coding', () => {
+test('global and project instructions keep routine advice nonblocking', () => {
   for (const content of [renderGlobalInstructions().content, renderManagedBlock({
     repositoryId: 'repo-fixture', workspace: 'project:fixture', cliCommand: 'kiokuko-ai',
   })]) {
-    assert.match(content, /before writing or changing code, read and apply `coding-ideal-routine-skill`/u);
+    assert.doesNotMatch(content, /before writing or changing code, read and apply `coding-ideal-routine-skill`/u);
+    assert.match(content, /not a coding gate|none is a prerequisite/);
   }
 });
 

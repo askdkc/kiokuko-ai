@@ -25,7 +25,7 @@ const recorderShim=path.join(bin,'agenticreplay');
 await writeFile(recorderShim,`#!${process.execPath}\nimport {spawn} from 'node:child_process';const child=spawn(${JSON.stringify(executable)},process.argv.slice(2),{stdio:'inherit'});child.on('error',()=>process.exit(1));child.on('exit',(code,signal)=>{process.exitCode=code??1;});for(const signal of ['SIGINT','SIGTERM'])process.on(signal,()=>child.kill(signal));\n`);
 await chmod(recorderShim,0o755);
 const environment = {
-  ...process.env, HOME: home, XDG_CONFIG_HOME: config, XDG_DATA_HOME: data,
+  ...process.env, PWD: project, HOME: home, XDG_CONFIG_HOME: config, XDG_DATA_HOME: data,
   XDG_CACHE_HOME: path.join(root, 'cache'), XDG_STATE_HOME: path.join(root, 'state'),
   KIOKUKO_DATA_DIR: data, OPENCODE_CONFIG_CONTENT: '{}',
   OPENCODE_CONFIG_DIR: path.join(config, 'opencode'),

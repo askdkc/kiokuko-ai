@@ -1,3 +1,4 @@
+import { createInterface as createMemoryReviewInterface } from 'node:readline/promises';
 import { describeProjectAgentFinding } from './setup/project-agent-health.js';
 import { constants as fsConstants, existsSync } from 'node:fs';
 import { open } from 'node:fs/promises';
@@ -478,12 +479,30 @@ export function buildCli(dependencies: CliDependencies = {}): Command {
       'record input must be a JSON object',
     );
     const input = validateRecordInput({ ...parsed, workspace: options.workspace });
+    if (!process.stdin.isTTY || !process.stdout.isTTY || options.json) {
+      humanOrJson(options.json, 'record', { recorded: false, workMayContinue: true, warnings: ['post_task_review_required'] }, 'Use native human review to save memory.');
+      return;
+    }
+    const prompt = createMemoryReviewInterface({ input: process.stdin, output: process.stdout });
+    let approved = false;
+    try { process.stdout.write(JSON.stringify(input, null, 2) + '\n'); approved = /^(?:yes|y|はい)$/iu.test((await prompt.question('Save this exact memory? [y/N] ')).trim()); }
+    finally { prompt.close(); }
+    if (!approved) return;
     const data = await withDatabase((database) => recordEntry(database, input));
     humanOrJson(options.json, 'record', data, `Recorded ${data.id}`);
   });
 
   const promote = cli.command('promote').description('Promote a candidate entry').argument('<entry-id>').requiredOption('--workspace <name>').requiredOption('--expected-revision <number>').option('--json');
   promote.action(async (entryId: string, options: { workspace: string; expectedRevision: string; json?: boolean }) => {
+    if (!process.stdin.isTTY || !process.stdout.isTTY || options.json) {
+      humanOrJson(options.json, 'promote', { recorded: false, workMayContinue: true, warnings: ['post_task_review_required'] }, 'Review the exact candidate in a human terminal before promotion.'); return;
+    }
+    const candidate = await withDatabase(database => readEntry(database, { workspace: options.workspace, entryId }));
+    const prompt = createMemoryReviewInterface({ input: process.stdin, output: process.stdout });
+    let approved = false;
+    try { process.stdout.write(JSON.stringify(candidate, null, 2) + '\n'); approved = /^(?:y|yes|はい)$/iu.test((await prompt.question('Promote this exact candidate revision? [y/N] ')).trim()); }
+    finally { prompt.close(); }
+    if (!approved) return;
     const data = await withDatabase((database) => promoteEntry(database, { workspace: options.workspace, entryId, expectedRevision: parseExpectedRevision(options.expectedRevision) }));
     humanOrJson(options.json, 'promote', data, `Promoted ${data.id}`);
   });
@@ -497,6 +516,10 @@ export function buildCli(dependencies: CliDependencies = {}): Command {
     .option('--yes', 'Add every displayed candidate without interactive prompts')
     .option('--json', 'Emit candidates as JSON without changing memory');
   curator.action(async (options: { workspace?: string; cwd?: string; entryId?: string; limit: string; skillReadyOnly?: boolean; yes?: boolean; json?: boolean }) => {
+    if (options.yes || options.json || !process.stdin.isTTY || !process.stdout.isTTY) {
+      humanOrJson(options.json, 'curator', { recorded: false, workMayContinue: true, warnings: ['post_task_review_required'] }, 'Use native human review; unattended curator persistence is disabled.');
+      return;
+    }
     const data = await withDatabase((database) => runCuratorCommand(database, {
       ...(options.workspace === undefined ? {} : { workspace: options.workspace }),
       ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
