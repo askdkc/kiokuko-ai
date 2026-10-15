@@ -32,7 +32,7 @@ before recording so the trace cannot silently attach to a shared service.
 The ordinary recording has no time limit; the timeout applies to synchronization
 after AgenticReplay exits. No model configuration is changed by Kiokuko.
 
-AgenticReplay 0.1.2 creates a run-local plugin overlay for OpenCode 2 and rejects
+The AgenticReplay OpenCode 2 recorder creates a run-local plugin overlay and rejects
 an existing `OPENCODE_CONFIG` override. Use normal config-file discovery or
 `OPENCODE_CONFIG_CONTENT` for a supported recording; Kiokuko preserves the
 environment and does not silently discard that override.
@@ -215,8 +215,8 @@ executable and no paid model API:
 KIOKUKO_TEST_AGENTICREPLAY=/absolute/path/to/agenticreplay node scripts/run-tests.mjs tests/integration/agenticreplay-real-cli.test.ts
 ```
 
-That test pins AgenticReplay 0.1.2 and otherwise reports an explicit
-skip. Foreground process-group Ctrl-C in an interactive TUI requires a separate
+That test checks the installed AgenticReplay against the compatibility range
+in `package.json` and otherwise reports an explicit skip. Foreground process-group Ctrl-C in an interactive TUI requires a separate
 PTY check; the signal fixture checks the wrapper's forwarding and final sync.
 
 ## Migration from OrcaReplay

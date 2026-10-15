@@ -28,7 +28,9 @@ KIOKUKO_TEST_AGENTICREPLAY=/absolute/path/to/agenticreplay node scripts/run-test
 KIOKUKO_TEST_AGENTICREPLAY=/absolute/path/to/agenticreplay OPENCODE_BIN=/absolute/path/to/opencode npm run test:e2e:opencode:agenticreplay
 ```
 
-The real-recorder contract pins AgenticReplay 0.1.2 and uses a fake OpenCode child.
+The real-recorder contract uses the AgenticReplay compatibility range in
+`package.json` and the release installed by `npm ci` from `package-lock.json`.
+It checks the recorder behavior with a fake OpenCode child.
 The host E2E requires OpenCode 2.0.18 and a real AgenticReplay executable, with a
 local provider fixture. These checks require loopback access. They do not require
 paid provider calls or modification of personal configuration.

@@ -16,7 +16,8 @@
       "argv": [
         "node",
         "--test",
-        "scripts/verification-contract.test.mjs"
+        "scripts/verification-contract.test.mjs",
+        "scripts/agenticreplay-dependency.test.mjs"
       ],
       "profiles": [
         "main",
@@ -77,7 +78,7 @@
         "build"
       ],
       "testCapabilities": [
-        "agenticreplay-pinned",
+        "agenticreplay-managed",
         "ripwire"
       ]
     },
@@ -313,10 +314,9 @@
       "environment": "KIOKUKO_TEST_RIPWIRE",
       "binary": "ripwire"
     },
-    "agenticreplay-pinned": {
+    "agenticreplay-managed": {
       "environment": "AGENTICREPLAY_BIN",
-      "binary": "agenticreplay",
-      "version": "0.1.2"
+      "binary": "agenticreplay"
     }
   },
   "coveredChecks": []

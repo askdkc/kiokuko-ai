@@ -64,7 +64,7 @@
     "test:benchmark:akinator": "npm run build && node scripts/run-akinator-memory-benchmark.mjs",
     "verify": "node scripts/verify.mjs",
     "verify:plan": "node scripts/verify.mjs --plan",
-    "test:verification": "node --test scripts/verification-contract.test.mjs"
+    "test:verification": "node --test scripts/verification-contract.test.mjs scripts/agenticreplay-dependency.test.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
@@ -104,6 +104,7 @@
     }
   },
   "devDependencies": {
+    "agenticreplay": ">=0.1.6",
     "@opencode/client": "2.0.18",
     "@opencode/plugin": "2.0.18",
     "@huggingface/hub": "2.16.1",
