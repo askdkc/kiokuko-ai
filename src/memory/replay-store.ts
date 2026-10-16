@@ -64,7 +64,9 @@ export function createApprovedReplayMemoryStore(db: SqliteDatabase, workspace: s
     },
     query(query: string, tags: string[] = [], limit = 10): ReplayMemoryProposal[] {
       if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='replay_memories'").get()) return [];
-      const parsed = parseRetrievalQuery(query);
+      // memory_context permits an omitted query, including tag-only recall and
+      // same-session handoff refresh. Empty text contributes no search terms.
+      const parsed = query.length ? parseRetrievalQuery(query) : { lexicalTerms: [], substringTerms: [] };
       const terms = [...new Set([...tags, ...parsed.lexicalTerms, ...parsed.substringTerms].map(t => t.toLowerCase()))].slice(0, 64);
       if (!terms.length) return [];
       const indexed=db.prepare("SELECT 1 FROM sqlite_master WHERE name='entries'").get();

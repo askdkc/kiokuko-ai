@@ -12,6 +12,7 @@ import { runNativeReplayReview } from '../../src/opencode/replay-review-worker.j
 import { createApprovedReplayMemoryStore } from '../../src/memory/replay-store.js';
 import { memoryContext, observeMemory, improveMemory } from '../../src/memory/learning.js';
 import type { ReviewQuestion } from '../../src/memory/replay-review.js';
+import { renderOpenCodeLearningContext } from '../../src/opencode/learning.js';
 
 async function fixture(t: { after(fn: () => void): void }) {
   const directory = mkdtempSync(path.join(tmpdir(), 'kiokuko-reviewed-replay-'));
@@ -79,6 +80,72 @@ test('native approved revision survives restart, recalls context, retains failed
   const count = db.prepare('SELECT count(*) AS n FROM entries').get();
   createApprovedReplayMemoryStore(db, f.workspace).save(stored[0]!, receipt.approvalKey!);
   assert.deepEqual(db.prepare('SELECT count(*) AS n FROM entries').get(), count);
+});
+
+test('tag-only and empty recall remain available after an approved save', async t => {
+  const f = await fixture(t);
+  const receipt = await runNativeReplayReview(f.input, async q => ({ questionId: q.id,
+    choice: q.phase === 'organize' ? 'organize' : 'approve' }));
+  assert.equal(receipt.status, 'saved');
+  const db = openConnection(f.databasePath); t.after(() => db.close());
+  const tagged = await memoryContext(db, { cwd: f.input.cwd, tags: ['typescript'] });
+  assert.equal(tagged.available, true, JSON.stringify(tagged));
+  assert.equal(tagged.entries.length, 1);
+  assert.equal(tagged.entries[0]?.kind, 'reviewed_replay');
+  assert.equal((await memoryContext(db, { cwd: f.input.cwd, tags: ['unrelated'] })).entries.length, 0);
+  const empty = await memoryContext(db, { cwd: f.input.cwd, sessionId: f.input.sessionId });
+  assert.equal(empty.available, true, JSON.stringify(empty));
+  assert.equal(empty.entries.length, 0, 'an empty query must not recall every approved experience');
+});
+
+test('injected recall distinguishes recorded failures, success, user corrections and current applicability', async t => {
+  const f = await fixture(t);
+  const condition = 'Use retry only for transient SQLITE_BUSY; reproduce the current lock before applying it.';
+  const receipt = await runNativeReplayReview(f.input, async q => ({ questionId: q.id,
+    choice: q.phase === 'organize' ? 'organize' : q.revision === 1 ? 'revise' : 'approve',
+    ...(q.phase === 'review' && q.revision === 1 ? { comment: condition } : {}) }));
+  assert.equal(receipt.status, 'saved');
+  const db = openConnection(f.databasePath); t.after(() => db.close());
+  const context = await memoryContext(db, { cwd: f.input.cwd, query: 'migration retry' });
+  const rendered = renderOpenCodeLearningContext(context)!;
+  const entry = JSON.parse(rendered).entries[0];
+  assert.equal(entry.findings[0].text, condition);
+  assert.equal(entry.findings[0].basis, 'user_corrected');
+  assert.deepEqual(entry.findings[0].evidenceRefs, []);
+  assert.equal(entry.findings[0].evidenceStatus, 'not_provided');
+  assert.deepEqual(entry.attempts.map((a: { outcome: string; exitCode: number; taskBinding: string }) =>
+    [a.outcome, a.exitCode, a.taskBinding]), [['failed', 1, 'unassigned'], ['succeeded', 0, 'unassigned']]);
+  assert.equal(entry.source.traces[0].eventsSha256.length, 64);
+  assert.equal(entry.verification, 'user_reviewed_not_task_verified');
+  assert.equal(entry.currentApplicability, 'unverified');
+  assert.ok(!rendered.includes('retry passes'), 'raw command output is not injected');
+  assert.ok(rendered.length <= 5000);
+});
+
+test('injected references retain their evidence boundaries and exclude stale, foreign and unapproved memories', async t => {
+  const f = await fixture(t);
+  const receipt = await runNativeReplayReview(f.input, async q => ({ questionId: q.id,
+    choice: q.phase === 'organize' ? 'organize' : 'approve' }));
+  assert.equal(receipt.status, 'saved');
+  const db = openConnection(f.databasePath); t.after(() => db.close());
+  const injected = async (cwd = f.input.cwd) => JSON.parse(renderOpenCodeLearningContext(
+    await memoryContext(db, { cwd, query: 'migration retry' }))!).entries;
+  const entry = (await injected())[0];
+  assert.equal(entry.findings[0].basis, 'observed');
+  assert.equal(entry.findings[0].evidenceStatus, 'recorded_attempts');
+  assert.deepEqual(entry.findings[0].evidenceRefs, [entry.attempts[0].callRef, entry.attempts[0].resultRef]);
+  assert.equal(entry.currentApplicability, 'unverified', 'historical exit zero is not current applicability');
+  const other = path.join(f.input.cwd, 'other-repository'); execFileSync('git', ['init', '-q', other]);
+  await resolveProjectWorkspace(db, other);
+  assert.deepEqual(await injected(other), []);
+  const count = db.prepare('SELECT count(*) AS n FROM entries').get();
+  await runNativeReplayReview({ ...f.input, taskId: 'unapproved' }, async q => ({ questionId: q.id, choice: 'decline' }));
+  assert.deepEqual(db.prepare('SELECT count(*) AS n FROM entries').get(), count);
+  const { updateCandidateEntry } = await import('../../src/memory/entries.js');
+  const indexed = db.prepare('SELECT id FROM entries WHERE workspace=?').get<{ id: string }>(f.workspace)!;
+  updateCandidateEntry(db, { workspace: f.workspace, entryId: indexed.id, expectedRevision: 1,
+    kind: 'lesson', title: 'Withdraw the old retry advice', body: 'The current source contradicts the historical advice.' });
+  assert.deepEqual(await injected(), []);
 });
 
 test('abort during review, stale reply and changed source fail safely without a save', async t => {

@@ -1,4 +1,5 @@
 import { createApprovedReplayMemoryStore } from './replay-store.js';
+import { approvedReplayContext } from './replay-context.js';
 import * as z from 'zod/v4';
 import path from 'node:path';
 import type { SqliteDatabase, SqliteRow } from '../db/adapter.js';
@@ -154,12 +155,8 @@ export async function memoryContext(database: SqliteDatabase, raw: unknown) {
           || (tokens.length && !tokens.some(token => `${entry.title} ${entry.body}`.toLowerCase().includes(token))) ? [] : [{ entryId: entry.id, revision: entry.revision, kind: entry.kind, title: entry.title, summary: entry.body.slice(0, 300),
           tags: entry.tags, confidence: entry.confidence, verification: 'unknown', verificationProvenance: 'unknown', scope: 'global', sourceEventIds: entry.provenance.evidenceIds ?? [], source: entry.provenance.reference, untrusted: true }];
       }).slice(0, 2);
-    const approved = createApprovedReplayMemoryStore(database, project.workspace).query(input.query, input.tags, input.limit).map(proposal => ({
-      entryId: proposal.proposalId, revision: proposal.revision, kind: 'reviewed_replay',
-      summary: proposal.findings.map(finding => finding.text).join('\n').slice(0, 2000),
-      request: proposal.request.text.slice(0, 500), tags: proposal.tags, source: proposal.source,
-      verification: 'user_reviewed_not_task_verified', untrusted: true,
-    }));
+    const approved = createApprovedReplayMemoryStore(database, project.workspace)
+      .query(input.query, input.tags, input.limit).map(approvedReplayContext);
     return { available: true, accepted: true, recorded: false, workMayContinue: true as const, repositoryId: project.repositoryId, entries: [...approved, ...items, ...routines, ...principles].slice(0, input.limit), items, routines, principles, handoff, warnings: [], diagnostics: [], truncated: selected.length > items.length };
   } catch (error) { return { ...learningFailure(error), available: false, entries: [], items: [], handoff: null }; }
 }

@@ -75,6 +75,7 @@ export async function registerOpenCodeLearning(
 ) {
   const summaries = new Map<string, string>();
   const recalled = new Map<string, string>();
+  const requests = new Map<string, { query: string }>();
   const actions = new Map<string, OpenCodeLearningObservation['actions']>();
   const pending = new Set<string>();
   const owned = (key: string, operation: () => Promise<void>) => {
@@ -101,6 +102,16 @@ export async function registerOpenCodeLearning(
   };
   await ctx.session.hook('prompt', event => {
     const summary = boundedPublicText(event.prompt.text);
+    const previous = requests.get(event.sessionID);
+    // Repeated prompts for the same query share in-flight recall too; otherwise
+    // a slow backend could be perpetually overtaken by ordinary host requests.
+    const request = summary && previous?.query === summary ? previous : { query: summary };
+    // A completed result may serve the identical query while its refresh runs.
+    // A different (or unusable) query must never inherit that result.
+    if (request !== previous) recalled.delete(event.sessionID);
+    requests.set(event.sessionID, request);
+    // Invalidate previous work even when this request has no safe recall text.
+    actions.delete(event.sessionID);
     if (!summary) return;
     owned(`prompt:${event.sessionID}:${event.messageID}`, async () => {
       if (!await sessionMatches(event.sessionID)) return;
@@ -108,10 +119,8 @@ export async function registerOpenCodeLearning(
         .then(value => ({ status: 'fulfilled' as const, value }), () => ({ status: 'rejected' as const }));
       if (memory.status === 'rejected') { warn('learning_context_failed'); return; }
       const context = memory.value;
-      if (lifecycle.isActive() && context && !containsPrivateLearningData(context)) recalled.set(event.sessionID, context);
+      if (lifecycle.isActive() && requests.get(event.sessionID) === request && context && !containsPrivateLearningData(context)) recalled.set(event.sessionID, context);
     });
-    // A new request must not inherit the previous request's observed actions.
-    actions.delete(event.sessionID);
   });
   await ctx.session.hook('context', event => {
     if (!lifecycle.isActive()) return;
@@ -142,18 +151,19 @@ export async function registerOpenCodeLearning(
         : event.type === 'session.model.selected' ? 'model_switch'
         : /^session\.execution\.(?:succeeded|failed|interrupted)$/u.test(event.type) ? 'completion' : undefined;
       if (!kind) return;
+      const request = requests.get(event.sessionId);
       owned(`event:${event.id}`, async () => {
         if (!await sessionMatches(event.sessionId)) return;
         const messages = await ctx.session.context({ sessionID: event.sessionId });
         const summary = kind === 'compaction'
           ? event.compactionSummary === undefined ? summarizeOpenCodePublicContext(messages.filter(message => message.type === 'compaction')) : boundedPublicText(event.compactionSummary)
           : summarizeOpenCodePublicContext(messages);
-        if (!lifecycle.isActive()) return;
+        if (!lifecycle.isActive() || requests.get(event.sessionId) !== request) return;
         if (summary) summaries.set(event.sessionId, summary);
         if (!summary && kind === 'compaction') return;
         if (kind === 'model_switch') {
-          const context = await backend.recall('', event.sessionId);
-          if (lifecycle.isActive() && context && !containsPrivateLearningData(context)) recalled.set(event.sessionId, context);
+          const context = await backend.recall(request?.query ?? '', event.sessionId);
+          if (lifecycle.isActive() && requests.get(event.sessionId) === request && context && !containsPrivateLearningData(context)) recalled.set(event.sessionId, context);
         }
       });
     },
