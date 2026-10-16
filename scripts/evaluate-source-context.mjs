@@ -52,7 +52,7 @@ try {
       const sourceText = JSON.stringify(source) + supplementalSearch.output + extra.map(x => `${x.path}\n${x.text}`).join('\n');
       rows.push({ id: c.id, language: c.language, temperature,
         baseline: { ...count(baselineText), ms: baselineMs, recall: recall(c, baseline) },
-        source: { ...count(sourceText), ms: sourceMs, recall: recall(c, [...contents, ...extra]), status: source.status,
+        source: { ...count(sourceText), ms: sourceMs, recall: recall(c, [...contents, ...extra]), status: source.status, version: source.version,
           sourceDigest: source.sourceDigest, inputDigest: source.inputDigest, resultDigest: source.resultDigest,
           reasons: source.reasons, additionalFiles: extra.length, receivedBytes: source.receivedBytes } });
     }
@@ -66,7 +66,7 @@ try {
     noFalseVerification: rows.every(r => r.source.status !== 'ready'),
     investigationAvailable: rows.every(r => r.source.status !== 'unavailable'),
   };
-  const report = { version: 1, ripwire: '0.4.0', tokenizer: 'js-tiktoken@1.0.21/cl100k_base',
+  const report = { version: 1, ripwire: rows.find(row => row.source.version)?.source.version ?? null, tokenizer: 'js-tiktoken@1.0.21/cl100k_base',
     repositoryCommit: execFileSync('git', ['rev-parse','HEAD'], { cwd: root, encoding: 'utf8' }).trim(),
     trackedChanges: execFileSync('git', ['diff','--stat'], { cwd: root, encoding: 'utf8' }).trim(),
     evaluatedAt: new Date().toISOString(), platform: `${process.platform}-${process.arch}`, criteria,

@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto';
-import { mkdtemp, writeFile, rename, rm, lstat, mkdir } from 'node:fs/promises';
+import { mkdtemp, writeFile, rename, rm, lstat, mkdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { tmpdir } from 'node:os';
+import { ripwirePackSchema } from './result.js';
 import { readReleaseArchive } from './archive.js';
 import { managedBinary, privateSourceDirectory, RIPWIRE_VERSION } from './config.js';
 import { runSourceProcess, SourceFailure, type SourceRunner } from './process.js';
@@ -19,12 +21,29 @@ export function releaseAsset(platform = process.platform, arch: string = process
   return { root, name: `${root}.tar.gz`, sha256,
     url: `https://github.com/redhat-et/ripwire/releases/download/v${RIPWIRE_VERSION}/${root}.tar.gz` };
 }
-export async function probeSourceBinary(binary: string, cwd: string, signal: AbortSignal, runner: SourceRunner = runSourceProcess): Promise<void> {
+export async function probeSourceBinary(binary: string, cwd: string, signal: AbortSignal, runner: SourceRunner = runSourceProcess): Promise<{ version: string | null; fingerprint: string }> {
   const file = await lstat(binary);
   if (!file.isFile() || file.isSymbolicLink() || (file.mode & 0o111) === 0) throw new SourceFailure('unsafe_binary');
   const result = await runner({ executable: binary, args: ['--version'], cwd, signal, stdoutLimit: 4096, stderrLimit: 4096 });
-  if (result.code !== 0 || !/^ripwire 0\.4\.0(?:\s|$)/u.test(result.stdout.toString('utf8')))
-    throw new SourceFailure('unsupported_version');
+  // Version is metadata. The pack-task response is the compatibility contract.
+  const version = result.code === 0 ? /^ripwire ([^\s\p{Cc}]{1,64})(?:\s|$)/u.exec(result.stdout.toString('utf8'))?.[1] ?? null : null;
+  return { version, fingerprint: createHash('sha256').update(await readFile(binary)).digest('hex') };
+}
+/** Exercise the consumed API even for status and an already installed binary. */
+export async function probeSourceCapabilities(binary: string, signal: AbortSignal, runner: SourceRunner = runSourceProcess) {
+  const probe = await mkdtemp(path.join(tmpdir(), 'kiokuko-source-probe-'));
+  try {
+    const observed = await probeSourceBinary(binary, probe, signal, runner);
+    await writeFile(path.join(probe, 'probe.ts'), 'export function sourceProbe(value: number) { return value + 1; }\n');
+    const output = await runner({ executable: binary,
+      args: ['.', '--pack-task=sourceProbe', '--json', '--token-budget=512', '--no-cache'], cwd: probe, signal });
+    let parsed;
+    try { parsed = ripwirePackSchema.parse(JSON.parse(output.stdout.toString('utf8'))); }
+    catch { throw new SourceFailure('probe_failed'); }
+    if (output.code !== 0 || !parsed.ranking.some(row => row.n === 'sourceProbe' && /^\.?\/?probe\.ts(?::1)?$/u.test(row.p)))
+      throw new SourceFailure('probe_failed');
+    return observed;
+  } finally { await rm(probe, { recursive: true, force: true }); }
 }
 export async function downloadRelease(url: string, signal: AbortSignal, fetcher: typeof fetch = fetch): Promise<Buffer> {
   const response = await fetcher(url, { signal, redirect: 'follow' });
@@ -55,8 +74,8 @@ export async function setupSource(directory: string, dependencies: InstallDepend
     const destination = path.dirname(managedBinary(directory));
     try {
       await lstat(destination);
-      await probeSourceBinary(managedBinary(directory), directory, signal, dependencies.runner);
-      return { status: 'ready', version: RIPWIRE_VERSION, source: 'managed', reused: true };
+      const observed = await probeSourceCapabilities(managedBinary(directory), signal, dependencies.runner);
+      return { status: 'ready', version: observed.version, source: 'managed', reused: true };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     }
@@ -69,21 +88,11 @@ export async function setupSource(directory: string, dependencies: InstallDepend
     await writeFile(path.join(staging, 'LICENSE'), archive.license, { flag: 'wx', mode: 0o600 });
     await writeFile(path.join(staging, 'release.json'), JSON.stringify({ version: RIPWIRE_VERSION, archiveSha256: asset.sha256,
       binarySha256: createHash('sha256').update(archive.binary).digest('hex') }), { flag: 'wx', mode: 0o600 });
-    await probeSourceBinary(path.join(staging, 'ripwire'), staging, signal, dependencies.runner);
-    const probe = path.join(staging, 'probe');
-    await mkdir(probe, { mode: 0o700 });
-    await writeFile(path.join(probe, 'probe.ts'), 'export function sourceProbe(value: number) { return value + 1; }\n');
-    const output = await (dependencies.runner ?? runSourceProcess)({ executable: path.join(staging, 'ripwire'),
-      args: ['.', '--pack-task=sourceProbe', '--json', '--token-budget=512', '--no-cache'], cwd: probe, signal });
-    let parsed;
-    try { parsed = JSON.parse(output.stdout.toString('utf8')); } catch { throw new SourceFailure('probe_failed'); }
-    if (output.code !== 0 || !Array.isArray(parsed.ranking) || !parsed.ranking.some((r: { n?: unknown }) => r.n === 'sourceProbe'))
-      throw new SourceFailure('probe_failed');
-    await rm(probe, { recursive: true });
+    const observed = await probeSourceCapabilities(path.join(staging, 'ripwire'), signal, dependencies.runner);
     signal.throwIfAborted();
     await rename(staging, destination);
     staging = undefined;
-    return { status: 'ready', version: RIPWIRE_VERSION, source: 'managed', reused: false };
+    return { status: 'ready', version: observed.version, source: 'managed', reused: false };
   } finally {
     if (staging) await rm(staging, { recursive: true, force: true });
     await rm(lock, { recursive: true });

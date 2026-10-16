@@ -12,9 +12,9 @@ const location = z.object({ p: text, n: text.optional(), t: text.optional(), l: 
   doc: text.optional(), shared: count.optional(),
   rel: z.enum(['caller', 'callee']).optional(), body: text.optional(), truncated: z.boolean().optional(),
   calls_total: count.optional(), calls_capped: z.boolean().optional(),
-  calls: z.array(z.object({ n: text, l: count.optional(), sig: text.optional() }).strict()).max(1000).optional(),
-}).strict();
-const testRow = z.union([text, z.object({ p: text, run: text.optional(), run_unknown: z.boolean().optional(), n: text.optional(), evidence: text.optional() }).strict()]);
+  calls: z.array(z.object({ n: text, l: count.optional(), sig: text.optional() })).max(1000).optional(),
+});
+const testRow = z.union([text, z.object({ p: text, run: text.optional(), run_unknown: z.boolean().optional(), n: text.optional(), evidence: text.optional() })]);
 export const ripwirePackSchema = z.object({
   task: text, route: text, root: text, budget_tokens: count, budget_bytes: count, budget_ceiling_bytes: count,
   ranking_capped: z.boolean(), ranking: z.array(location).max(1000),
@@ -24,7 +24,7 @@ export const ripwirePackSchema = z.object({
   callers_total: count, callers_kept: count, callers_of_top: count, callers: z.array(location).max(1000),
   notes_total: count, notes_kept: count, notes: z.array(z.unknown()).max(1000),
   tests_total: count, tests_kept: count, tests_to_run: z.array(testRow).max(1000),
-}).strict();
+});
 export interface SourceSymbol { path: string; line: number | null; name: string | null; id: string | null; rank: number | null;
   signature: string | null; body: string | null; truncated: boolean; relation: 'caller' | 'callee' | null;
   unresolvedCallees: Array<{ name: string; signature: string | null }>;
@@ -57,13 +57,15 @@ export function unavailableSource(reason: string, inputDigest: string, durationM
   return finishSourceResult({ status: 'unavailable', reasons: [reason], version: null, inputDigest, sourceDigest: null,
     resultDigest: '', durationMs, receivedBytes: 0, reused: false, symbols: [], related: [], tests: [], completeness: {}, trust: 'untrusted_source' });
 }
-export function projectSourceOutput(stdout: Buffer, stderr: Buffer, snapshot: SourceSnapshot, inputDigest: string): SourceResult {
+export function projectSourceOutput(stdout: Buffer, stderr: Buffer, snapshot: SourceSnapshot, inputDigest: string, version: string | null = null): SourceResult {
   let data;
   try {
-    data = ripwirePackSchema.parse(parseStrictJson(new TextDecoder('utf8', { fatal: true }).decode(stdout), {
+    const raw = parseStrictJson(new TextDecoder('utf8', { fatal: true }).decode(stdout), {
       allowTrailingComma: false, disallowComments: true, allowEmptyContent: false,
-    }, 'Invalid source context response'));
-  } catch { throw new SourceFailure('invalid_response'); }
+    }, 'Invalid source context response');
+    if (findSecretInValue(raw)) throw new SourceFailure('unsafe_output');
+    data = ripwirePackSchema.parse(raw);
+  } catch (error) { if (error instanceof SourceFailure) throw error; throw new SourceFailure('invalid_response'); }
   if (findSecretInValue(data)) throw new SourceFailure('unsafe_output');
   const locate = (p: string, line?: number) => {
     const match = /^(.*):(\d+)$/u.exec(p);
@@ -89,7 +91,7 @@ export function projectSourceOutput(stdout: Buffer, stderr: Buffer, snapshot: So
     }
     else symbols.push(body);
   }
-  // v0.4.0 pack JSON does not expose complete parse-health/edge-confidence diagnostics.
+  // The consumed pack JSON fields do not establish complete parse-health/edge-confidence diagnostics.
   // Report that absence explicitly; a successful ranking is never a clean bill of health.
   const reasons = ['parse_health_unavailable', 'edge_confidence_unavailable', 'git_history_unavailable'];
   if (snapshot.excluded) reasons.push('files_excluded');
@@ -99,7 +101,7 @@ export function projectSourceOutput(stdout: Buffer, stderr: Buffer, snapshot: So
     || data.bodies_omitted?.length || data.bodies.some(r => r.truncated || r.calls_capped)) reasons.push('upstream_truncated');
   const tests = data.tests_to_run.map(r => ({ path: locate(typeof r === 'string' ? r : r.p).path,
     suggestedCommand: typeof r === 'string' ? null : r.run ?? null }));
-  return { status: 'degraded', reasons, version: '0.4.0', inputDigest, sourceDigest: snapshot.digest,
+  return { status: 'degraded', reasons, version, inputDigest, sourceDigest: snapshot.digest,
     resultDigest: '', durationMs: 0, receivedBytes: stdout.length + stderr.length, reused: false, symbols,
     related: [...data.callers.map(r => symbol({ ...r, rel: 'caller' })), ...data.far.map(symbol)], tests, trust: 'untrusted_source',
     completeness: { rankingCapped: data.ranking_capped, bodiesTotal: data.bodies_total, bodiesKept: data.bodies_kept,

@@ -14,7 +14,7 @@ import { memoryContext, observeMemory, improveMemory } from '../../src/memory/le
 import type { ReviewQuestion } from '../../src/memory/replay-review.js';
 import { renderOpenCodeLearningContext } from '../../src/opencode/learning.js';
 
-async function fixture(t: { after(fn: () => void): void }) {
+async function fixture(t: { after(fn: () => void): void }, schemaVersion = '0.4.0') {
   const directory = mkdtempSync(path.join(tmpdir(), 'kiokuko-reviewed-replay-'));
   const previous = process.env.KIOKUKO_DATA_DIR;
   process.env.KIOKUKO_DATA_DIR = path.join(directory, 'data');
@@ -32,7 +32,7 @@ async function fixture(t: { after(fn: () => void): void }) {
     { seq: 5, type: 'tool.result', causes: [4], attrs: { callId: 'second', exit_code: 0 }, payload: { output: 'retry passes' } },
   ].map(x => JSON.stringify(x)).join('\n') + '\n';
   writeFileSync(path.join(traceDirectory, 'events.jsonl'), events);
-  writeFileSync(path.join(traceDirectory, 'manifest.json'), JSON.stringify({ schema_version: '0.4.0', run_id: 'run_123456', counts: { events: 5 }, integrity: { events_sha256: createHash('sha256').update(events).digest('hex') } }));
+  writeFileSync(path.join(traceDirectory, 'manifest.json'), JSON.stringify({ schema_version: schemaVersion, run_id: 'run_123456', counts: { events: 5 }, integrity: { events_sha256: createHash('sha256').update(events).digest('hex') } }));
   return { input: { cwd, traceDirectory, taskId: 'request-1', sessionId: 'session-1' }, databasePath: initialized.databasePath, workspace: project.workspace };
 }
 
@@ -61,7 +61,7 @@ test('decline before extraction and after preview leave no proposal, entry, or r
 });
 
 test('native approved revision survives restart, recalls context, retains failed and successful attempts', async t => {
-  const f = await fixture(t); const questions: ReviewQuestion[] = [];
+  const f = await fixture(t, '1.0.0'); const questions: ReviewQuestion[] = [];
   const receipt = await runNativeReplayReview(f.input, async q => {
     questions.push(q);
     return { questionId: q.id, choice: q.phase === 'organize' ? 'organize' : q.revision === 1 ? 'revise' : 'approve', ...(q.phase === 'review' && q.revision === 1 ? { comment: 'Migration retry check passed; overall task still needs deployment validation.' } : {}) };

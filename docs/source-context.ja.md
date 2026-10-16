@@ -1,6 +1,6 @@
 # ripwireによるソース事前調査
 
-任意導入のripwire 0.4.0で定義・呼び出し関係・テスト候補を絞ります。
+任意導入のripwireで定義・呼び出し関係・テスト候補を絞ります。
 結果は調査資料です。「影響なし」「検証済み」の判定には使いません。
 Ennoの自動利用は受入評価を通過するまで無効で、明示呼び出しは利用できます。
 
@@ -13,7 +13,7 @@ kiokuko-ai source configure --mode auto --binary /absolute/path/to/ripwire
 kiokuko-ai source configure --managed
 ```
 
-ダウンロードは`source setup`だけが行います。macOS/Linuxのarm64/x64用バイナリと
+ダウンロードは`source setup`だけが行います。管理配布の0.4.0とSHA256は再現可能な配布物の指定で、実行時の版番号拒否には使いません。明示バイナリは必要なpack-task APIとJSONフィールドで検証し、互換な追加フィールドを許容します。status/setupも小さなソースを実解析します。結果には観測版を記録し、キャッシュにはバイナリ内容の指紋を使います。macOS/Linuxのarm64/x64用バイナリと
 ライセンスをSHA-256検証後に配置します。上流Skill、他エージェント設定、シェル設定、
 repository bindingは変更しません。PATH自動検出、自動更新、ソースビルドも行いません。
 配置はatomicで、失敗時は既存導入を保持します。強制終了で`source-context/setup.lock`

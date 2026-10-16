@@ -1,3 +1,4 @@
+import { probeSqliteVec } from '../db/sqlite-vec-probe.js';
 import type { SqliteDatabase, SqliteRow } from '../db/adapter.js';
 import { KiokukoError } from '../errors.js';
 import { getEmbeddingPresetDirectory } from '../config/paths.js';
@@ -111,15 +112,15 @@ function objectNames(database: SqliteDatabase, kind: 'table' | 'index' | 'trigge
   `).all<{ name: string }>(kind).map((row) => row.name));
 }
 
-function configuredBackend(config: EmbeddingConfig, backend: VectorSearchBackend | undefined): { id: string | null; version: string | null } {
+function configuredBackend(config: EmbeddingConfig, backend: VectorSearchBackend | undefined, database?: SqliteDatabase): { id: string | null; version: string | null } {
   if (config.mode === 'off') return { id: null, version: null };
-  if (backend !== undefined) return { id: backend.id, version: backend.id === 'sqlite-vec' ? 'v0.1.9' : null };
-  if (config.vectorBackend === 'sqlite-vec') return { id: 'sqlite-vec', version: 'v0.1.9' };
+  if (backend !== undefined) return { id: backend.id, version: backend.id === 'sqlite-vec' && database ? probeSqliteVec(database).version : null };
+  if (config.vectorBackend === 'sqlite-vec') return { id: 'sqlite-vec', version: database ? probeSqliteVec(database).version : null };
   return { id: 'javascript', version: null };
 }
 
-function emptyStatus(config: EmbeddingConfig, backend?: VectorSearchBackend): EmbeddingStatus {
-  const selectedBackend = configuredBackend(config, backend);
+function emptyStatus(config: EmbeddingConfig, backend?: VectorSearchBackend, database?: SqliteDatabase): EmbeddingStatus {
+  const selectedBackend = configuredBackend(config, backend, database);
   return {
     mode: config.mode,
     activeProfileId: null,
@@ -149,11 +150,11 @@ function activeStatus(
   active: EmbeddingProfile | null,
   backend?: VectorSearchBackend,
 ): EmbeddingStatus {
-  const selectedBackend = configuredBackend(config, backend);
+  const selectedBackend = configuredBackend(config, backend, database);
   const eligible = eligibleCurrentEntries(database);
   const eligibleEntries = eligible.length;
   if (active === null) {
-    return { ...emptyStatus(config, backend), eligibleEntries, missingVectors: eligibleEntries };
+    return { ...emptyStatus(config, backend, database), eligibleEntries, missingVectors: eligibleEntries };
   }
   const readyVectors = readyCurrentVectors(database, active, eligible);
   const totalVectors = countRows(database, 'SELECT COUNT(*) AS count FROM entry_embeddings WHERE profile_id = ?', active.profileId);

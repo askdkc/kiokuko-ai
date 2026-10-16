@@ -142,3 +142,6 @@ MCP toolの呼び出しはclientとモデルが決めるため、モデルが毎
 
 [全5役割・接続先の混在・権限・候補が出ない場合の確認](docs/orchestration-models.ja.md#custom-agents)
 も参照してください。
+
+Common Lisp tool: [OpenCode Lisp usage and verification](docs/lisp.ja.md).
+Version boundaries: [runtime compatibility and reproducible artifacts](docs/version-compatibility.ja.md).

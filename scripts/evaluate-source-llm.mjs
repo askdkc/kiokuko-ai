@@ -13,7 +13,7 @@ if (!['127.0.0.1','[::1]'].includes(url.hostname) || url.protocol !== 'http:' ||
   throw new Error('Set OPENCODE_EVAL_URL to an isolated loopback OpenCode server');
 const root = await canonicalSourceRoot(process.env.KIOKUKO_EVAL_ROOT ?? process.cwd(), AbortSignal.timeout(10_000));
 const binary = process.env.KIOKUKO_TEST_RIPWIRE;
-if (!binary || !path.isAbsolute(binary)) throw new Error('Set KIOKUKO_TEST_RIPWIRE to an absolute pinned binary path');
+if (!binary || !path.isAbsolute(binary)) throw new Error('Set KIOKUKO_TEST_RIPWIRE to an absolute binary path');
 const expected = Object.fromEntries(['ideal','zenki'].map(role => {
   const model = process.env[`KIOKUKO_EVAL_${role.toUpperCase()}_MODEL`];
   if (!model || !/^[\w.-]+\/[\w./-]+$/u.test(model)) throw new Error(`Specify the ${role} provider/model explicitly`);
@@ -63,12 +63,16 @@ async function phase(role,task,ideal,source) {
   const selected = expected[role], separator = selected.indexOf('/');
   const model = { providerID:selected.slice(0,separator),modelID:selected.slice(separator+1) };
   const session = await request('/session',{title:`Source evaluation ${role}`,permission:permissionRules});
+  if (typeof session?.id !== 'string' || !/^[a-zA-Z0-9_-]{1,256}$/u.test(session.id))
+    throw new Error('OpenCode evaluation session API must return a bounded session id');
   createdSessions.push(session.id);
   activeSession = session.id;
   const started = performance.now();
   await request(`/session/${session.id}/message`, { agent:`source-eval-${role}`,model,
     parts:[{type:'text',text:phasePrompt(role,task,ideal,source)}] },180_000);
   const messages = await request(`/session/${session.id}/message`);
+  if (!Array.isArray(messages) || messages.some(m => !m || typeof m.info !== 'object' || !Array.isArray(m.parts)))
+    throw new Error('OpenCode evaluation message API is missing info/parts');
   const ms = performance.now()-started;
   for (const {info} of messages) if (info.role === 'assistant' && `${info.providerID}/${info.modelID}` !== selected)
     throw new Error('Unexpected model: refusing silent substitution');
@@ -87,9 +91,10 @@ async function phase(role,task,ideal,source) {
 
 try {
   const health = await request('/global/health');
-  if (health.version !== '1.18.26') throw new Error('This comparison requires the tested OpenCode 1.18.26 host');
+  if (health?.healthy !== true || typeof health.version !== 'string' || !health.version.trim())
+    throw new Error('OpenCode evaluation requires the health API with healthy status and observed version');
   const config = await request('/config');
-  if ((config.plugin ?? []).length || Object.keys(config.mcp ?? {}).length)
+  if (!Array.isArray(config.plugin) || config.plugin.length || !config.mcp || typeof config.mcp !== 'object' || Array.isArray(config.mcp) || Object.keys(config.mcp).length)
     throw new Error('Use an isolated server with no plugins or MCP connectors');
   for (const role of ['ideal','zenki']) {
     const agent = config.agent?.[`source-eval-${role}`];

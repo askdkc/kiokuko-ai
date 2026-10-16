@@ -91,18 +91,20 @@ test('validates runs directory, trace run id, and cursor origin at the boundary'
   }
 });
 
-test('marks unsupported schema runs with an unsupported cursor', async () => {
+test('ingests compatible newer schemas and rejects missing manifest capabilities without advancing', async () => {
   const base = await mkdtemp(path.join(tmpdir(), 'kiokuko-ingest-'));
   const db = await database();
   try {
     await makeRun(base, { schemaVersion: '1.0.0' });
     const outcome = await ingestTraceRun(db, { runsDirectory: base, traceRunId: RUN_ID, fromSeq: 0 });
-    assert.equal(outcome.ingested, false);
-    assert.equal(outcome.reason, 'unsupported_schema');
-    assert.equal(outcome.cursorSeq, -1);
-    const cursor = readTraceCursor(db, base, RUN_ID);
-    assert.equal(cursor?.state, 'unsupported');
-    assert.equal(cursor?.lastSeq, -1);
+    assert.equal(outcome.ingested, true);
+    assert.equal(outcome.reason, null);
+    assert.equal(outcome.integrity, 'verified');
+    assert.equal(outcome.cursorSeq, 7);
+    await writeFile(path.join(base, RUN_ID, 'manifest.json'), JSON.stringify({ schema_version: '1.0.0', run_id: RUN_ID, counts: { events: 'changed API' } }));
+    const invalid = await ingestTraceRun(db, { runsDirectory: base, traceRunId: RUN_ID, fromSeq: 0 });
+    assert.equal(invalid.ingested, false); assert.equal(invalid.reason, 'invalid_manifest');
+    assert.equal(readTraceCursor(db, base, RUN_ID)?.lastSeq, 7);
   } finally {
     db.close();
     await rm(base, { recursive: true, force: true });

@@ -4,10 +4,10 @@ import * as z from 'zod/v4';
 import { canonicalContentHash } from '../serialization/validate.js';
 import { findSecretInValue } from '../memory/secrets.js';
 import { KiokukoError } from '../errors.js';
-import { sourceDirectory, readSourceConfig, managedBinary, privateSourceDirectory, RIPWIRE_VERSION, SOURCE_AUTO_ACCEPTED } from './config.js';
+import { sourceDirectory, readSourceConfig, managedBinary, privateSourceDirectory, SOURCE_AUTO_ACCEPTED } from './config.js';
 import { runSourceProcess, SourceFailure, type SourceRunner } from './process.js';
 import { canonicalSourceRoot, sourceSnapshot } from './snapshot.js';
-import { probeSourceBinary, releaseAsset } from './install.js';
+import { probeSourceBinary, probeSourceCapabilities } from './install.js';
 import { finishSourceResult, projectSourceOutput, unavailableSource, type SourceResult } from './result.js';
 
 export const sourceInputSchema = z.object({
@@ -29,19 +29,18 @@ export class SourceContextService {
     let scratch: string | undefined;
     dependencies.signal?.throwIfAborted();
     try {
-      releaseAsset();
       const config = await readSourceConfig(directory);
       if (config.mode === 'off') return unavailableSource('disabled', inputDigest, performance.now() - start);
       const signal = dependencies.signal ? AbortSignal.any([dependencies.signal, AbortSignal.timeout(config.timeoutMs)]) : AbortSignal.timeout(config.timeoutMs);
       const runner = dependencies.runner ?? runSourceProcess;
       const binary = config.binaryPath ?? managedBinary(directory);
-      await probeSourceBinary(binary, path.dirname(binary), signal, runner);
+      const observed = await probeSourceBinary(binary, path.dirname(binary), signal, runner);
       const root = await canonicalSourceRoot(input.cwd, signal);
       const storage = await realpath(directory);
       if (storage === root || storage.startsWith(`${root}${path.sep}`)) throw new KiokukoError('SECURITY_REJECTION', 'Source storage must be outside the repository');
       const snapshot = await sourceSnapshot(root, signal);
       const maxTokens = input.maxTokens ?? config.maxTokens;
-      const key = canonicalContentHash({ inputDigest, digest: snapshot.digest, maxTokens, config, binary: await realpath(binary), version: RIPWIRE_VERSION });
+      const key = canonicalContentHash({ inputDigest, digest: snapshot.digest, maxTokens, config, binary: await realpath(binary), binaryFingerprint: observed.fingerprint });
       const cached = this.memo.get(key);
       if (cached) {
         const after = await sourceSnapshot(root, signal);
@@ -60,14 +59,14 @@ export class SourceContextService {
       }
       // Content-bound blobs cannot go stale after same-size/same-mtime source edits.
       // Scratch trees contain no repository configuration, executable scripts, links or document converters.
-      const cache = path.join(cacheDirectory, `${canonicalContentHash({ root, snapshot: snapshot.digest, version: RIPWIRE_VERSION })}.ripwirecache`);
+      const cache = path.join(cacheDirectory, `${canonicalContentHash({ root, snapshot: snapshot.digest, binaryFingerprint: observed.fingerprint })}.ripwirecache`);
       const result = await runner({ executable: binary, cwd: scratch, signal,
         args: ['.', `--pack-task=${input.query ?? input.task}`, '--json', `--token-budget=${maxTokens}`, `--cache=${cache}`],
         env: { PATH: '/usr/bin:/bin', LANG: 'C.UTF-8', LC_ALL: 'C.UTF-8', HOME: scratch, TMPDIR: scratch,
           GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_OPTIONAL_LOCKS: '0' } });
       signal.throwIfAborted();
       if (result.code !== 0) throw new SourceFailure('analysis_failed');
-      const projected = projectSourceOutput(result.stdout, result.stderr, snapshot, inputDigest);
+      const projected = projectSourceOutput(result.stdout, result.stderr, snapshot, inputDigest, observed.version);
       const after = await sourceSnapshot(root, signal);
       if (after.digest !== snapshot.digest) throw new SourceFailure('source_changed');
       projected.durationMs = performance.now() - start;
@@ -90,10 +89,9 @@ export async function sourceStatus(directory = sourceDirectory()) {
   let config: Awaited<ReturnType<typeof readSourceConfig>> | undefined;
   try {
     config = await readSourceConfig(directory);
-    releaseAsset();
     const binary = config.binaryPath ?? managedBinary(directory);
-    await probeSourceBinary(binary, path.dirname(binary), AbortSignal.timeout(3000));
-    return { status: 'ready', version: RIPWIRE_VERSION, source: config.binaryPath ? 'explicit' : 'managed', mode: config.mode,
+    const observed = await probeSourceCapabilities(binary, AbortSignal.timeout(3000));
+    return { status: 'ready', version: observed.version, source: config.binaryPath ? 'explicit' : 'managed', mode: config.mode,
       compatible: true, autoEnabled: config.mode === 'auto' && SOURCE_AUTO_ACCEPTED,
       reason: config.mode === 'off' ? 'disabled' : SOURCE_AUTO_ACCEPTED ? null : 'acceptance_pending' };
   } catch (error) {

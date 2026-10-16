@@ -2,7 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import type { SqliteDatabase, SqliteSerializationDatabase } from './adapter.js';
 import { KiokukoError } from '../errors.js';
 import { SQLITE_VEC_BACKEND_ID } from '../embedding/sqlite-vec-backend.js';
-import { SQLITE_VEC_EXTENSION_VERSION } from '../embedding/sqlite-vec-loader.js';
+import { probeSqliteVec } from './sqlite-vec-probe.js';
 
 export interface SqliteVecCapability {
   readonly id: typeof SQLITE_VEC_BACKEND_ID;
@@ -31,13 +31,7 @@ function invalidCapability(capability: string): never {
 
 /** Probe the optional extension without changing the core SQLite contract. */
 export function detectSqliteVecCapability(database: SqliteDatabase): SqliteVecCapability {
-  try {
-    const version = database.prepare('SELECT vec_version() AS version').get()?.version;
-    if (version !== SQLITE_VEC_EXTENSION_VERSION) return { id: SQLITE_VEC_BACKEND_ID, available: false, version: null };
-    return { id: SQLITE_VEC_BACKEND_ID, available: true, version };
-  } catch {
-    return { id: SQLITE_VEC_BACKEND_ID, available: false, version: null };
-  }
+  return { id: SQLITE_VEC_BACKEND_ID, ...probeSqliteVec(database) };
 }
 
 export function detectCapabilities(database: SqliteDatabase): SqliteCapabilities {

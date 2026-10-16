@@ -118,14 +118,17 @@ test('reports missing_manifest and invalid_manifest', async () => {
   }
 });
 
-test('reports unsupported_schema for an unknown schema version', async () => {
+test('compatible newer trace format retains events and verified integrity', async () => {
   const base = await mkdtemp(path.join(tmpdir(), 'kiokuko-agenticreplay-'));
   try {
     await makeRun(base, { schemaVersion: '1.0.0' });
     const read = await readAgenticReplayTraceRun(base, RUN_ID);
-    assert.equal(read.status, 'unsupported_schema');
-    assert.equal(read.integrity, 'unavailable');
-    assert.equal(read.events.length, 0);
+    assert.equal(read.status, 'ready');
+    assert.equal(read.integrity, 'verified');
+    assert.equal(read.events.length, 2);
+    assert.equal(read.manifest?.schemaVersion, '1.0.0');
+    await writeFile(path.join(base, RUN_ID, 'manifest.json'), JSON.stringify({ schema_version: '1.0.0', run_id: RUN_ID, counts: { events: 'two' } }));
+    assert.equal((await readAgenticReplayTraceRun(base, RUN_ID)).status, 'invalid_manifest');
   } finally {
     await rm(base, { recursive: true, force: true });
   }

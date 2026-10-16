@@ -39,6 +39,7 @@ export function rolePermission(role: ExecutionRole): Array<{ action: string; res
     ...(role === 'gokiWorker' ? ['edit', 'shell'].map(action => ({ action, resource: '*', effect: 'allow' as const })) : []),
     ...(role === 'gokiHead' ? [{ action: 'subagent', resource: '*', effect: 'allow' as const }] : []),
     { action: 'kiokuko_*', resource: '*', effect: 'deny' },
+    ...(role === 'gokiWorker' ? [{ action: 'kiokuko_lisp', resource: '*', effect: 'allow' as const }] : []),
     { action: 'external_directory', resource: '*', effect: 'ask' },
   ];
 }

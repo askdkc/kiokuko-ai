@@ -7,7 +7,7 @@ import { runSourceProcess } from '../dist/source-context/process.js';
 
 const root = await realpath(path.resolve(import.meta.dirname, '..'));
 const binary = process.env.KIOKUKO_TEST_RIPWIRE;
-if (!binary || !path.isAbsolute(binary)) throw new Error('Set KIOKUKO_TEST_RIPWIRE to an absolute pinned binary path');
+if (!binary || !path.isAbsolute(binary)) throw new Error('Set KIOKUKO_TEST_RIPWIRE to an absolute binary path');
 const cases = JSON.parse(await readFile(new URL('../tests/fixtures/source-context-evaluation.json', import.meta.url), 'utf8'));
 const base = await realpath(await mkdtemp(path.join(tmpdir(), 'kiokuko-source-reuse-')));
 const rows = [];
@@ -25,7 +25,7 @@ async function measure(service, input, directory, phase) {
   } });
   const ms = performance.now() - start;
   if (result.status === 'unavailable') throw new Error(`Investigation unavailable: ${result.reasons.join(',')}`);
-  return { phase, ms, reused: result.reused, status: result.status, sourceDigest: result.sourceDigest,
+  return { phase, ms, version: result.version, reused: result.reused, status: result.status, sourceDigest: result.sourceDigest,
     inputDigest: result.inputDigest, resultDigest: result.resultDigest, returnedBytes: Buffer.byteLength(JSON.stringify(result)),
     versionMs: processes.filter(p=>p.kind === 'version').reduce((a,p)=>a+p.ms,0),
     analysisMs: processes.filter(p=>p.kind === 'analysis').reduce((a,p)=>a+p.ms,0),
@@ -58,7 +58,7 @@ try {
     Object.fromEntries(['ms','versionMs','analysisMs','otherMs','analysisStarts'].map(k=>[k,median(rows.map(r=>r[phase][k]))]))]));
   const report = { version: 1, evaluatedAt: new Date().toISOString(), platform: `${process.platform}-${process.arch}`,
     repositoryCommit: execFileSync('git',['rev-parse','HEAD'],{cwd:root,encoding:'utf8'}).trim(),
-    ripwire: '0.4.0', cases: cases.length, repeats: 3, phases,
+    ripwire: rows.find(row => row.ideal.version)?.ideal.version ?? null, cases: cases.length, repeats: 3, phases,
     pairMs: median(rows.map(r=>r.ideal.ms+r.zenki.ms)), withoutParentReusePairMs: median(rows.map(r=>r.ideal.ms+r.restarted.ms)),
     reusedAll: rows.every(r=>r.zenki.reused), rows,
     limitations: ['No LLM calls or plan quality measurement', 'Cache files observed; upstream index hits not instrumented',

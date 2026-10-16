@@ -4,7 +4,7 @@ import { findSecretInValue } from './secrets.js';
 
 export interface ReplayMemoryProposal {
   schemaVersion: 1; proposalId: string; revision: number;
-  source: { taskOutcome?: 'completed' | 'failed'; workspace: string; taskId: string; sessionId: string; traces: Array<{ runId: string; eventsSha256: string; eventsRead: number; totalEvents: number | null; digestScope?: 'complete' | 'observed_prefix'; complete: boolean; gaps: string[] }> };
+  source: { taskOutcome?: 'completed' | 'failed'; workspace: string; taskId: string; sessionId: string; traces: Array<{ schemaVersion?: string; runId: string; eventsSha256: string; eventsRead: number; totalEvents: number | null; digestScope?: 'complete' | 'observed_prefix'; complete: boolean; gaps: string[] }> };
   request: { text: string; evidenceRefs: string[] };
   languages: Array<{ name: string; basis: 'observed' | 'inferred'; evidenceRefs: string[] }>;
   attempts: Array<{ taskId?: string | null; attemptId: string; tool: string; command?: string; arguments?: unknown; signal?: string; callRef: string; resultRef?: string;

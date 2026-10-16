@@ -53,10 +53,10 @@ test('ignored files and symlinks never enter the parser copy', async t => {
   assert.equal(result.status, 'degraded');
 });
 
-test('unknown versions, malformed output and paths degrade without forwarding unsafe bytes', async t => {
+test('malformed output, missing capabilities and paths degrade without forwarding unsafe bytes', async t => {
   const f = await sourceFixture(); t.after(() => rm(f.base, { recursive: true, force: true }));
   for (const [expected, payload] of [
-    ['invalid_response', '{'], ['invalid_response', JSON.stringify({ ...packFixture(), futureField: 1 })],
+    ['invalid_response', '{'], ['invalid_response', JSON.stringify({ ...packFixture(), ranking: undefined })],
     ['unsafe_output_path', JSON.stringify({ ...packFixture(), ranking: [{ p: '../outside.ts', n: 'bad', l: 1 }] })],
   ] as const) {
     const result = await new SourceContextService().inspect({ cwd: f.root, task: 'greet' }, { directory: f.directory,
@@ -65,7 +65,29 @@ test('unknown versions, malformed output and paths degrade without forwarding un
   }
   const result = await new SourceContextService().inspect({ cwd: f.root, task: 'greet' }, { directory: f.directory,
     runner: async () => ({ code: 0, stdout: Buffer.from('ripwire 99.0.0'), stderr: Buffer.alloc(0) }) });
-  assert.deepEqual(result.reasons, ['unsupported_version']);
+  assert.deepEqual(result.reasons, ['invalid_response']);
+});
+
+test('compatible source binaries and additive JSON fields are accepted by behavior, with observed version', async t => {
+  const f = await sourceFixture(); t.after(() => rm(f.base, { recursive: true, force: true }));
+  const result = await new SourceContextService().inspect({ cwd: f.root, task: 'greet' }, { directory: f.directory,
+    runner: async request => ({ code: 0, stderr: Buffer.alloc(0), stdout: Buffer.from(request.args.includes('--version')
+      ? 'ripwire 99.1.0' : JSON.stringify({ ...packFixture(), futureField: { harmless: true },
+        ranking: [{ ...packFixture().ranking[0], futureMetric: 3 }] })) }) });
+  assert.equal(result.status, 'degraded'); assert.equal(result.version, '99.1.0');
+  assert.equal(result.symbols[0]?.name, 'greet'); assert.equal(result.symbols[0]?.path, 'code.ts');
+  assert.equal(JSON.stringify(result).includes('futureMetric'), false);
+});
+
+test('source capabilities survive absent version metadata but reject incompatible formats and hidden secrets', async t => {
+  const f = await sourceFixture(); t.after(() => rm(f.base, { recursive: true, force: true }));
+  const run = (payload: unknown) => new SourceContextService().inspect({ cwd: f.root, task: 'greet' }, { directory: f.directory,
+    runner: async request => ({ code: request.args.includes('--version') ? 64 : 0, stderr: Buffer.alloc(0),
+      stdout: Buffer.from(request.args.includes('--version') ? '' : JSON.stringify(payload)) }) });
+  const compatible = await run(packFixture()); assert.equal(compatible.status, 'degraded'); assert.equal(compatible.version, null);
+  assert.equal(compatible.symbols[0]?.name, 'greet');
+  assert.deepEqual((await run({ ...packFixture(), ranking: 'changed API' })).reasons, ['invalid_response']);
+  assert.deepEqual((await run({ ...packFixture(), futureField: `ghp_${'a'.repeat(36)}` })).reasons, ['unsafe_output']);
 });
 
 test('mutation during investigation discards the result and caller cancellation propagates', async t => {
@@ -182,7 +204,7 @@ test('setup validates before publishing, is repeatable, and retains an existing 
   let downloads = 0;
   const dependencies = { release, fetcher: (async () => { downloads++; return new Response(new Uint8Array(archive)); }) as typeof fetch,
     runner: (async request => ({ code: 0, stderr: Buffer.alloc(0), stdout: Buffer.from(request.args.includes('--version')
-      ? 'ripwire 0.4.0' : JSON.stringify({ ranking: [{ n: 'sourceProbe' }] })) })) as typeof f.runner };
+      ? 'ripwire 0.4.0' : JSON.stringify({ ...packFixture(), ranking: [{ p: 'probe.ts', n: 'sourceProbe', l: 1 }] })) })) as typeof f.runner };
   const installed = await setupSource(f.directory, dependencies); assert.equal(installed.reused, false);
   assert.equal((await setupSource(f.directory, dependencies)).reused, true); assert.equal(downloads, 1);
   assert.deepEqual((await readdir(path.join(f.directory, 'ripwire-0.4.0'))).sort(), ['LICENSE', 'release.json', 'ripwire']);

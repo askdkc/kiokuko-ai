@@ -1,6 +1,6 @@
 # Source investigation with ripwire
 
-Optional ripwire 0.4.0 provides ranked definitions, callers/callees and test
+Optional ripwire provides ranked definitions, callers/callees and test
 candidates. It is navigation evidence, not proof that a change is safe. Automatic
 Enno use remains disabled until the repository acceptance evaluation passes.
 
@@ -14,7 +14,7 @@ kiokuko-ai source configure --managed
 ```
 
 Only `source setup` downloads anything: checksum-pinned macOS/Linux arm64/x64
-assets, binary and license only. No upstream skills, agent settings, shell files,
+assets (currently 0.4.0), binary and license only. This download pin identifies audited bytes; it is not a runtime version gate. Explicit binaries are accepted when their consumed pack-task API and JSON fields validate, including compatible additive fields. Status/setup exercise a small source probe. Observed version and binary-content fingerprint identify results and caches. No upstream skills, agent settings, shell files,
 repository binding, PATH discovery, automatic upgrade or source build is involved.
 Installation is atomic and preserves an existing installation on failure. An
 interrupted setup may leave `source-context/setup.lock`; confirm no setup is

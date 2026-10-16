@@ -1,3 +1,4 @@
+import { lispHostProbe } from './lib/lisp-host-probe.mjs';
 import { completeVerification } from './verification-completion.mjs';
 import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
@@ -274,6 +275,8 @@ export async function runHostContract(options = {}) {
   let continuationFinished = Promise.resolve();
   let roleAction;
   let roleIssued = false;
+  const lispProbe = options.lisp ? lispHostProbe() : undefined;
+  let lispEvidence;
   let learningProbe;
   let learningDelivery;
   const fixture = await startFakeOpenAiServer({
@@ -283,6 +286,8 @@ export async function runHostContract(options = {}) {
       return continuationFinished;
     },
     respond: async body => {
+      const lispResponse = lispProbe?.respond(body);
+      if (lispResponse) return lispResponse;
       learningProbe?.observe(body);
       if ((body.messages ?? []).some(message => JSON.stringify(message.content ?? '').includes('Return only the structured summary in the requested format'))) {
         return { text: '## Objective\n- Verify the installed Kiokuko OpenCode v2 plugin.\n\n## Work State\n### Active\n- Continue the role execution check.' };
@@ -354,6 +359,7 @@ export async function runHostContract(options = {}) {
     if (!ordinaryContext.some(item => item.type === 'assistant' && item.time.completed !== undefined)) {
       throw new Error('ordinary_untracked_session_did_not_complete');
     }
+    if (lispProbe) lispEvidence = await lispProbe.run(server.client, location);
     // Native completion, feedback, compaction and model switching are not consent.
     const { openConnection: openLearningConnection } = await import('../dist/db/connection.js');
     const { createApprovedReplayMemoryStore } = await import('../dist/memory/replay-store.js');
@@ -537,8 +543,8 @@ export async function runHostContract(options = {}) {
       await new Promise(resolve => setTimeout(resolve, 1_200));
       if (fixture.stats.continuationRequests !== requestsBeforeReload) throw new Error('reload_duplicated_continuation');
     }
-    process.stdout.write(`${JSON.stringify({ protocolVersion: 2, status: 'passed', opencodeVersion: health.version, plugin: 'active', mcp: 'connected', toolCatalog: toolNames.length, hook: hookResponse.code, fixtureRequests: fixture.stats.chatCompletions, ordinaryVerified: true, learningVerified: true, learningDelivery, automaticLearningWrites: false, nativeHumanReviewVerified: false, learningCompactionVerified: true, preparedEnnoStatus: ideal.ennoOduno.status, continuationRequests: fixture.stats.continuationRequests, durableReceipts: 1, executionVerified, compactionVerified, reloadVerified: Boolean(options.execution), fixtureDigests: fixture.stats.requestDigests.map((value) => value.slice(0, 16)) })}\n`);
-    completeVerification({ordinaryVerified:true,executionVerified,compactionVerified,reloadVerified:Boolean(options.execution)});
+    process.stdout.write(`${JSON.stringify({ protocolVersion: 2, status: 'passed', lispEvidence, opencodeVersion: health.version, plugin: 'active', mcp: 'connected', toolCatalog: toolNames.length, hook: hookResponse.code, fixtureRequests: fixture.stats.chatCompletions, ordinaryVerified: true, learningVerified: true, learningDelivery, automaticLearningWrites: false, nativeHumanReviewVerified: false, learningCompactionVerified: true, preparedEnnoStatus: ideal.ennoOduno.status, continuationRequests: fixture.stats.continuationRequests, durableReceipts: 1, executionVerified, compactionVerified, reloadVerified: Boolean(options.execution), fixtureDigests: fixture.stats.requestDigests.map((value) => value.slice(0, 16)) })}\n`);
+    completeVerification({ordinaryVerified:true,executionVerified,compactionVerified,reloadVerified:Boolean(options.execution), lispVerified: Boolean(lispEvidence)});
   } finally {
     await server.close();
     await fixture.close();

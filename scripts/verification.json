@@ -79,7 +79,8 @@
       ],
       "testCapabilities": [
         "agenticreplay-managed",
-        "ripwire"
+        "ripwire",
+        "sbcl"
       ]
     },
     {
@@ -294,6 +295,34 @@
       "dependsOn": [
         "build"
       ]
+    },
+    {
+      "id": "opencode-lisp",
+      "argv": [
+        "node",
+        "scripts/run-opencode-lisp-e2e.mjs"
+      ],
+      "profiles": [
+        "host"
+      ],
+      "result": "script",
+      "requires": [
+        "opencode",
+        "sbcl"
+      ],
+      "expected": "packaged native Lisp schema, permission denial, SBCL state, bounded output, timeout recovery and tool-result continuation pass",
+      "dependsOn": [
+        "build"
+      ],
+      "packed": true,
+      "platforms": [
+        "linux",
+        "darwin"
+      ],
+      "exclusionReason": "SBCL supervisor currently supports POSIX process ownership.",
+      "completionEvidence": {
+        "lispVerified": true
+      }
     }
   ],
   "testExclusions": [],
@@ -317,6 +346,10 @@
     "agenticreplay-managed": {
       "environment": "AGENTICREPLAY_BIN",
       "binary": "agenticreplay"
+    },
+    "sbcl": {
+      "environment": "KIOKUKO_TEST_SBCL",
+      "binary": "sbcl"
     }
   },
   "coveredChecks": []

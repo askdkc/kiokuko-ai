@@ -4,6 +4,7 @@ import { parseOpenCodePluginOptions } from './runtime-invocation.js';
 import { OpenCodeCompactionState } from './compaction.js';
 import { OpenCodePluginLifecycle } from './lifecycle.js';
 import { readKiokukoTrackedSessions, runKiokukoCompactionHook, runKiokukoMemoryOperation, type HookEffectDependencies } from './hook-effect.js';
+import { registerOpenCodeLisp } from './lisp.js';
 import { registerExecutionHooks } from './execution.js';
 import { OpenCodeV2Continuation } from './v2-continuation.js';
 import { v2EventSession } from './v2-adapter.js';
@@ -36,6 +37,7 @@ export const KiokukoPlugin: Plugin.Plugin = {
     const runtime = parseOpenCodePluginOptions(ctx.options);
     const trackingAvailable = runtime !== undefined;
     const lifecycle = new OpenCodePluginLifecycle();
+    const lisp = await registerOpenCodeLisp(ctx, lifecycle.signal, runtime);
     const state = new OpenCodeCompactionState();
     const dependencies: HookEffectDependencies = runtime
       ? { runtime, signal: lifecycle.signal, timeoutMs: 10_000 }
@@ -173,10 +175,10 @@ export const KiokukoPlugin: Plugin.Plugin = {
     if (trackingAvailable) void lifecycle.reconcile(async () => {
       try { await continuation.reconcileTracked(); } catch { warn('session_reconciliation_failed'); }
     });
-    return () => lifecycle.dispose(() => {
+    return async () => { await lifecycle.dispose(() => {
       if (timer) clearInterval(timer);
       subscribeController.abort();
-    });
+    }); await lisp.dispose(); };
   },
 };
 

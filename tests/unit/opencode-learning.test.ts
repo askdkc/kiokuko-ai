@@ -8,6 +8,89 @@ import { v2EventSession } from '../../src/opencode/v2-adapter.js';
 
 const tick = () => new Promise<void>(resolve => setImmediate(resolve));
 
+test('a late response for the same query cannot restore memory withdrawn by a newer response', async t => {
+  const fixture = pluginContextFixture();
+  const lifecycle = new OpenCodePluginLifecycle();
+  t.after(() => lifecycle.dispose(() => undefined));
+  const pending: Array<(value: string) => void> = [];
+  await registerOpenCodeLearning(fixture.ctx, '/repo', lifecycle, {
+    recall: () => new Promise(resolve => pending.push(resolve)),
+  }, () => undefined);
+  for (const id of ['first', 'second']) {
+    await fixture.hooks.get('session:prompt')!({ sessionID: 'ses_1', messageID: id, prompt: { text: 'sqlite' } } as never);
+    await tick();
+  }
+  pending[1]!(JSON.stringify({ entries: [], handoff: null })); await tick();
+  pending[0]!(JSON.stringify({ entries: [{ entryId: 'withdrawn', summary: 'OLD_WITHDRAWN_ADVICE' }], handoff: null })); await tick();
+  const system: unknown[] = [];
+  await fixture.hooks.get('session:context')!({ sessionID: 'ses_1', system } as never);
+  assert.doesNotMatch(JSON.stringify(system), /OLD_WITHDRAWN_ADVICE/);
+});
+
+test('different original requests sharing a bounded search prefix do not share cached memory', async t => {
+  const fixture = pluginContextFixture();
+  const lifecycle = new OpenCodePluginLifecycle();
+  t.after(() => lifecycle.dispose(() => undefined));
+  const pending: Array<(value: string) => void> = [];
+  const queries: string[] = [];
+  await registerOpenCodeLearning(fixture.ctx, '/repo', lifecycle, {
+    recall: query => { queries.push(query); return new Promise(resolve => pending.push(resolve)); },
+  }, () => undefined);
+  const prefix = 'Shared repository instructions. '.repeat(40);
+  await fixture.hooks.get('session:prompt')!({ sessionID: 'ses_1', messageID: 'sqlite', prompt: { text: prefix + 'Fix sqlite locks.' } } as never);
+  await tick(); pending[0]!('SQLITE_ONLY_ADVICE'); await tick();
+  await fixture.hooks.get('session:prompt')!({ sessionID: 'ses_1', messageID: 'css', prompt: { text: prefix + 'Fix CSS spacing.' } } as never);
+  await tick();
+  assert.equal(queries[0], queries[1], 'the lookup stays bounded; request identity must retain the distinction');
+  const system: unknown[] = [];
+  await fixture.hooks.get('session:context')!({ sessionID: 'ses_1', system } as never);
+  assert.doesNotMatch(JSON.stringify(system), /SQLITE_ONLY_ADVICE/);
+});
+
+test('model-switch recall cannot overwrite a newer result for an identical request', async t => {
+  const fixture = pluginContextFixture();
+  const lifecycle = new OpenCodePluginLifecycle();
+  t.after(() => lifecycle.dispose(() => undefined));
+  const pending: Array<(value: string) => void> = [];
+  const adapter = await registerOpenCodeLearning(fixture.ctx, '/repo', lifecycle, {
+    recall: () => new Promise(resolve => pending.push(resolve)),
+  }, () => undefined);
+  const prompt = async (messageID: string) => {
+    await fixture.hooks.get('session:prompt')!({ sessionID: 'ses_1', messageID, prompt: { text: 'sqlite' } } as never);
+    await tick();
+  };
+  await prompt('first');
+  adapter.observeEvent({ id: 'switch', type: 'session.model.selected', sessionId: 'ses_1' }); await tick();
+  await prompt('newer');
+  pending[2]!('CURRENT_MEMORY'); await tick();
+  pending[1]!('OLD_SWITCH_MEMORY'); pending[0]!('OLD_PROMPT_MEMORY'); await tick();
+  const system: unknown[] = [];
+  await fixture.hooks.get('session:context')!({ sessionID: 'ses_1', system } as never);
+  assert.match(JSON.stringify(system), /CURRENT_MEMORY/);
+  assert.doesNotMatch(JSON.stringify(system), /OLD_SWITCH_MEMORY|OLD_PROMPT_MEMORY/);
+});
+
+test('newer missing or failed recall cannot be undone by a late same-request result', async t => {
+  for (const failure of [false, true]) {
+    const fixture = pluginContextFixture();
+    const lifecycle = new OpenCodePluginLifecycle();
+    t.after(() => lifecycle.dispose(() => undefined));
+    const pending: Array<{ resolve(value: string | undefined): void; reject(error: Error): void }> = [];
+    await registerOpenCodeLearning(fixture.ctx, '/repo', lifecycle, {
+      recall: () => new Promise((resolve, reject) => pending.push({ resolve, reject })),
+    }, () => undefined);
+    for (const messageID of ['first', 'newer']) {
+      await fixture.hooks.get('session:prompt')!({ sessionID: 'ses_1', messageID, prompt: { text: 'sqlite' } } as never);
+      await tick();
+    }
+    if (failure) pending[1]!.reject(new Error('offline')); else pending[1]!.resolve(undefined);
+    await tick(); pending[0]!.resolve('OLD_MEMORY'); await tick();
+    const system: unknown[] = [];
+    await fixture.hooks.get('session:context')!({ sessionID: 'ses_1', system } as never);
+    assert.deepEqual(system, []);
+  }
+});
+
 test('a new request clears prior recall and late results cannot replace the current request', async t => {
   const fixture = pluginContextFixture();
   const lifecycle = new OpenCodePluginLifecycle();

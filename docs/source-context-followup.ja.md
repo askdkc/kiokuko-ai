@@ -58,7 +58,7 @@ idealは制約と現状を調査し、その最終報告をZenkiへ渡す。Zenk
 node scripts/prepare-source-llm-pilot.mjs
 
 # 下記は明示的な実モデル呼び出し。manifestは上の出力にある絶対パスを指定する。
-OPENCODE_BIN=/absolute/path/to/opencode-1.18.26 \
+OPENCODE_BIN=/absolute/path/to/opencode \
 KIOKUKO_TEST_RIPWIRE=/absolute/path/to/ripwire \
 KIOKUKO_EVAL_MANIFEST=/absolute/path/to/manifest.json \
 KIOKUKO_EVAL_IDEAL_MODEL=openai/gpt-5.6-sol \
@@ -80,9 +80,11 @@ OpenCode報告費用と実請求が一致するとも限らない。
 これは使用量集計とrole引継ぎの検証であり、実LLMの速度・品質の証拠ではない。
 
 ```bash
-OPENCODE_BIN=/absolute/path/to/opencode-1.18.26 \
+OPENCODE_BIN=/absolute/path/to/opencode \
 KIOKUKO_TEST_RIPWIRE=/absolute/path/to/ripwire \
   node scripts/test-source-llm-evaluator.mjs
 ```
 
 API参照：[OpenCode Server](https://opencode.ai/docs/server/)。
+
+現在の評価入口はバージョン番号で拒否せず、health/config/session/message APIと読み取り専用権限・モデル・使用量を検査する。旧REST形式を備えないホストはAPI不適合として停止する。これは現行OpenCode v2 APIへの評価器移植が完了したという意味ではない。過去の測定版と結果は履歴の証拠として保持する。

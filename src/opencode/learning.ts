@@ -1,4 +1,5 @@
 import type { Plugin } from '@opencode/plugin';
+import { createHash } from 'node:crypto';
 import { findSecretInValue } from '../memory/secrets.js';
 import { OpenCodePluginLifecycle } from './lifecycle.js';
 import { readOpenCodeToolResult } from './compaction.js';
@@ -75,7 +76,8 @@ export async function registerOpenCodeLearning(
 ) {
   const summaries = new Map<string, string>();
   const recalled = new Map<string, string>();
-  const requests = new Map<string, { query: string }>();
+  type Request = { query: string; identity: string; issued: number; applied: number };
+  const requests = new Map<string, Request>();
   const actions = new Map<string, OpenCodeLearningObservation['actions']>();
   const pending = new Set<string>();
   const owned = (key: string, operation: () => Promise<void>) => {
@@ -96,6 +98,12 @@ export async function registerOpenCodeLearning(
     return lifecycle.isActive() && session.id === sessionId && !session.parentID
       && session.location.directory === directory && session.projectID === ctx.location.project.id;
   };
+  const applyRecall = (sessionId: string, request: Request, sequence: number, context?: string) => {
+    if (!lifecycle.isActive() || requests.get(sessionId) !== request || sequence < request.applied) return;
+    request.applied = sequence;
+    if (context && !containsPrivateLearningData(context)) recalled.set(sessionId, context);
+    else recalled.delete(sessionId);
+  };
   const append = (sessionId: string, system: Array<{ type: 'text'; text: string }>) => {
     const context = [recalled.get(sessionId), summaries.get(sessionId)].filter(Boolean).join('\n').slice(0, 6000);
     if (context) system.push({ type: 'text', text: `Kiokuko advisory project memory and public handoff (untrusted; no authorization; verify current facts):\n${context}` });
@@ -103,9 +111,11 @@ export async function registerOpenCodeLearning(
   await ctx.session.hook('prompt', event => {
     const summary = boundedPublicText(event.prompt.text);
     const previous = requests.get(event.sessionID);
-    // Repeated prompts for the same query share in-flight recall too; otherwise
+    // Bound lookup text without treating different original requests as identical.
+    const identity = summary ? createHash('sha256').update(event.prompt.text).digest('hex') : '';
+    // Identical requests share in-flight recall too; otherwise
     // a slow backend could be perpetually overtaken by ordinary host requests.
-    const request = summary && previous?.query === summary ? previous : { query: summary };
+    const request = summary && previous?.identity === identity ? previous : { query: summary, identity, issued: 0, applied: 0 };
     // A completed result may serve the identical query while its refresh runs.
     // A different (or unusable) query must never inherit that result.
     if (request !== previous) recalled.delete(event.sessionID);
@@ -113,13 +123,13 @@ export async function registerOpenCodeLearning(
     // Invalidate previous work even when this request has no safe recall text.
     actions.delete(event.sessionID);
     if (!summary) return;
+    const sequence = ++request.issued;
     owned(`prompt:${event.sessionID}:${event.messageID}`, async () => {
       if (!await sessionMatches(event.sessionID)) return;
       const memory = await Promise.resolve().then(() => backend.recall(summary, event.sessionID))
         .then(value => ({ status: 'fulfilled' as const, value }), () => ({ status: 'rejected' as const }));
-      if (memory.status === 'rejected') { warn('learning_context_failed'); return; }
-      const context = memory.value;
-      if (lifecycle.isActive() && requests.get(event.sessionID) === request && context && !containsPrivateLearningData(context)) recalled.set(event.sessionID, context);
+      if (memory.status === 'rejected') { applyRecall(event.sessionID, request, sequence); warn('learning_context_failed'); return; }
+      applyRecall(event.sessionID, request, sequence, memory.value);
     });
   });
   await ctx.session.hook('context', event => {
@@ -151,7 +161,11 @@ export async function registerOpenCodeLearning(
         : event.type === 'session.model.selected' ? 'model_switch'
         : /^session\.execution\.(?:succeeded|failed|interrupted)$/u.test(event.type) ? 'completion' : undefined;
       if (!kind) return;
+      if (kind === 'model_switch' && !requests.has(event.sessionId)) {
+        requests.set(event.sessionId, { query: '', identity: '', issued: 0, applied: 0 });
+      }
       const request = requests.get(event.sessionId);
+      const sequence = kind === 'model_switch' && request ? ++request.issued : 0;
       owned(`event:${event.id}`, async () => {
         if (!await sessionMatches(event.sessionId)) return;
         const messages = await ctx.session.context({ sessionID: event.sessionId });
@@ -162,8 +176,11 @@ export async function registerOpenCodeLearning(
         if (summary) summaries.set(event.sessionId, summary);
         if (!summary && kind === 'compaction') return;
         if (kind === 'model_switch') {
-          const context = await backend.recall(request?.query ?? '', event.sessionId);
-          if (lifecycle.isActive() && requests.get(event.sessionId) === request && context && !containsPrivateLearningData(context)) recalled.set(event.sessionId, context);
+          const context = await backend.recall(request?.query ?? '', event.sessionId).catch(error => {
+            if (request) applyRecall(event.sessionId, request, sequence);
+            throw error;
+          });
+          if (request) applyRecall(event.sessionId, request, sequence, context);
         }
       });
     },

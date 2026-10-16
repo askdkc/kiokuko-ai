@@ -151,3 +151,6 @@ See [all five roles, mixed providers, permissions, and troubleshooting](docs/orc
 Implementation-focused references remain in [architecture](docs/architecture.md),
 [database](docs/database.md), [execution ledger](docs/execution-ledger.md), and
 [OpenCode integration](docs/opencode-integration.md).
+
+Common Lisp tool: [OpenCode Lisp usage and verification](docs/lisp.ja.md).
+Version boundaries: [runtime compatibility and reproducible artifacts](docs/version-compatibility.ja.md).

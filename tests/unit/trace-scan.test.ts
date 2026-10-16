@@ -119,7 +119,7 @@ test('deduplicates an identical scan before ingestion advances its cursor', asyn
   }
 });
 
-test('marks unsupported schemas and detects non-zero or gapped sequence lag', async () => {
+test('enqueues compatible newer formats and detects non-zero or gapped sequence lag', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'kiokuko-scan-project-'));
   const runsDirectory = path.join(root, '.agenticreplay', 'runs');
   const databaseConnection = await database();
@@ -137,11 +137,12 @@ test('marks unsupported schemas and detects non-zero or gapped sequence lag', as
     });
     const outcome = await scanAgenticReplayTraceStore(databaseConnection, runsDirectory, { now: '2026-09-06T08:00:01.000Z' });
     assert.equal(outcome.scanned, 3);
-    assert.equal(outcome.enqueued, 2);
-    assert.equal(outcome.skippedUnsupported, 1);
+    assert.equal(outcome.enqueued, 3);
+    assert.equal(outcome.skippedUnsupported, 0);
     assert.deepEqual(jobPayloads(databaseConnection).sort((left, right) => left.traceRunId.localeCompare(right.traceRunId)), [
       { traceRunId: 'run_aaaaaa', fromSeq: 0 },
       { traceRunId: 'run_bbbbbb', fromSeq: 6 },
+      { traceRunId: 'run_cccccc', fromSeq: 0 },
     ]);
   } finally {
     databaseConnection.close();

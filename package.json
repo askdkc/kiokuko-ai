@@ -27,6 +27,7 @@
   },
   "files": [
     "dist/",
+    "lisp/",
     "migrations/",
     "skills/",
     "docs/",
@@ -52,6 +53,7 @@
     "test:evaluation": "npm run build && node scripts/run-retrieval-evaluation.mjs",
     "test:benchmark": "npm run build && node scripts/run-retrieval-benchmark.mjs",
     "test:e2e:opencode": "npm run build && node scripts/run-opencode-enno-e2e.mjs",
+    "test:e2e:opencode:lisp": "npm run build && node scripts/run-opencode-lisp-e2e.mjs",
     "test:e2e:opencode:host": "npm run build && node scripts/run-opencode-host-e2e.mjs",
     "sampledb:generate": "node --import tsx tests/fixtures/sample-database.ts",
     "test:sampledb": "npm run build && node --import tsx tests/ci/verify-sample-database.ts",

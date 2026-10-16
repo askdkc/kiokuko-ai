@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto';
 import { readFile, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { findSecret, findSecretInValue } from './secrets.js';
+import { parseAgenticReplayManifest } from '../trace/agentic-trace.js';
+import { parseTraceJson } from '../trace/bounded-read.js';
 import type { ReplayMemoryProposal } from './replay-review.js';
 const hash = (bytes: string | Buffer) => createHash('sha256').update(bytes).digest('hex');
 const object = (v: unknown): Record<string, unknown> => v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : {};
@@ -25,8 +27,10 @@ export async function extractReplayProposal(input: { cwd: string; traceDirectory
   const root = await realpath(input.cwd), directory = await realpath(input.traceDirectory);
   const runs = await realpath(path.join(root, '.agenticreplay', 'runs'));
   if (!runs.startsWith(root + path.sep) || !directory.startsWith(runs + path.sep)) throw new Error('replay_scope_mismatch');
-  const manifest = object(JSON.parse((await bounded(path.join(directory, 'manifest.json'), directory, 65536)).toString('utf8')));
-  if (manifest.schema_version !== '0.4.0' || typeof manifest.run_id !== 'string' || !/^run_[0-9a-f]{6,32}$/u.test(manifest.run_id)) throw new Error('replay_contract_mismatch');
+  const manifestText = (await bounded(path.join(directory, 'manifest.json'), directory, 65536)).toString('utf8');
+  const manifest = object(parseTraceJson(manifestText));
+  const parsedManifest = typeof manifest.run_id === 'string' ? parseAgenticReplayManifest(manifestText, manifest.run_id) : undefined;
+  if (!parsedManifest) throw new Error('replay_contract_mismatch');
   const candidates: Buffer[] = [];
   for (const name of ['events.jsonl', 'event.jsonl']) {
     try { candidates.push(await bounded(path.join(directory, name), directory, 8 * 1024 * 1024)); }
@@ -55,6 +59,7 @@ export async function extractReplayProposal(input: { cwd: string; traceDirectory
     }
     events.push({ raw, payload, ref: `${manifest.run_id}:${sequence}`, payloadHash });
   }
+  if (parsedManifest.countsEvents !== undefined && parsedManifest.countsEvents !== events.length) throw new Error('replay_event_count_mismatch');
   const requestTexts = new Map<string, string>();
   for (const event of events) {
     if (event.raw.type === 'user.message') { const text = safe(event.payload.text); if (text) requestTexts.set(text, event.ref); }
@@ -112,7 +117,7 @@ export async function extractReplayProposal(input: { cwd: string; traceDirectory
   if (!text) gaps.push('user request unavailable');
   const findings: ReplayMemoryProposal['findings'] = attempts.filter(a => a.outcome === 'succeeded' || a.outcome === 'failed').map(a => ({ taskId: a.taskId ?? null, kind: a.outcome === 'succeeded' ? 'worked' : 'failed', text: `${a.tool}: ${a.command ?? 'recorded call'}; tool outcome ${a.outcome}. Task-level effectiveness remains unverified.`, basis: 'observed', evidenceRefs: [a.callRef, ...(a.resultRef ? [a.resultRef] : [])] }));
   const proposal: ReplayMemoryProposal = { schemaVersion: 1, proposalId: '', revision: 1, source: { workspace: input.workspace, taskId: input.taskId, sessionId: input.sessionId,
-    traces: [{ runId: manifest.run_id, eventsSha256: digest, eventsRead: events.length, totalEvents: integrity.events_sha256 ? events.length : null, digestScope: 'complete', complete: gaps.length === 0, gaps }] }, request: { text, evidenceRefs: [...new Set(requestTexts.values())] }, languages, attempts, findings,
+    traces: [{ runId: parsedManifest.runId, schemaVersion: parsedManifest.schemaVersion, eventsSha256: digest, eventsRead: events.length, totalEvents: integrity.events_sha256 ? events.length : null, digestScope: 'complete', complete: gaps.length === 0, gaps }] }, request: { text, evidenceRefs: [...new Set(requestTexts.values())] }, languages, attempts, findings,
     tags: ['agenticreplay', ...languages.map(l => l.name.toLowerCase())], keywords: [...new Set((text + ' ' + attempts.map(a => a.command ?? a.tool).join(' ')).toLowerCase().match(/[\p{L}\p{N}_.-]{2,64}/gu) ?? [])].slice(0, 64) };
   if (findSecretInValue(proposal)) throw new Error('unsafe_extraction');
   return proposal;

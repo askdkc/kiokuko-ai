@@ -1,3 +1,4 @@
+import { probeSqliteVec } from './sqlite-vec-probe.js';
 import { DatabaseSync } from 'node:sqlite';
 import { dirname } from 'node:path';
 import { chmodSync, lstatSync, mkdirSync } from 'node:fs';
@@ -45,9 +46,8 @@ function loadSqliteVec(database: DatabaseSync, loader: SqliteVecLoader): void {
     loader.load(database);
     database.enableLoadExtension(false);
     loadingDisabled = true;
-    const version = database.prepare('SELECT vec_version() AS version').get()?.version;
-    if (version !== loader.extensionVersion) {
-      throw new SqliteVecLoadError('The loaded sqlite-vec version is unsupported');
+    if (!probeSqliteVec(database).available) {
+      throw new SqliteVecLoadError('The loaded sqlite-vec distance API is unavailable or incompatible');
     }
   } catch (error) {
     failure = error;

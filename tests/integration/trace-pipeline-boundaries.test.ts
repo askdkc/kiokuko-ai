@@ -65,7 +65,7 @@ test('UTF-8 crossing the read buffer and deterministic reducer partitions', asyn
     assert.deepEqual(split, all);
     canonicalContentHash(all);
 });
-test('manifest-only finalization and unsupported manifest recovery do not depend on events mtime', async (t) => {
+test('manifest-only finalization and compatible schema changes do not depend on events mtime', async (t) => {
     const { db, runs } = await fixture(t);
     await writeTrace(runs, completed, '1.0.0');
     await ingestTraceRun(db, { runsDirectory: runs, traceRunId: traceId, fromSeq: 0 });
