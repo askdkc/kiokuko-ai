@@ -41,6 +41,7 @@ async function fixture(context: TestContext) {
     npm_config_userconfig: userConfig, npm_config_registry: 'https://registry.example.invalid/',
     npm_config_proxy: 'http://proxy.example.invalid/', npm_config_prefix: path.join(root, 'wrong-prefix'),
     npm_config_global: 'true', npm_config_allow_scripts: 'inherited-policy', NPM_CONFIG_ALLOW_SCRIPTS: 'another-inherited-policy',
+    'npm_config_allow-scripts': 'hyphenated-inherited-policy',
   } };
   const preserved = async () => {
     assert.equal(await readFile(path.join(packageRoot, 'package.json'), 'utf8'), originalPackage);
@@ -82,15 +83,27 @@ async function installFixturePackages(directory: string, marker = 'managed'): Pr
   await writeFile(path.join(directory, 'package-lock.json'), JSON.stringify({ name: manifest.name, version: manifest.version, lockfileVersion: 3, packages }));
 }
 
-function fakeNpm(version = '11.19.0', fail?: 'install' | 'rebuild' | 'probe' | 'lock' | 'escape' | 'override') {
+function fakeNpm(version = '11.19.0', fail?: 'config' | 'install' | 'rebuild' | 'probe' | 'exports' | 'lock' | 'escape' | 'override', policy = true) {
   const calls: OptionalRuntimeInvocation[] = [];
   const runner: OptionalRuntimeRunner = async (invocation) => {
     calls.push(invocation);
     if (invocation.args[0] === '--version') return { stdout: `${version}\n` };
+    if (invocation.args[0] === 'config') {
+      const userConfig = invocation.args[invocation.args.indexOf('--userconfig') + 1]!;
+      const globalConfig = invocation.args[invocation.args.indexOf('--globalconfig') + 1]!;
+      assert.notEqual(userConfig, globalConfig);
+      for (const file of [userConfig, globalConfig]) {
+        assert.equal(path.dirname(file), invocation.cwd);
+        assert.equal(await readFile(file, 'utf8'), '');
+      }
+      if (fail === 'config') throw new Error('Fixture npm config unavailable');
+      return { stdout: policy ? '\n' : 'undefined\n' };
+    }
     if (invocation.args[0] === 'install') {
       await installFixturePackages(invocation.cwd);
       if (fail === 'install') throw new Error('Fixture npm install failed');
       if (fail === 'probe') await rm(path.join(invocation.cwd, 'node_modules', 'sqlite-vec'), { recursive: true });
+      if (fail === 'exports') await writeFile(path.join(invocation.cwd, 'node_modules', 'sqlite-vec', 'index.mjs'), 'export const version = "0.1.9";');
       if (fail === 'lock' || fail === 'escape') {
         const lockPath = path.join(invocation.cwd, 'package-lock.json');
         const lock = JSON.parse(await readFile(lockPath, 'utf8'));
@@ -116,15 +129,16 @@ test('managed runtime identity follows shipped dependencies, overrides and nativ
   assert.notEqual(optionalRuntimeDirectory({ ...options, platform: 'linux' }, packageRoot), optionalRuntimeDirectory({ ...options, platform: 'darwin' }, packageRoot));
 });
 
-for (const version of ['11.13.0', '11.19.0']) {
-  test(`managed runtime first install and repeat preserve caller state with npm ${version}`, async (context) => {
+for (const policy of [false, true]) {
+  test(`managed runtime first install and repeat preserve caller state with script-policy support=${policy}`, async (context) => {
     const { packageRoot, options, preserved } = await fixture(context);
     const directory = optionalRuntimeDirectory(options, packageRoot);
     await assert.rejects(checkOptionalRuntime(directory, packageRoot), /not installed/u);
-    const npm = fakeNpm(version);
+    const npm = fakeNpm('vendor-build', undefined, policy);
     await installOptionalRuntime(options, { packageRoot, runner: npm.runner });
     await checkOptionalRuntime(directory, packageRoot);
-    assert.deepEqual(npm.calls.map((call) => call.args[0]), ['--version', 'install', 'rebuild']);
+    assert.deepEqual(npm.calls.map((call) => call.args[0]), ['config', 'install', 'rebuild']);
+    assert.deepEqual(npm.calls[0]!.args.slice(0, 4), ['config', 'get', 'allow-scripts', '--json']);
     const canonicalParent = await realpath(path.dirname(directory));
     assert.ok(npm.calls.every((call) => call.cwd !== packageRoot && call.cwd.startsWith(canonicalParent)));
     for (const call of npm.calls) {
@@ -133,7 +147,7 @@ for (const version of ['11.13.0', '11.19.0']) {
       assert.equal(call.env.npm_config_userconfig, options.env.npm_config_userconfig);
       assert.equal(call.env.npm_config_registry, options.env.npm_config_registry);
       assert.equal(call.env.npm_config_proxy, options.env.npm_config_proxy);
-      assert.equal(Object.keys(call.env).some((key) => /^npm_config_allow_scripts$/iu.test(key)), false);
+      assert.equal(Object.keys(call.env).some((key) => /^npm_config_allow[-_]scripts$/iu.test(key)), false);
       assert.ok(call.timeoutMs > 0 && call.timeoutMs <= 300_000);
     }
     const install = npm.calls[1]!;
@@ -147,8 +161,9 @@ for (const version of ['11.13.0', '11.19.0']) {
     assert.deepEqual(manifest.dependencies, peers);
     assert.equal(manifest.devDependencies, undefined);
     assert.equal(manifest.peerDependencies, undefined);
-    if (version === '11.19.0') assert.equal(await readFile(path.join(directory, '.npmrc'), 'utf8'), 'allow-scripts=onnxruntime-node,sharp,protobufjs\n');
+    if (policy) assert.equal(await readFile(path.join(directory, '.npmrc'), 'utf8'), 'allow-scripts=onnxruntime-node,sharp,protobufjs\n');
     else await assert.rejects(readFile(path.join(directory, '.npmrc')), { code: 'ENOENT' });
+    assert.ok(!(await readdir(directory)).some(name => name.startsWith('.probe-')));
     assert.ok(await readFile(path.join(directory, 'package-lock.json'), 'utf8'));
     await installOptionalRuntime(options, { packageRoot, runner: npm.runner });
     assert.equal(npm.calls.length, 3);
@@ -157,7 +172,7 @@ for (const version of ['11.13.0', '11.19.0']) {
   });
 }
 
-for (const failure of ['install', 'rebuild', 'probe', 'lock', 'escape', 'override'] as const) {
+for (const failure of ['config', 'install', 'rebuild', 'probe', 'exports', 'lock', 'escape', 'override'] as const) {
   test(`managed runtime ${failure} failure cleans staging and permits a successful retry`, async (context) => {
     const { packageRoot, options, preserved } = await fixture(context);
     const directory = optionalRuntimeDirectory(options, packageRoot);
@@ -238,3 +253,17 @@ test('compatible public peer ranges preserve the shipped managed runtime and rej
   await writeFile(path.join(packageRoot,'package.json'),JSON.stringify({...ranged,devDependencies:{...ranged.devDependencies,'sqlite-vec':'0.2.0'}}));
   assert.throws(() => optionalRuntimeDirectory(options,packageRoot),/outside its public peer range/);
 });
+
+for (const [label, policy] of [['vendor-build', true], ['10.0.0', true], ['99.0.0', false]] as const) {
+  test(`actual npm config capability governs policy for reported ${label}`, async context => {
+    const { packageRoot, options, preserved } = await fixture(context);
+    const npm = fakeNpm(label, undefined, policy);
+    await installOptionalRuntime(options, { packageRoot, runner: npm.runner });
+    const directory = optionalRuntimeDirectory(options, packageRoot);
+    if (policy) assert.equal(await readFile(path.join(directory, '.npmrc'), 'utf8'), 'allow-scripts=onnxruntime-node,sharp,protobufjs\n');
+    else await assert.rejects(readFile(path.join(directory, '.npmrc')), { code: 'ENOENT' });
+    assert.ok(npm.calls.some(call => call.args[0] === 'install' && call.args.includes('--ignore-scripts')));
+    assert.ok(npm.calls.some(call => call.args[0] === 'rebuild' && call.args.includes('sharp')));
+    await preserved();
+  });
+}

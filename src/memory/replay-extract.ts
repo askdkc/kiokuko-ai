@@ -61,14 +61,34 @@ export async function extractReplayProposal(input: { cwd: string; traceDirectory
   }
   if (parsedManifest.countsEvents !== undefined && parsedManifest.countsEvents !== events.length) throw new Error('replay_event_count_mismatch');
   const requestTexts = new Map<string, string>();
+  let omittedRequestMessages = 0, truncatedRequestText = false;
+  const requestExcerpt = (text: string, limit: number): string => {
+    if (text.length <= limit) return text;
+    truncatedRequestText = true;
+    const marker = '\n[... request text omitted ...]\n';
+    const head = Math.floor(limit / 4);
+    return text.slice(0, head) + marker + text.slice(-(limit - head - marker.length));
+  };
+  const rememberRequest = (content: unknown, ref: string): void => {
+    if (typeof content !== 'string') return;
+    // Scan the full field for secrets before retaining bounded beginning/end excerpts.
+    const text = requestExcerpt(safe(content, content.length), 2048);
+    if (!text) return;
+    requestTexts.delete(text);
+    requestTexts.set(text, ref);
+    if (requestTexts.size > 20) {
+      requestTexts.delete(requestTexts.keys().next().value!);
+      omittedRequestMessages += 1;
+    }
+  };
   for (const event of events) {
-    if (event.raw.type === 'user.message') { const text = safe(event.payload.text); if (text) requestTexts.set(text, event.ref); }
+    if (event.raw.type === 'user.message') rememberRequest(event.payload.text, event.ref);
     if (event.raw.type !== 'model.request' || !Array.isArray(event.payload.messages)) continue;
     for (const message of event.payload.messages) {
       const m = object(message);
       if (m.role !== 'user') continue;
       const content = typeof m.content === 'string' ? m.content : Array.isArray(m.content) ? m.content.map(p => { const b = object(p); return b.type === 'text' ? b.text : ''; }).filter(v => typeof v === 'string').join('\n') : '';
-      const text = safe(content); if (text && requestTexts.size < 20) requestTexts.set(text, event.ref);
+      rememberRequest(content, event.ref);
     }
   }
   const attempts: ReplayMemoryProposal['attempts'] = [];
@@ -112,7 +132,9 @@ export async function extractReplayProposal(input: { cwd: string; traceDirectory
     const refs = attempts.filter(a => pattern.test(a.command ?? '')).map(a => a.callRef);
     if (refs.length) languages.push({ name, basis: 'inferred', evidenceRefs: refs });
   }
-  const text = [...requestTexts.keys()].join('\n').slice(0, 4096);
+  const text = requestExcerpt([...requestTexts.keys()].join('\n'), 4096);
+  if (omittedRequestMessages) gaps.push('request messages omitted; only the latest 20 distinct excerpts are retained');
+  if (truncatedRequestText) gaps.push('request text truncated; beginning and most recent portions are retained');
   if (text) gaps.push('request text from recorded user-role messages; current human identity and exact task binding require review');
   if (!text) gaps.push('user request unavailable');
   const findings: ReplayMemoryProposal['findings'] = attempts.filter(a => a.outcome === 'succeeded' || a.outcome === 'failed').map(a => ({ taskId: a.taskId ?? null, kind: a.outcome === 'succeeded' ? 'worked' : 'failed', text: `${a.tool}: ${a.command ?? 'recorded call'}; tool outcome ${a.outcome}. Task-level effectiveness remains unverified.`, basis: 'observed', evidenceRefs: [a.callRef, ...(a.resultRef ? [a.resultRef] : [])] }));

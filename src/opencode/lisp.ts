@@ -49,7 +49,7 @@ export async function registerOpenCodeLisp(ctx: Plugin.Context, lifetime: AbortS
       if (!options.enabled || disabled.has(call.sessionID) || lifetime.aborted) throw new Error('lisp_disabled');
       if (!admission || admission.digest !== canonicalContentHash(input) || admission.turn !== turns.get(call.sessionID) || admission.epoch !== (epochs.get(call.sessionID) ?? 0)) throw new Error('lisp_call_binding_changed');
       const session = await ctx.session.get({ sessionID: call.sessionID });
-      if (session.projectID !== ctx.location.project.id || await realpath(session.location.directory) !== directory) throw new Error('lisp_session_scope_changed');
+      if (session.id !== call.sessionID || session.projectID !== ctx.location.project.id || await realpath(session.location.directory) !== directory) throw new Error('lisp_session_scope_changed');
       if (disabled.has(call.sessionID) || lifetime.aborted || call.signal.aborted || admission.turn !== turns.get(call.sessionID) || admission.epoch !== (epochs.get(call.sessionID) ?? 0)) throw new Error('lisp_call_binding_changed');
       if (!runtime) throw new Error('lisp_node_runtime_configuration_missing_run_kiokuko_ai_setup');
       let worker = workers.get(call.sessionID);

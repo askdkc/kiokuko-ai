@@ -100,6 +100,7 @@ MCP tool 호출은 클라이언트와 모델이 결정하므로 모델이 모든
         { "action": "edit", "resource": "*", "effect": "allow" },
         { "action": "shell", "resource": "*", "effect": "allow" },
         { "action": "kiokuko_*", "resource": "*", "effect": "deny" },
+        { "action": "kiokuko_lisp", "resource": "*", "effect": "allow" },
         { "action": "external_directory", "resource": "*", "effect": "ask" }
       ]
     }

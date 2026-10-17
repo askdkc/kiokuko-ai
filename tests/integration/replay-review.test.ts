@@ -266,3 +266,32 @@ test('MCP adapter retries the retained approval after a lost save acknowledgemen
   const recovered = await review.review(input); assert.equal(recovered.status, 'saved'); assert.equal(recovered.approvalKey, uncertain.approvalKey);
   assert.equal(prompts, 2); assert.equal(db.prepare('SELECT COUNT(*) AS n FROM entries').get<{n:number}>()?.n, 1);
 });
+
+
+test('approved corrections are recalled by their new terms in the next request', async t => {
+  const f = await fixture(t);
+  const correction = 'Keep symlink fixtures isolated; 作業境界を検証する。';
+  const receipt = await runNativeReplayReview(f.input, async q => ({ questionId: q.id,
+    choice: q.phase === 'organize' ? 'organize' : q.revision! < 3 ? 'revise' : 'approve',
+    ...(q.phase === 'review' && q.revision! < 3 ? { comment: q.revision === 1 ? 'discardedinterpretation' : correction } : {}),
+  }));
+  assert.equal(receipt.status, 'saved');
+  const db = openConnection(f.databasePath);
+  t.after(() => db.close());
+  for (const query of ['symlink', '作業境界']) {
+    const recalled = await memoryContext(db, { cwd: f.input.cwd, query, sessionId: 'next-session' });
+    assert.equal(recalled.available, true);
+    assert.equal(recalled.entries.length, 1, query);
+    assert.equal(recalled.entries[0]?.revision, 3);
+    const entry = recalled.entries[0];
+    assert.ok(entry && 'findings' in entry);
+    assert.equal(entry.findings[0]?.basis, 'user_corrected');
+    assert.equal(recalled.entries[0]?.summary, correction);
+    assert.equal(recalled.entries[0]?.verification, 'user_reviewed_not_task_verified');
+    const rendered = renderOpenCodeLearningContext(recalled);
+    assert.ok(rendered);
+    assert.match(rendered, /symlink/);
+  }
+  assert.equal((await memoryContext(db, { cwd: f.input.cwd, query: 'discardedinterpretation' })).entries.length, 0);
+  assert.equal((await memoryContext(db, { cwd: f.input.cwd, query: 'unrelatedweather' })).entries.length, 0);
+});

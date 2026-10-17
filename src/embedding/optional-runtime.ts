@@ -8,6 +8,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { getPlatformDataDirectory, type PathEnvironment } from '../config/paths.js';
 import { KiokukoError } from '../errors.js';
+import { supportsNpmScriptPolicy } from './npm-capabilities.js';
 
 const executeFile = promisify(execFile);
 const packageNames = ['@huggingface/hub', '@huggingface/transformers', 'sqlite-vec'] as const;
@@ -168,7 +169,7 @@ async function runNpm(invocation: OptionalRuntimeInvocation): Promise<{ stdout: 
       cwd: invocation.cwd, env: invocation.env, timeout: invocation.timeoutMs,
       maxBuffer: 8 * 1024 * 1024, windowsHide: true,
     });
-    if (invocation.args[0] !== '--version') {
+    if (invocation.args[0] !== 'config') {
       process.stderr.write(result.stdout);
       process.stderr.write(result.stderr);
     }
@@ -188,15 +189,9 @@ function runtimeEnvironment(options: PathEnvironment): NodeJS.ProcessEnv {
   // a forbidden CLI policy for this separate managed project. Keep all user
   // registry, proxy, authentication, cache and other configuration intact.
   for (const key of Object.keys(environment)) {
-    if (/^npm_config_allow_scripts$/iu.test(key)) delete environment[key];
+    if (/^npm_config_allow[-_]scripts$/iu.test(key)) delete environment[key];
   }
   return environment;
-}
-
-function supportsScriptPolicy(version: string): boolean {
-  const match = /^(\d+)\.(\d+)\.\d+(?:[-+][a-zA-Z0-9.-]+)?$/u.exec(version.trim());
-  if (!match) throw new KiokukoError('SERVICE_UNAVAILABLE', 'The npm version could not be determined');
-  return Number(match[1]) > 11 || (Number(match[1]) === 11 && Number(match[2]) >= 19);
 }
 
 /** Provision a separate runtime, then expose it only after every required import succeeds. */
@@ -229,8 +224,16 @@ export async function installOptionalRuntime(
   try {
     await writeFile(path.join(staging, 'package.json'), contract.manifest, { mode: 0o600, flag: 'wx' });
     await writeFile(path.join(staging, 'loader.mjs'), loaderSource, { mode: 0o600, flag: 'wx' });
-    const version = await invoke(['--version'], 30_000);
-    if (supportsScriptPolicy(version.stdout)) {
+    // Unknown npm settings can echo a user-provided value. Probe the built-in
+    // config API with empty, private configs before creating the project policy.
+    const userConfig = path.join(staging, '.probe-user.npmrc');
+    const globalConfig = path.join(staging, '.probe-global.npmrc');
+    await writeFile(userConfig, '', { mode: 0o600, flag: 'wx' });
+    await writeFile(globalConfig, '', { mode: 0o600, flag: 'wx' });
+    const policy = await invoke(['config', 'get', 'allow-scripts', '--json', '--userconfig', userConfig, '--globalconfig', globalConfig], 30_000);
+    await rm(userConfig);
+    await rm(globalConfig);
+    if (supportsNpmScriptPolicy(policy.stdout)) {
       // A project .npmrc shares the normal user config cascade without the
       // package.json-vs-user-allowScripts conflict in newer npm versions.
       await writeFile(path.join(staging, '.npmrc'), `allow-scripts=${scriptPackages.join(',')}\n`, { mode: 0o600, flag: 'wx' });

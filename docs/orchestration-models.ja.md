@@ -78,7 +78,7 @@ Gokiヘッドへ選択済みworkerの呼び出し情報を渡し、ヘッドか�
 全役割は `mode: "subagent"` で既定拒否です。共通で許可するのは `read`、`glob`、
 `grep`、`list`、`skill`。ideal・Zenki・checkは変更・shell・委譲を許可しません。
 Gokiヘッドは `subagent` を許可し、pluginがそのrunで選択したworkerに限定します。
-workerは `edit` と `shell` を許可し、`subagent` を拒否します。全役割で `kiokuko_*` を拒否し、
+workerは `edit` と `shell` を許可し、`subagent` を拒否します。全役割で `kiokuko_*` を拒否し、workerだけは実行用の `kiokuko_lisp` を明示許可できます。既存のcustom workerはLispの拒否を保持しても利用可能です。
 `external_directory` は `ask` を保持します。これはOpenCodeのツール権限であり、workerの
 shellをOSレベルで隔離する仕組みではありません。承認済み範囲と既存のパス・リース検査を守ります。
 

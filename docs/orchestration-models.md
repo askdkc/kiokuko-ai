@@ -89,7 +89,7 @@ All role templates use `mode: "subagent"` and default-deny permissions. Common a
 tools are `read`, `glob`, `grep`, `list`, and `skill`. `ideal`, `zenki`, and `check`
 allow neither mutation, shell execution nor delegation. Goki head permits `subagent`
 and no mutation; the plugin restricts it to the selected worker for the current run.
-Worker additionally permits `edit` and `shell`, and denies `subagent`. All deny `kiokuko_*`;
+Worker additionally permits `edit` and `shell`, and denies `subagent`. All deny `kiokuko_*`; the worker may explicitly allow the native `kiokuko_lisp` execution tool. Existing custom workers may retain their native Lisp denial;
 only the parent writes Enno reports. `external_directory` remains `ask`. This is an
 OpenCode tool permission envelope, not an operating-system sandbox for worker shell
 commands. Keep the approved WorkUnit scope and existing path/lease checks.

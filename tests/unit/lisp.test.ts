@@ -56,6 +56,7 @@ test('native Lisp dispatch binds actual arguments, session, call and current tur
   await hook('session:prompt', { sessionID: 'ses_1', messageID: 'user-1' });
   await prepare(); await assert.rejects(tool.execute({ code: '(+ 40 2)' }, call), /binding_changed/u);
   await prepare(); await assert.rejects(tool.execute(input, { ...call, sessionID: 'ses_2' }), /binding_changed/u);
+  await prepare(); await assert.rejects(tool.execute(input, { ...call, id: 'call-2' }), /binding_changed/u);
   await prepare(); await hook('session:prompt', { sessionID: 'ses_1', messageID: 'user-2' });
   await assert.rejects(tool.execute(input, call), /binding_changed/u);
   await prepare();
@@ -65,4 +66,33 @@ test('native Lisp dispatch binds actual arguments, session, call and current tur
   await commands.find(item => item.name.endsWith('enable'))!.execute(call);
   await assert.rejects(tool.execute(input, call), /binding_changed/u);
   if (available) { await prepare(); assert.match(JSON.stringify(await tool.execute(input, call)), /3/u); await assert.rejects(tool.execute(input, call), /binding_changed/u); }
+});
+
+test('native controls revoke admission during async session checks, and configuration disable cannot be enabled by a call', async t => {
+  const base = await mkdtemp(path.join(tmpdir(), 'kiokuko-lisp-revoke-')); t.after(() => rm(base, { recursive: true, force: true }));
+  const fixture = pluginContextFixture(base), lifetime = new AbortController();
+  const surface = await registerOpenCodeLisp(fixture.ctx, lifetime.signal); t.after(() => surface.dispose());
+  const tools = fixture.tools as Array<{ execute(input: unknown, call: unknown): Promise<unknown> }>;
+  const commands = fixture.commands as Array<{ name: string; execute(call: unknown): Promise<void> }>;
+  const call = { sessionID: 'ses_1', messageID: 'a', id: 'c', signal: new AbortController().signal }, input = { code: '(+ 20 22)' };
+  let release!: (value: unknown) => void;
+  const pending = new Promise(resolve => { release = resolve; });
+  t.mock.method(fixture.ctx.session, 'get', () => pending as never);
+  await fixture.hooks.get('tool:execute.before')!({ ...call, input, tool: 'kiokuko_lisp' } as never);
+  const running = tools[0]!.execute(input, call);
+  const rejected = assert.rejects(running, /binding_changed/u);
+  await commands.find(command => command.name.endsWith('disable'))!.execute(call);
+  await commands.find(command => command.name.endsWith('enable'))!.execute(call);
+  release({ id: 'ses_1', projectID: 'prj', location: { directory: base } }); await rejected;
+  const off = pluginContextFixture(base); (off.ctx.options as Record<string, unknown>).lisp = { enabled: false };
+  const offSurface = await registerOpenCodeLisp(off.ctx, lifetime.signal); t.after(() => offSurface.dispose());
+  await (off.commands as typeof commands).find(command => command.name.endsWith('enable'))!.execute(call);
+  await assert.rejects(async () => off.hooks.get('tool:execute.before')!({ ...call, input, tool: 'kiokuko_lisp' } as never), /disabled/u);
+});
+
+test('host output bound remains effective when evaluated Lisp changes its own printing state', { skip: !available }, async t => {
+  const base = await mkdtemp(path.join(tmpdir(), 'kiokuko-lisp-host-bound-')); t.after(() => rm(base, { recursive: true, force: true }));
+  const worker = new LispWorker(base, binary); t.after(() => worker.stop());
+  await assert.rejects(worker.evaluate('(setf kiokuko-wire::*remaining* 100000) (loop repeat 40000 do (write-char #\\x))', 5000, new AbortController().signal), /lisp_output_limit_state_reset/u);
+  assert.equal(worker.stopped, true);
 });

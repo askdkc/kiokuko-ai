@@ -12,6 +12,8 @@ import { performance } from 'node:perf_hooks';
 const binary = process.argv[2];
 if (!binary || !path.isAbsolute(binary)) throw new Error('Supply an absolute tgrep binary path');
 const repository = process.cwd();
+const rgBinary = process.env.KIOKUKO_TEST_RG ?? 'rg';
+if (process.env.KIOKUKO_TEST_RG && !path.isAbsolute(rgBinary)) throw new Error('KIOKUKO_TEST_RG must be an absolute executable path');
 const repetitions = 10;
 const queries = [
   { id: 'routing', pattern: 'readExecutionRouting|createExecutionHooks' },
@@ -144,7 +146,7 @@ try {
     await delay(20);
   } while (true);
   const startupMs = start() - beforeServe;
-  const cli = (engine, query, noIndex = false) => run(engine.startsWith('rg') ? 'rg' : binary, [
+  const cli = (engine, query, noIndex = false) => run(engine.startsWith('rg') ? rgBinary : binary, [
     ...(engine.startsWith('rg') ? (engine === 'rgSingleThread' ? ['--threads', '1'] : []) : ['--index-path', index, ...(noIndex ? ['--no-index'] : [])]),
     '--json', '--max-filesize', '2M', '-C', '2', ...(query.fixed ? ['-F'] : []), ...(query.insensitive ? ['-i'] : []), '--', query.pattern, '.',
   ], root);
@@ -177,7 +179,7 @@ try {
     for (let iteration = 0; iteration < repetitions; iteration++) {
       const order = ['rg', 'rgSingleThread', 'tgrepCli'];
       for (const engine of [...order.slice(iteration % 3), ...order.slice(0, iteration % 3)]) {
-        const result = run(engine.startsWith('rg') ? 'rg' : binary, [
+        const result = run(engine.startsWith('rg') ? rgBinary : binary, [
           ...(engine.startsWith('rg') ? (engine === 'rgSingleThread' ? ['--threads', '1'] : []) : ['--index-path', index]),
           '-l', '--null', '--max-filesize', '2M', ...(query.fixed ? ['-F'] : []), ...(query.insensitive ? ['-i'] : []), '--', query.pattern, '.',
         ], root);
@@ -231,7 +233,7 @@ try {
     }
     return size;
   }
-  const report = { schemaVersion: 1, createdAt: new Date().toISOString(), commit: run('git', ['rev-parse', 'HEAD']).stdout.trim(), platform: `${os.platform()}-${os.arch()}`, tgrep: version, rg: run('rg', ['--version']).stdout.split('\n')[0], repetitions, corpus: { trackedFiles: corpus.length, bytes: corpus.reduce((sum, file) => sum + file.bytes, 0), digest: digest.digest('hex'), preparationMs, scope: 'Current tracked src/, tests/, root ignore files; one additional synthetic probe; no node_modules or prior untracked ripwire artifacts' }, initialIndexMs: build.ms, serverReadyAndReconciledMs: startupMs, indexBytes: await treeBytes(index), serverRssKiB: Number(serverResources), initialStatus: status, finalStatus, results, filesOnly, freshness, offline, summary: Object.fromEntries(['rg', 'rgSingleThread', 'tgrepCli', 'tgrepRpc'].map(engine => [engine, distribution(results.map(result => result.stats[engine].medianMs))])), filesOnlySummary: Object.fromEntries(['rg', 'rgSingleThread', 'tgrepCli'].map(engine => [engine, distribution(filesOnly.map(result => result.stats[engine].medianMs))])), limitations: ['Single macOS arm64 machine; warm OS caches, new tgrep index rather than cold OS cache.', '12 lexical queries, not 12 natural-language/LLM tasks; no LLM calls, token usage or plan quality measurement.', 'RPC timing includes transport and JSON parsing; CLI timing includes process start and output transfer but excludes evaluator JSON parsing.', 'Equality covers path, line, match/context kind and text; excludes submatch offsets, binary/invalid UTF8 and complete CLI compatibility.', 'Freshness is sampled; immediate mismatch proves a stale window, eventual time includes verification overhead.', 'Ignored files and symlinks checked twice, not a security proof for arbitrary trees.', 'RSS is one sample, not peak memory.'] };
+  const report = { schemaVersion: 1, createdAt: new Date().toISOString(), commit: run('git', ['rev-parse', 'HEAD']).stdout.trim(), platform: `${os.platform()}-${os.arch()}`, tgrep: version, rg: run(rgBinary, ['--version']).stdout.split('\n')[0], repetitions, corpus: { trackedFiles: corpus.length, bytes: corpus.reduce((sum, file) => sum + file.bytes, 0), digest: digest.digest('hex'), preparationMs, scope: 'Current tracked src/, tests/, root ignore files; one additional synthetic probe; no node_modules or prior untracked ripwire artifacts' }, initialIndexMs: build.ms, serverReadyAndReconciledMs: startupMs, indexBytes: await treeBytes(index), serverRssKiB: Number(serverResources), initialStatus: status, finalStatus, results, filesOnly, freshness, offline, summary: Object.fromEntries(['rg', 'rgSingleThread', 'tgrepCli', 'tgrepRpc'].map(engine => [engine, distribution(results.map(result => result.stats[engine].medianMs))])), filesOnlySummary: Object.fromEntries(['rg', 'rgSingleThread', 'tgrepCli'].map(engine => [engine, distribution(filesOnly.map(result => result.stats[engine].medianMs))])), limitations: ['Single macOS arm64 machine; warm OS caches, new tgrep index rather than cold OS cache.', '12 lexical queries, not 12 natural-language/LLM tasks; no LLM calls, token usage or plan quality measurement.', 'RPC timing includes transport and JSON parsing; CLI timing includes process start and output transfer but excludes evaluator JSON parsing.', 'Equality covers path, line, match/context kind and text; excludes submatch offsets, binary/invalid UTF8 and complete CLI compatibility.', 'Freshness is sampled; immediate mismatch proves a stale window, eventual time includes verification overhead.', 'Ignored files and symlinks checked twice, not a security proof for arbitrary trees.', 'RSS is one sample, not peak memory.'] };
   if (process.argv[3]) await fs.writeFile(path.resolve(process.argv[3]), JSON.stringify(report, null, 2) + '\n');
   console.log(JSON.stringify({ summary: report.summary, filesOnlySummary: report.filesOnlySummary, initialIndexMs: build.ms, startupMs, indexBytes: report.indexBytes, serverRssKiB: report.serverRssKiB, allEqual: [...results, ...filesOnly].every(result => result.allEqual), freshness, offline }, null, 2));
   if (![...results, ...filesOnly].every(result => result.allEqual) || freshness.some(result => !result.eventualEqual || !result.fullScanEqual) || !offline.fullScanEqual) process.exitCode = 1;

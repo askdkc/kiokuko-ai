@@ -19,8 +19,8 @@ jobs:
           cache: npm
       - name: Install dependencies
         run: npm ci
-      - name: Install Common Lisp runtime
-        run: sudo apt-get update && sudo apt-get install -y sbcl
+      - name: Install declared test executables
+        run: sudo apt-get update && sudo apt-get install -y sbcl ripgrep
       - name: Prepare declared real producer and parser fixtures
         run: |
           node --import tsx scripts/install-verification-fixtures.mjs "${{ runner.temp }}/verification-fixtures"

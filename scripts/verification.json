@@ -17,7 +17,8 @@
         "node",
         "--test",
         "scripts/verification-contract.test.mjs",
-        "scripts/agenticreplay-dependency.test.mjs"
+        "scripts/agenticreplay-dependency.test.mjs",
+        "scripts/verification-capabilities.test.mjs"
       ],
       "profiles": [
         "main",
@@ -80,7 +81,8 @@
       "testCapabilities": [
         "agenticreplay-managed",
         "ripwire",
-        "sbcl"
+        "sbcl",
+        "ripgrep"
       ]
     },
     {
@@ -350,6 +352,10 @@
     "sbcl": {
       "environment": "KIOKUKO_TEST_SBCL",
       "binary": "sbcl"
+    },
+    "ripgrep": {
+      "environment": "KIOKUKO_TEST_RG",
+      "binary": "rg"
     }
   },
   "coveredChecks": []

@@ -11,6 +11,10 @@
 | sqlite-vec | 所有されたloaderを維持し、実Float32 BLOBの同一・直交・逆向きコサイン距離を確認。版は観測メタデータ | 旧v0.1.9等値拒否と固定診断表示を除去。nativeパッケージ版は実ファイルから読む |
 | packageVersionと管理runtime | 同一配布物のCLI/plugin整合性、lockとインストール済み依存の一致 | 異なる配布物の混在防止、再現可能な配布。外部ホスト最新版の拒否ではない |
 | optional embedding依存・overrides | peer範囲、配布時の依存・ABIに結び付く管理runtimeの識別子 | 監査／再現用の配布依存。将来lock・出荷依存の更新では別runtimeとして生成 |
+| optional runtimeのnpm | 空の専用user/global設定で `config get allow-scripts --json` の実応答を検査。機能がなければ従来の明示rebuild対象制限を利用 | npmの版表示は受理条件にしない。インストール全体のスクリプト禁止、許可対象だけのrebuild、依存export・lock検査を維持 |
+| AgenticReplay正式検証 | 事前判定は実行ファイルと管理依存のlock整合性。既存の実録画試験が子の終了結果、封印済みイベント、件数・ハッシュ、取込の完全性を検証 | dev依存の指定・lock・実体の一致は再現性。外部バイナリの `--version` や数値範囲では動作試験を止めない |
 | Node / SDK / CI | 利用するNode APIの最低要件、SDK型・lock整合性、実ホスト試験 | Node>=24.16は最低能力、CIの24.16・SDK dev版は再現用。未来の同等版の一律拒否ではない |
 
 回帰試験の新しい版番号は入力ラベルであり、受入結果は定義の抽出、完全性、保存／再検索、評価の完走、API欠落時のモデル呼び出し0回で判断する。模擬tgrepはrgへ検索を委譲するAPI fixtureであり、実tgrep新版の性能証拠ではない。模擬モデルも実LLMの課題成功率を示さない。過去のJSON測定結果は書き換えず、当時の版を出典として保持する。
+
+管理テンプレート・binding・SQLite migration・cursor等の内部schema番号はデータの解釈契約として残す。特に新しい管理テンプレートを古いCLIが上書きしない判定は、外部製品の機能互換性ではなく自製品のダウングレード保護である。Nodeの最低版はバックアップに必要な `node:sqlite` の `serialize` / `deserialize` を含む実行環境の要件であり、該当処理も実APIの存在を検査する。

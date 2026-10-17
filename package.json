@@ -66,7 +66,7 @@
     "test:benchmark:akinator": "npm run build && node scripts/run-akinator-memory-benchmark.mjs",
     "verify": "node scripts/verify.mjs",
     "verify:plan": "node scripts/verify.mjs --plan",
-    "test:verification": "node --test scripts/verification-contract.test.mjs scripts/agenticreplay-dependency.test.mjs"
+    "test:verification": "node --test scripts/verification-contract.test.mjs scripts/agenticreplay-dependency.test.mjs scripts/verification-capabilities.test.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",

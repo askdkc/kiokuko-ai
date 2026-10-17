@@ -12,6 +12,12 @@
 
 出力は標準／エラー出力と戻り値の合計をUTF-8で32 KiB以内に抑える。生のファイル記述子への出力も別の上限で監視する。POSIX supervisor は親の生存監視と OS の実際の親子関係から通常の子孫を終了する。SBCL が別プロセスグループを作る場合も対象にする。監視に必要な `/bin/ps` が使えない環境では Lisp 評価前に失敗する。任意のFFIや悪意ある daemon 化を封じる新たなOSサンドボックスではなく、ホストの権限・隔離を引き継ぐ。Windows のプロセス所有は未実装。
 
+## Rust 評価器との関係
+
+確認した既存 Rust 実装は `kiokuko-dsh/crates/guardrail` の `kiokuko-guardrail` で、opt-in の bounded TDD プロトコルを判定する限定 S 式評価器。DSH の guardrail adapter から配布済みバイナリを解決して `validate` / `check` を呼ぶ。汎用 Common Lisp の `defun`、状態更新、loop、ファイル操作を許可する処理系ではない。
+
+現時点の kiokuko-ai はこの Rust 評価器を依存・配布物・OpenCode dispatch に接続していない。`kiokuko_lisp` の既定は SBCL で、Rust への自動切替も、Rust から SBCL への fallback もない。`binary` は SBCL 互換の起動引数を受ける処理系の指定であり、Rust guardrail のパスを指定して互換にする機能ではない。SBCL の試験成功は Rust 経路の検証を意味しない。Rust を AI の必須実行経路とする統合は未完了であり、別の実行経路を増やす前に guard 判定と汎用評価の役割を明示する必要がある。
+
 ## 検証対応
 
 | 要件 | 永続試験 | 限界 |
@@ -20,9 +26,9 @@
 | process・localhost curl | 同上、実curlと隔離HTTPサーバー | 外部ネットワークや認証を使わない |
 | 状態保持とセッション分離・エラー後の回復 | 同上、`tests/unit/lisp.test.ts` | プラグイン再起動後には永続化しない |
 | 大量出力・タイムアウト後の回復 | 同上、worker試験 | 出力上限時は状態も破棄する |
-| 中断・タイムアウト後の実子消滅 | worker試験で実sleep子PIDのESRCHを確認 | 実ホストのUI中断と悪意あるdaemon化は別途検証が必要 |
+| 中断・タイムアウト後の実子消滅 | worker試験と実ホストinterrupt APIで実sleep子PIDのESRCHを確認 | 実ユーザーのUI操作と悪意あるdaemon化は別途検証が必要 |
 | disable/re-enable | 実ホストのネイティブコマンド・登録試験 | 実ユーザーのUI操作は模擬しない |
-| 権限拒否 | 実ホストのdenyセッションでファイル効果0 | 人間のask承認クリックは未測定 |
+| 権限拒否 | 実ホストのdenyセッションでモデルへのschema除外とファイル効果0 | 人間のask承認クリックは未測定 |
 | 引数変更・別セッション／ターン／呼出ID・受付再使用 | 登録済みcallbackと本物のhookを使う限定試験 | ホスト内部を書き換える攻撃の安全証明ではない |
 
 `npm run test:e2e:opencode:lisp`、または `npm run verify -- --profile host` で配布物を実ホストへ導入する。`OPENCODE_BIN` と SBCL を用意する。main profile でもSBCLを宣言された試験能力に含め、ない場合に黙って合格させない。

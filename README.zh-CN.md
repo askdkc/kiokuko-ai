@@ -97,6 +97,7 @@ MCP tool 是否调用由客户端和模型决定，因此不保证模型每一�
         { "action": "edit", "resource": "*", "effect": "allow" },
         { "action": "shell", "resource": "*", "effect": "allow" },
         { "action": "kiokuko_*", "resource": "*", "effect": "deny" },
+        { "action": "kiokuko_lisp", "resource": "*", "effect": "allow" },
         { "action": "external_directory", "resource": "*", "effect": "ask" }
       ]
     }

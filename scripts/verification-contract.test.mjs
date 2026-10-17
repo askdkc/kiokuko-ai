@@ -42,7 +42,7 @@ test('source, runtime, verification contract, archive or built artifact changes 
 });
 function fixture(checks){
  const root=mkdtempSync(path.join(tmpdir(),'verify-contract-fixture-'));mkdirSync(path.join(root,'scripts'));
- for(const f of ['verify.mjs','verification-contract.mjs','verification-reporter.mjs','verification-test-environment.mjs','verification-completion.mjs'])cpSync(new URL(f,import.meta.url),path.join(root,'scripts',f));
+ for(const f of ['verify.mjs','verification-contract.mjs','verification-capabilities.mjs','agenticreplay-dependency.mjs','verification-reporter.mjs','verification-test-environment.mjs','verification-completion.mjs'])cpSync(new URL(f,import.meta.url),path.join(root,'scripts',f));
  writeFileSync(path.join(root,'package.json'),'{"private":true,"type":"module"}');
  writeFileSync(path.join(root,'scripts/verification.json'),JSON.stringify({package:'fixture',profiles:['full'],checks,testExclusions:[]}));
  execFileSync('git',['init','-q'],{cwd:root});return root;

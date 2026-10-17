@@ -90,3 +90,14 @@ test('setup keeps comments inside existing plugin options and custom role regist
   for (const note of ['plugin', 'mode', 'registrations']) assert.ok(rendered.content.includes(`keep my ${note} note`));
   assert.equal(parse(rendered.content).plugins[0].options.orchestration.mode, 'ask');
 });
+
+test('existing custom workers may retain native Lisp denial while read-only roles cannot gain it', () => {
+  const worker = agentDefinition('gokiWorker', 'fixture/worker');
+  const withoutLisp = { ...worker, permissions: worker.permissions.filter(rule => rule.action !== 'kiokuko_lisp') };
+  const options = orchestrationOptionsSchema.parse({ customAgents: { gokiWorker: ['legacy-worker'] } });
+  assert.equal(buildExecutionCatalog(fixtureCatalogInput({ 'legacy-worker': withoutLisp }), options).candidates.find(c => c.agent === 'legacy-worker')?.unavailable, null);
+  const readonly = agentDefinition('zenki', 'fixture/planner');
+  const planner = { ...readonly, permissions: [...readonly.permissions, { action: 'kiokuko_lisp', resource: '*', effect: 'allow' }] };
+  const readonlyOptions = orchestrationOptionsSchema.parse({ customAgents: { zenki: ['unsafe-planner'] } });
+  assert.equal(buildExecutionCatalog(fixtureCatalogInput({ 'unsafe-planner': planner }), readonlyOptions).candidates.find(c => c.agent === 'unsafe-planner')?.unavailable, 'permissions_invalid');
+});

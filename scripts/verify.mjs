@@ -3,11 +3,12 @@ import { randomUUID } from 'node:crypto';
 import { validCompletion } from './verification-completion.mjs';
 import { spawn, execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { accessSync, constants, realpathSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { digest, sourceDigest, treeDigest, verificationPlan, validateNodeResult, evidenceCurrent } from './verification-contract.mjs';
+import { resolveVerificationExecutable } from './verification-capabilities.mjs';
 const root=path.resolve(import.meta.dirname,'..');
 const {values}=parseArgs({options:{profile:{type:'string'},plan:{type:'boolean'},output:{type:'string'},status:{type:'string'}}});
 const contractBytes=readFileSync(path.join(root,'scripts/verification.json'));
@@ -56,20 +57,9 @@ async function missingCapabilities(check) {
     if(capability==='sqlite-vec'){try{require.resolve('sqlite-vec');}catch{missing.push(capability);}continue;}
     if(capability==='dsh-native'){if(!existsSync(path.join(baseEnv.KIOKUKO_DSH_PACKAGE_ROOT??'','@deepseek-ai/dsh-agent-loop/lib/index.js')))missing.push(capability);continue;}
     const declaration=contract.capabilities?.[capability];
-    const binary=declaration?(baseEnv[declaration.environment]??declaration.binary):capability;
-    const candidates=path.isAbsolute(binary)?[binary]:(baseEnv.PATH??'').split(path.delimiter).map(dir=>path.join(dir,process.platform==='win32'?binary+'.cmd':binary));
-    let location=candidates.find(file=>{try{accessSync(file,constants.X_OK);return true;}catch{return false;}});
-    if(!location){missing.push(capability);continue;}
-    if(capability==='opencode'){try{const {resolveOpenCodeBinary}=await import('./run-opencode-host-e2e.mjs');location=await resolveOpenCodeBinary(location);}catch{missing.push(capability);continue;}}
-    let recorderCompatible;
-    if(capability==='agenticreplay-managed')try{
-      const dependency=await import('./agenticreplay-dependency.mjs');
-      const recorder=dependency.managedAgenticReplay(root);
-      recorderCompatible=version=>dependency.isCompatibleRecorderVersion(version,recorder.range);
-    }catch{missing.push(capability);continue;}
-    const result=await command([location,'--version'],baseEnv,`capability-${check.id}-${capability}`);
-    if(result.exitCode!==0||recorderCompatible&&!recorderCompatible(result.stdout.trim())||declaration?.version&&result.stdout.trim()!==declaration.version||declaration?.versionPattern&&!new RegExp(declaration.versionPattern).test(result.stdout.trim())){missing.push(capability);continue;}
-    if(declaration){baseEnv[declaration.environment]=realpathSync(location);if(capability==='agenticreplay-managed')baseEnv.AGENTICREPLAY_BIN=realpathSync(location);}
+    let location;
+    try{location=await resolveVerificationExecutable(capability,{root,environment:baseEnv,declaration});}catch{missing.push(capability);continue;}
+    if(declaration){baseEnv[declaration.environment]=location;if(capability==='agenticreplay-managed')baseEnv.AGENTICREPLAY_BIN=location;}
   }
   return missing;
 }

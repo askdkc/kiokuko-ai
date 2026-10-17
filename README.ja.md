@@ -117,6 +117,7 @@ MCP toolの呼び出しはclientとモデルが決めるため、モデルが毎
         { "action": "edit", "resource": "*", "effect": "allow" },
         { "action": "shell", "resource": "*", "effect": "allow" },
         { "action": "kiokuko_*", "resource": "*", "effect": "deny" },
+        { "action": "kiokuko_lisp", "resource": "*", "effect": "allow" },
         { "action": "external_directory", "resource": "*", "effect": "ask" }
       ]
     }

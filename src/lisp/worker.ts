@@ -50,23 +50,25 @@ export class LispWorker {
     this.wire = this.child.stdio[3] as Duplex;
     let ready: (() => void) | undefined, fail: ((error: Error) => void) | undefined, rawBytes = 0;
     const started = new Promise<void>((resolve, reject) => { ready = resolve; fail = reject; });
-    const broken = () => { const error = new Error('lisp_runtime_unavailable_or_exited'); fail?.(error); this.pending?.reject(error); };
+    const broken = (reason = 'lisp_runtime_unavailable_or_exited') => { const error = new Error(reason); fail?.(error); this.pending?.reject(error); };
     this.exit = new Promise(resolve => { this.child!.once('close', () => { broken(); resolve(); }); });
-    this.child.once('error', broken);
+    this.child.once('error', () => broken());
     for (const stream of [this.child.stdout, this.child.stderr]) stream!.on('data', (chunk: Buffer) => {
       rawBytes += chunk.length;
-      if (rawBytes > 8192) { broken(); void this.stop(); }
+      if (rawBytes > 8192) { broken('lisp_output_limit_state_reset'); void this.stop(); }
     });
-    this.wire.on('error', broken);
+    this.wire.on('error', () => broken());
     this.wire.on('data', (chunk: Buffer) => {
       this.buffer += chunk.toString('utf8');
-      if (this.buffer.length > 128 * 1024) { broken(); void this.stop(); return; }
+      if (this.buffer.length > 128 * 1024) { broken('lisp_output_limit_state_reset'); void this.stop(); return; }
       for (let newline; (newline = this.buffer.indexOf('\n')) >= 0;) {
         const line = this.buffer.slice(0, newline); this.buffer = this.buffer.slice(newline + 1);
         if (line === 'ready' && ready) { ready(); ready = undefined; fail = undefined; continue; }
         const match = /^(\d+) (ok|error|output_limit) ([A-F0-9]*)$/u.exec(line);
         if (!match || !this.pending || Number(match[1]) !== this.pending.id || match[3]!.length % 2) { broken(); void this.stop(); return; }
-        this.pending.resolve({ status: match[2] as LispResult['status'], output: Buffer.from(match[3]!, 'hex').toString('utf8') });
+        const output = Buffer.from(match[3]!, 'hex').toString('utf8');
+        if (Buffer.byteLength(output) > 32 * 1024) { broken('lisp_output_limit_state_reset'); void this.stop(); return; }
+        this.pending.resolve({ status: match[2] as LispResult['status'], output });
       }
     });
     const cancelled = () => fail?.(new Error('lisp_start_cancelled'));

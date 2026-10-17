@@ -34,8 +34,9 @@ test('an incompatible release, missing executable, or mismatched lock and instal
   }
 });
 
-test('an exact version declaration does not replace a compatibility range', t => {
-  assert.throws(() => managedAgenticReplay(fixture(t, { range: '0.1.6', locked: '0.1.6' })));
+test('an exact dependency selector can identify a reproducible installed recorder', t => {
+  const selected = managedAgenticReplay(fixture(t, { range: '0.1.6', locked: '0.1.6' }));
+  assert.equal(selected.version, '0.1.6');
 });
 
 test('a compatible version still fails when the recorder omits required recording behavior', t => {

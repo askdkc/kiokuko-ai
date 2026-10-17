@@ -127,6 +127,7 @@ export const KiokukoPlugin: Plugin.Plugin = {
       const event = v2EventSession(raw);
       if (!event || (event.directory !== undefined && event.directory !== directory)) return;
       learning.observeEvent(event);
+      if (event.type === 'session.deleted') void lisp.ended(event.sessionId).catch(() => warn('lisp_session_cleanup_failed'));
       if (event.type === 'session.execution.succeeded') {
         // wait() is observational and may not be abortable in 2.0.18.
         void ctx.session.wait({ sessionID: event.sessionId }).then(() => {

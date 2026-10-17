@@ -45,7 +45,10 @@ export function createApprovedReplayMemoryStore(db: SqliteDatabase, workspace: s
         if(duplicate)return;
         db.prepare('INSERT INTO replay_memory_content VALUES(?,?,?)').run(workspace,contentHash,approvalKey);
         db.prepare('INSERT INTO replay_memories VALUES(?,?,?,?,?,?,?,?,?)').run(approvalKey, workspace, owned.source.taskId, owned.source.sessionId, owned.proposalId, owned.revision, digest, JSON.stringify(owned), new Date().toISOString());
-        for (const [kind, terms] of [['tag', owned.tags], ['keyword', owned.keywords]] as const) {
+        // Final human corrections can introduce conditions absent from extracted keywords.
+        // Index the approved text without changing its reviewed revision or digest.
+        const correctedTerms = owned.findings.filter(finding => finding.basis === 'user_corrected').map(finding => finding.text);
+        for (const [kind, terms] of [['tag', owned.tags], ['keyword', [...correctedTerms, ...owned.keywords]]] as const) {
           for (const term of [...new Set(terms.flatMap(t => { const parsed=parseRetrievalQuery(t); return [t.toLowerCase(),...parsed.lexicalTerms,...parsed.substringTerms]; }).filter(t => t.length > 0 && t.length <= 64))].slice(0,256)) {
             db.prepare('INSERT INTO replay_memory_terms VALUES(?,?,?)').run(approvalKey, term, kind);
           }

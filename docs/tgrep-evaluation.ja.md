@@ -78,3 +78,5 @@ node scripts/evaluate-tgrep.mjs \
 - [固定版の上流README](https://github.com/microsoft/tgrep/blob/v1.0.5/README.md)、[サーバー実装](https://github.com/microsoft/tgrep/blob/v1.0.5/tgrep-cli/src/serve.rs)。loopback bindと検索・状態取得のJSON-RPC実装を確認した。
 
 詳細な各回の時間・出力bytes・一致digest・状態情報は [測定JSON](./tgrep-evaluation.json) に記録。通常のアプリケーションテストは今回変更していない製品経路を検証するため未実施。スクリプトの構文確認と実バイナリでの比較実行が今回の検証範囲。
+
+再実行にはripgrep（`rg`）も必要です。main検証契約でripgrep能力を宣言し、CIでOSパッケージを準備します。既に配置済みのバイナリは `KIOKUKO_TEST_RG=/absolute/path/to/rg` で指定でき、評価器・API fixtureとも同じパスを使います。バージョン番号は限定せず、検索結果の形式と挙動を検証します。

@@ -6,26 +6,31 @@ import { spawnNodeBunChild } from '../fixtures/node-bun-child.js';
 
 const options = { cwd: tmpdir(), env: process.env };
 
-test('Node Bun adapter rejects early stdin closure instead of emitting an uncaught EPIPE', { timeout: 5_000 }, async t => {
-  const child = spawnNodeBunChild([process.execPath, '-e', `
-    require('node:fs').closeSync(0);
-    process.stdout.write('stdin-closed');
-    setInterval(() => {}, 1000);
-  `], options);
-  t.after(async () => { child.kill(); await child.exited; });
-  const reader = child.stdout.getReader();
-  try {
-    const ready = await reader.read();
-    assert.equal(Buffer.from(ready.value!).toString(), 'stdin-closed');
-  } finally { reader.releaseLock(); }
+for (const size of [1, 65536]) {
+  test(`Node Bun adapter rejects early stdin closure during write and EOF (${size === 1 ? 'small' : 'large'} input)`, { timeout: 5_000 }, async t => {
+    const child = spawnNodeBunChild([process.execPath, '-e', `
+      require('node:fs').closeSync(0);
+      process.stdout.write('stdin-closed');
+      setInterval(() => {}, 1000);
+    `], options);
+    t.after(async () => { child.kill(); await child.exited; });
+    const reader = child.stdout.getReader();
+    try {
+      const ready = await reader.read();
+      assert.equal(Buffer.from(ready.value!).toString(), 'stdin-closed');
+    } finally { reader.releaseLock(); }
 
-  // A short write may be accepted into Node's local buffer before peer closure
-  // propagates. Cross the writable high-water mark to await the pipe outcome.
-  await assert.rejects(child.stdin.write('request after peer closure'.repeat(65536)), { code: 'EPIPE' });
-  await assert.rejects(child.stdin.end(), { code: 'ERR_INVALID_STATE' });
-  child.kill();
-  assert.equal(await child.exited, 1);
-});
+    // Writable.toWeb may report a synchronous pipe failure on close even when a
+    // write crosses the high-water mark. Hooks await both write and EOF; require
+    // that complete operation to surface EPIPE without an uncaught stream error.
+    await assert.rejects(async () => {
+      await child.stdin.write('request after peer closure'.repeat(size));
+      await child.stdin.end();
+    }, { code: 'EPIPE' });
+    child.kill();
+    assert.equal(await child.exited, 1);
+  });
+}
 
 test('Node Bun adapter preserves ordered input and EOF and settles after child stdio closes', { timeout: 5_000 }, async t => {
   const child = spawnNodeBunChild([process.execPath, '-e', `

@@ -47,7 +47,7 @@ export function agentDefinition(role: ExecutionRole, model: string) {
   return {
     description: `Kiokuko ${role}: ${model}`,
     mode: 'subagent' as const, model,
-    system: `You are a delegated Kiokuko ${role}. ${rolePrompt[role]} The parent owns the run, leases, and all Kiokuko MCP writes. Do not call task_prepare or other Kiokuko tools. Do not start another orchestration or ask the user again. Follow only the supplied approved scope, role contract and selected local Skills. On failure return evidence to the parent without changing models.`,
+    system: `You are a delegated Kiokuko ${role}. ${rolePrompt[role]} The parent owns the run, leases, and all Kiokuko MCP writes. Do not call task_prepare or other Kiokuko MCP tools. Do not start another orchestration or ask the user again. Follow only the supplied approved scope, role contract and selected local Skills. On failure return evidence to the parent without changing models.`,
     permissions: rolePermission(role),
   };
 }
@@ -89,15 +89,19 @@ const permissionDenialSchema = z.object({
 
 function effectiveRolePermissions(permissions: unknown, role: ExecutionRole): unknown[] | null {
   if (!Array.isArray(permissions)) return null;
-  const expected = rolePermission(role);
-  const expectedHash = canonicalContentHash(expected);
-  // The role's wildcard denial resets inherited defaults. OpenCode may repeat
-  // the block and append restrictions; no later grant may expand this envelope.
-  for (let index = permissions.length - expected.length; index >= 0; index -= 1) {
-    if (canonicalContentHash(permissions.slice(index, index + expected.length)) !== expectedHash) continue;
-    const restrictions = permissions.slice(index + expected.length);
-    return restrictions.every(rule => permissionDenialSchema.safeParse(rule).success)
-      ? permissions.slice(index) : null;
+  const current = rolePermission(role);
+  // Lisp is provided to managed workers; existing custom workers may keep
+  // their native denial without becoming unavailable after an upgrade.
+  const variants = role === 'gokiWorker' ? [current, current.filter(rule => rule.action !== 'kiokuko_lisp')] : [current];
+  for (const expected of variants) {
+    const expectedHash = canonicalContentHash(expected);
+    // The wildcard denial resets inherited defaults. Only further denials may follow.
+    for (let index = permissions.length - expected.length; index >= 0; index -= 1) {
+      if (canonicalContentHash(permissions.slice(index, index + expected.length)) !== expectedHash) continue;
+      const restrictions = permissions.slice(index + expected.length);
+      return restrictions.every(rule => permissionDenialSchema.safeParse(rule).success)
+        ? permissions.slice(index) : null;
+    }
   }
   return null;
 }
