@@ -40,7 +40,11 @@ environment and does not silently discard that override.
 ## Setup
 
 Interactive `kiokuko-ai setup` offers AgenticReplay installation and separately asks
-before editing the displayed absolute shell configuration path. The shorthand is:
+before editing the displayed absolute shell configuration path. An unrelated
+registered-project instruction repair failure does not suppress this offer;
+setup still reports that failure. A working recorder and the current managed
+alias are reused without asking again, with an explicit confirmation that they
+are already configured. The shorthand is:
 
 ```sh
 alias agenticreplay-opencode='kiokuko-ai trace record --'

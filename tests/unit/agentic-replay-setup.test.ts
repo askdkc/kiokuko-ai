@@ -196,6 +196,7 @@ test('repeated setup recognizes a working AgenticReplay CLI and existing managed
     checkInstalled: async () => {}, spawnInstall: async () => { assert.fail('must not reinstall'); },
   });
   assert.deepEqual(result, { accepted: true, installed: 'already_installed', alias: 'already_present' });
-  assert.equal(writes(), '');
+  assert.match(writes(), /AgenticReplay.*already configured; reusing them/u);
+  assert.doesNotMatch(writes(), /\[y\/N\]/u);
   assert.equal(await readFile(rc, 'utf8'), original);
 });

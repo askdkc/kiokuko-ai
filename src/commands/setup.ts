@@ -46,7 +46,6 @@ import {
 import {
   listRegisteredProjectLocations,
   refreshRegisteredProjectAgentFiles,
-  summarizeProjectAgentRefresh,
   type ProjectAgentRefreshResult,
   type RefreshRegisteredProjectOptions,
   type RegisteredProjectLocation,
@@ -394,8 +393,9 @@ export async function runSetupFlow<T extends { client: 'opencode'; projectAgentF
     }
     (result as T & { appliedMigrations: number[] }).appliedMigrations = [...appliedMigrations].sort((left, right) => left - right);
   }
-  if (interactive && options.optionalPrompts !== false && options.dryRun !== true
-    && summarizeProjectAgentRefresh(result.projectAgentFiles).ok) {
+  // Replay enablement is independent of registered-project instruction repairs.
+  // Their failures remain in the setup result and must not hide this opt-in.
+  if (interactive && options.optionalPrompts !== false && options.dryRun !== true) {
     await enableAgenticReplayIntegration({
       interactive:true,
       environment:setupProcessEnvironment,

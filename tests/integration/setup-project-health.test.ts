@@ -214,9 +214,41 @@ test('repeated and embedding dependency setup preserve completed choices without
     });
     assert.equal(checks, optionalPrompts ? 1 : 0);
   }
-  assert.equal(text, '');
+  assert.match(text, /AgenticReplay.*already configured; reusing them/u);
+  assert.doesNotMatch(text, /\[y\/N\]/u);
   assert.equal(parse(await readFile(configPath, 'utf8')).mcp.servers.kiokuko.environment.KIOKUKO_SKILL_DISCOVERY, 'community');
 });
+
+for (const shell of ['zsh', 'bash']) {
+  test(`setup offers independent replay integration despite a project repair failure (${shell})`, async t => {
+    const { project, options } = await fixture(t);
+    const file = path.join(project, 'AGENTS.md');
+    const original = `${BEGIN_MARKER}\nHuman instructions with incomplete managed markers.\n`;
+    await writeFile(file, original);
+    const input = new PassThrough() as PassThrough & { isTTY: boolean };
+    const output = new PassThrough() as PassThrough & { isTTY: boolean };
+    input.isTTY = true; output.isTTY = true;
+    t.after(() => { input.destroy(); output.destroy(); });
+    let transcript = '';
+    output.on('data', chunk => {
+      const text = chunk.toString(); transcript += text;
+      if (text.includes('[y/N]')) setImmediate(() => input.write('y\n'));
+    });
+    let checks = 0;
+    const result = await runSetupFlow({
+      environment: { env: { ...options.env, SHELL: `/bin/${shell}` } },
+      standardSkills: false, skillDiscoveryMode: 'off', input, output,
+    }, {
+      agenticReplayCheckInstalled: async () => { checks++; },
+      agenticReplaySpawnInstall: async () => { assert.fail('working recorder must not be reinstalled'); },
+    });
+    assert.equal(summarizeProjectAgentRefresh(result.projectAgentFiles).ok, false);
+    assert.equal(await readFile(file, 'utf8'), original);
+    assert.equal(checks, 1);
+    assert.match(transcript, /Enable AgenticReplay recording support/u);
+    assert.equal(await readFile(path.join(options.env.HOME, `.${shell}rc`), 'utf8'), agenticreplayAliasBlock());
+  });
+}
 
 for (const answer of ['y', 'yes', 'n', '', 'EOF'] as const) {
   test(`interactive setup asks before recreating missing instructions: ${JSON.stringify(answer)}`, async t => {

@@ -198,6 +198,7 @@ export async function enableAgenticReplayIntegration(options: AgenticReplayEnabl
         // Absent or broken CLI still needs the ordinary opt-in install flow.
     }
     if (alreadyInstalled && await hasCurrentAgenticReplayAlias(shellRcPath(options.platform, options.environment))) {
+        output.write('AgenticReplay recorder and managed agenticreplay-opencode alias are already configured; reusing them.\n');
         return { accepted: true, installed: 'already_installed', alias: 'already_present' };
     }
     const prompt = createInterface({ input, output });
