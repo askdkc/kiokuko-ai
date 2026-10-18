@@ -55,7 +55,8 @@ export const KiokukoPlugin: Plugin.Plugin = {
         for (const value of [...valid].reverse()) for (const entry of Array.isArray(value.entries) ? value.entries : []) {
           if (entry && typeof entry === 'object') unique.set(String((entry as Record<string, unknown>).entryId), entry);
         }
-        return renderOpenCodeLearningContext({ entries: [...unique.values()], handoff: valid[0]?.handoff ?? null });
+        return renderOpenCodeLearningContext({ entries: [...unique.values()], handoff: valid[0]?.handoff ?? null,
+          relationDelivery: valid.length === 1 ? valid[0]?.relationDelivery : undefined });
       },
     }, warn);
     try {

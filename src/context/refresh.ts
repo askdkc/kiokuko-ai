@@ -9,6 +9,7 @@ import { readContextRunRetrievalState } from './run-state.js';
 import { queryScopedContextTransaction, type ScopedContextResult } from './scoped-broker.js';
 import { recordTaskContextRevisionInTransaction } from './revisions.js';
 import { memoryApplicationProject, replayMemoryOperation, rememberMemoryOperation } from './memory-application.js';
+import { markLegacyModelContext } from '../memory/relation-delivery.js';
 
 export const contextRefreshSchema = z.object({
   cwd: z.string().min(1), runId: z.string().min(1).max(256), requestId: z.string().min(1).max(256),
@@ -29,7 +30,7 @@ export async function refreshTaskContext(database: SqliteDatabase, raw: unknown)
   assertCapabilityCatalogBinding(state.run.metadata, input.capabilities);
   const digest = canonicalContentHash({ kind: 'refresh', ...input, capabilities: capabilityCatalogDigest(input.capabilities) });
   const old = replayMemoryOperation<RefreshResult>(database, input, digest);
-  if (old) return old;
+  if (old) return markLegacyModelContext(old);
   const assertCurrent = () => {
     const revision = database.prepare('SELECT MAX(context_revision) AS revision FROM task_context_revisions WHERE run_id = ?')
       .get<{ revision: number }>(input.runId)?.revision;
@@ -56,7 +57,7 @@ export async function refreshTaskContext(database: SqliteDatabase, raw: unknown)
     // A concurrent identical request may have committed while retrieval awaited.
     if (error instanceof KiokukoError && error.code === 'CONFLICT') {
       const replay = replayMemoryOperation<RefreshResult>(database, input, digest);
-      if (replay) return replay;
+      if (replay) return markLegacyModelContext(replay);
     }
     throw error;
   }

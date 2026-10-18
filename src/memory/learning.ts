@@ -8,6 +8,8 @@ import { canonicalContentHash, canonicalJson } from '../serialization/validate.j
 import { containsPrivateLearningData } from './learning-safety.js';
 import { resolveProjectWorkspaceReadOnly, GLOBAL_WORKSPACE } from './workspaces.js';
 import { recordEntryInTransaction, readEntry } from './entries.js';
+import { DEFAULT_CONTEXT_CHARACTERS } from './context-budget.js';
+import { attachRelationDelivery, configuredRelationDeliveryOptions, legacyRelationDelivery } from './relation-delivery.js';
 
 const id = z.string().min(1).max(256).regex(/^[\w.:/-]+$/u);
 const text = z.string().trim().max(2048).refine(value => !/[\p{Cc}\p{Cf}]/u.test(value.replaceAll('\n', '')));
@@ -26,6 +28,7 @@ export const memoryObserveSchema = z.object({
 }).strict().refine(value => value.source.tombstone || value.summary.length > 0, 'A live observation needs a public summary');
 export const memoryContextSchema = z.object({ cwd, query: z.string().max(500).default(''),
   tags: z.array(z.string().min(1).max(64)).max(20).default([]), sessionId: id.optional(), limit: z.number().int().min(1).max(50).default(10),
+  maxContextChars: z.number().int().min(1).max(100_000).default(DEFAULT_CONTEXT_CHARACTERS),
 }).strict();
 export const memoryImproveSchema = z.object({ cwd, limit: z.number().int().min(1).max(200).default(100) }).strict();
 type Observation = z.infer<typeof memoryObserveSchema>;
@@ -112,18 +115,18 @@ export async function memoryContext(database: SqliteDatabase, raw: unknown) {
       const left = observationFromRow(a), right = observationFromRow(b);
       return Number(right.kind === 'complaint') - Number(left.kind === 'complaint');
     });
-    let remaining = 3500;
+    let remaining = input.maxContextChars;
     const items = selected.slice(0, input.limit).flatMap(row => {
       const value = observationFromRow(row);
       if (!row.entry_id) return [];
       const entry = readEntry(database, { workspace: project.workspace, entryId: row.entry_id });
-      const item = { entryId: row.entry_id, revision: entry.revision, kind: value.kind, summary: value.summary.slice(0, 800), tags: entry.tags,
+      const item = { entryId: row.entry_id, workspace: project.workspace, revision: entry.revision, kind: value.kind, summary: value.summary.slice(0, 800), tags: entry.tags,
         ...(value.issue ? { issue: value.issue.slice(0, 400) } : {}), ...(value.prevention ? { prevention: value.prevention.slice(0, 400) } : {}),
         confidence: value.verification === 'passed' && value.actions.some(action => action.kind === 'test' && action.outcome === 'passed') ? 0.65 : 0.3, verification: value.verification,
         verificationProvenance: value.verification === 'unknown' ? 'unknown' : 'declared', scope: 'project', sourceEventIds: [row.digest],
         actions: value.actions.slice(0, 6).map(action => ({ ...action, summary: action.summary.slice(0, 300) })),
         source: { ...value.source, eventIds: value.source.eventIds.slice(0, 6), eventId: value.eventId }, untrusted: true };
-      const size = JSON.stringify(item).length;
+      const size = Array.from(JSON.stringify(item)).length;
       if (size > remaining) return [];
       remaining -= size;
       return [item];
@@ -143,7 +146,7 @@ export async function memoryContext(database: SqliteDatabase, raw: unknown) {
         const entry = readEntry(database, { workspace, entryId: row.entry_id });
         if (entry.status === 'superseded' || requestedTags.some(tag => !entry.tags.includes(tag))
           || (tokens.length && !tokens.some(token => `${entry.title} ${entry.body} ${entry.tags.join(' ')}`.toLowerCase().includes(token)))) return [];
-        return [{ entryId: entry.id, revision: entry.revision, kind: entry.kind, title: entry.title, summary: entry.body.slice(0, 800),
+        return [{ entryId: entry.id, workspace, revision: entry.revision, kind: entry.kind, title: entry.title, summary: entry.body.slice(0, 800),
           tags: entry.tags, confidence: entry.confidence, verification: 'unknown', verificationProvenance: 'unknown',
           scope: workspace === GLOBAL_WORKSPACE ? 'global' : 'project', sourceEventIds: entry.provenance.evidenceIds ?? [], untrusted: true }];
       }).slice(0, maximum);
@@ -152,12 +155,37 @@ export async function memoryContext(database: SqliteDatabase, raw: unknown) {
       .all<{ entry_id: string }>().flatMap(row => {
         const entry = readEntry(database, { workspace: GLOBAL_WORKSPACE, entryId: row.entry_id });
         return entry.status === 'superseded' || requestedTags.some(tag => !entry.tags.includes(tag))
-          || (tokens.length && !tokens.some(token => `${entry.title} ${entry.body}`.toLowerCase().includes(token))) ? [] : [{ entryId: entry.id, revision: entry.revision, kind: entry.kind, title: entry.title, summary: entry.body.slice(0, 300),
+          || (tokens.length && !tokens.some(token => `${entry.title} ${entry.body}`.toLowerCase().includes(token))) ? [] : [{ entryId: entry.id, workspace: GLOBAL_WORKSPACE, revision: entry.revision, kind: entry.kind, title: entry.title, summary: entry.body.slice(0, 300),
           tags: entry.tags, confidence: entry.confidence, verification: 'unknown', verificationProvenance: 'unknown', scope: 'global', sourceEventIds: entry.provenance.evidenceIds ?? [], source: entry.provenance.reference, untrusted: true }];
       }).slice(0, 2);
     const approved = createApprovedReplayMemoryStore(database, project.workspace)
-      .query(input.query, input.tags, input.limit).map(approvedReplayContext);
-    return { available: true, accepted: true, recorded: false, workMayContinue: true as const, repositoryId: project.repositoryId, entries: [...approved, ...items, ...routines, ...principles].slice(0, input.limit), items, routines, principles, handoff, warnings: [], diagnostics: [], truncated: selected.length > items.length };
+      .query(input.query, input.tags, input.limit).map(proposal => {
+        const preview = approvedReplayContext(proposal);
+        const mapped = database.prepare('SELECT r.entry_id, r.entry_revision FROM replay_memories m JOIN replay_memory_entries r ON r.memory_key=m.approval_key WHERE m.workspace=? AND m.proposal_id=? AND m.revision=? ORDER BY m.created_at DESC LIMIT 1')
+          .get<{ entry_id: string; entry_revision: number }>(project.workspace, proposal.proposalId, proposal.revision);
+        return mapped ? { ...preview, proposalId: preview.entryId, proposalRevision: preview.revision,
+          entryId: mapped.entry_id, revision: mapped.entry_revision, workspace: project.workspace } : preview;
+      });
+    const candidates = [...approved, ...items, ...routines, ...principles];
+    const entries = candidates.slice(0, input.limit);
+    const body = () => {
+      const ids = new Set(entries.map(entry => entry.entryId));
+      return { entries, items: items.filter(entry => ids.has(entry.entryId)), routines: routines.filter(entry => ids.has(entry.entryId)),
+        principles: principles.filter(entry => ids.has(entry.entryId)), handoff };
+    };
+    let budgetOmitted = false;
+    while (Array.from(JSON.stringify(body())).length > input.maxContextChars) {
+      budgetOmitted = true;
+      if (entries.length) entries.pop();
+      else throw new KiokukoError('VALIDATION_ERROR', 'Learning context budget cannot fit its explicit body envelope');
+    }
+    const selectionOmissions = [...(budgetOmitted ? ['body_budget' as const] : []),
+      ...(candidates.length >= input.limit ? ['item_limit' as const] : [])];
+    const known = entries.every(entry => database.prepare('SELECT 1 present FROM entries WHERE id=?').get(entry.entryId));
+    const relationDelivery = known ? attachRelationDelivery(database, { items: entries }, { selectionOmissions }).relationDelivery
+      : legacyRelationDelivery(configuredRelationDeliveryOptions({ selectionOmissions }));
+    return { available: true, accepted: true, recorded: false, workMayContinue: true as const, repositoryId: project.repositoryId,
+      ...body(), relationDelivery, warnings: [], diagnostics: [], truncated: budgetOmitted || selected.length > items.length };
   } catch (error) { return { ...learningFailure(error), available: false, entries: [], items: [], handoff: null }; }
 }
 

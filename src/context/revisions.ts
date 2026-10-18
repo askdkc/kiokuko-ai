@@ -1,4 +1,5 @@
 import { snapshotProfileHints, hydrateProfileHints } from '../akinator/profile-hint-snapshot.js';
+import { configuredRelationDeliveryOptions, legacyRelationDelivery } from '../memory/relation-delivery.js';
 import type { SqliteDatabase, SqliteRow } from '../db/adapter.js';
 import { withImmediateTransaction } from '../db/transaction.js';
 import { KiokukoError } from '../errors.js';
@@ -97,6 +98,13 @@ export function readTaskContextRevisions(database: SqliteDatabase, input: {
     LIMIT ?
   `).all<RevisionRow>(input.runId, after, limit).map(row => {
     const revision = parseRevision(row);
-    return { ...revision, context: hydrateProfileHints(database, revision.context, input.runId) };
+    const context = hydrateProfileHints(database, revision.context, input.runId);
+    const memory = context.context;
+    if (typeof memory === 'object' && memory !== null && !Array.isArray(memory)
+      && Array.isArray(memory.items) && !Object.hasOwn(memory, 'relationDelivery')) {
+      return { ...revision, context: { ...context, context: { ...memory,
+        relationDelivery: legacyRelationDelivery(configuredRelationDeliveryOptions()) as unknown as JsonObject } } };
+    }
+    return { ...revision, context };
   });
 }

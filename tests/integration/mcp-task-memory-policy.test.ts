@@ -563,7 +563,7 @@ test('requestId identifies one logical task request and conflicts on changed bou
     const exactRetry = await prepareOpenCodeTask(database, request);
     const normalizedDefaultRetry = await prepareOpenCodeTask(database, {
       ...request,
-      maxContextChars: 8_000,
+      maxContextChars: 16_000,
     });
     const distinctRequest = await prepareOpenCodeTask(database, {
       ...request,

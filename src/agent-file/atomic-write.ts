@@ -480,7 +480,8 @@ export async function readPendingAtomicMutation(
   if (match === undefined) throw new KiokukoError('INTEGRITY_ERROR', 'Atomic quarantine match vanished');
   const artifactPath = path.join(directory, match.name);
   const artifact = await readArtifactInBoundDirectory(artifactPath, parent, containmentRoot);
-  if (artifact === undefined) throw changedAfterPlanning(artifactPath);
+  // A peer may finish cleanup after readdir. No artifact remains to bind; callers must reobserve the target.
+  if (artifact === undefined) return undefined;
   if (artifact.linkCount !== 1n) {
     throw new KiokukoError(
       'SECURITY_REJECTION',

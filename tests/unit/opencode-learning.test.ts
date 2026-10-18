@@ -231,9 +231,9 @@ test('failed current recall does not restore earlier request memory', async t =>
 });
 
 test('bounded context preserves complete source identities and does not mutate caller data', () => {
-  const input = { items: [{ source: 'event-a', summary: 'A'.repeat(3000) }, { source: 'event-b', summary: 'B'.repeat(3000) }],
+  const input = { items: [{ entryId: 'entry-a', source: 'event-a', summary: 'A'.repeat(3000) }, { entryId: 'entry-b', source: 'event-b', summary: 'B'.repeat(3000) }],
     handoff: { summary: 'handoff', source: 'event-c' }, principles: [] };
-  const context = renderOpenCodeLearningContext(input)!;
+  const context = renderOpenCodeLearningContext(input, 5000)!;
   assert.ok(context.length <= 5000);
   assert.deepEqual(JSON.parse(context).entries.map((item: { source: string }) => item.source), ['event-a']);
   assert.equal(input.items.length, 2);

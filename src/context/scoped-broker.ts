@@ -1,3 +1,5 @@
+import { attachRelationDelivery, type RelationDelivery } from '../memory/relation-delivery.js';
+import { DEFAULT_CONTEXT_CHARACTERS } from '../memory/context-budget.js';
 import type { SqliteDatabase } from '../db/adapter.js';
 import { KiokukoError } from '../errors.js';
 import { canonicalContentHash, compareCanonicalStrings } from '../serialization/validate.js';
@@ -26,7 +28,7 @@ import type { PreparedSemanticQuery } from '../embedding/types.js';
 import type { HybridSearchRuntime } from '../memory/hybrid-retrieval.js';
 
 export const SCOPED_CONTEXT_POLICY_VERSION = 'context-ranking-v6' as const;
-export const SCOPED_CONTEXT_DEFAULT_CHARACTER_BUDGET = 8_000;
+export const SCOPED_CONTEXT_DEFAULT_CHARACTER_BUDGET = DEFAULT_CONTEXT_CHARACTERS;
 export const SCOPED_CONTEXT_MAX_CHARACTER_BUDGET = 100_000;
 
 export interface ScopedContextQuery {
@@ -76,6 +78,7 @@ export interface ScopedContextItem {
 }
 
 export interface ScopedContextResult {
+  relationDelivery?: RelationDelivery;
   project: ResolvedProjectWorkspace | null;
   taskProfileHash: string;
   queryHash: string;
@@ -848,8 +851,9 @@ function persistPreparedScopedContext(
         assertBeforePersist();
         assertPreparedScopedState(database, prepared);
       }
-      afterPersist?.(prepared.result);
-      return prepared.result;
+      const result = attachRelationDelivery(database, prepared.result);
+      afterPersist?.(result);
+      return result;
     });
   }
   const request = prepared.pendingDelivery;
@@ -864,12 +868,12 @@ function persistPreparedScopedContext(
       database,
       { ...request, deliveryId: scopedDeliveryId(request) },
     );
-    const result = {
+    const result = attachRelationDelivery(database, {
       ...prepared.result,
       items: storedScopedItems(database, delivery),
       deliveryId: delivery.deliveryId,
       truncated: delivery.truncated,
-    };
+    });
     afterPersist?.(result);
     return result;
   });

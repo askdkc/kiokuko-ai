@@ -1,3 +1,5 @@
+import { attachRelationDelivery, type RelationDelivery } from '../memory/relation-delivery.js';
+import { DEFAULT_CONTEXT_CHARACTERS } from '../memory/context-budget.js';
 import type { SqliteDatabase } from '../db/adapter.js';
 import { KiokukoError } from '../errors.js';
 import { withImmediateTransaction } from '../db/transaction.js';
@@ -38,7 +40,7 @@ import type { ResolvedProjectWorkspace } from '../memory/workspaces.js';
 export const CONTEXT_BROKER_POLICY_VERSION = `${CONTEXT_RANKING_VERSION}+${RECOMMENDATION_POLICY_VERSION}` as const;
 export const CONTEXT_BROKER_DEFAULT_LIMIT = 20;
 export const CONTEXT_BROKER_MAX_LIMIT = 100;
-export const CONTEXT_BROKER_DEFAULT_CHARACTER_BUDGET = 8_000;
+export const CONTEXT_BROKER_DEFAULT_CHARACTER_BUDGET = DEFAULT_CONTEXT_CHARACTERS;
 export const CONTEXT_BROKER_MAX_CHARACTER_BUDGET = 100_000;
 
 export interface ContextBrokerQueryInput {
@@ -65,6 +67,7 @@ export interface ContextBrokerContextItem {
 }
 
 export interface ContextBrokerContext {
+  relationDelivery?: RelationDelivery;
   deliveryId: string | null;
   runId: string | null;
   throughSequence: number;
@@ -964,7 +967,7 @@ export class ContextBroker {
     const broker = decision.persist
       ? await this.persistPrepared(prepared, normalizedPersistence, query, decision.assertBeforePersist)
       : this.validatePrepared(prepared, query, decision.assertBeforePersist);
-    return { broker, value: decision.value };
+    return { broker: this.finalizeRelations(broker, query), value: decision.value };
   }
 
   private async execute(rawInput: unknown, persistence: ContextBrokerPersistence): Promise<ContextBrokerResult> {
@@ -983,7 +986,12 @@ export class ContextBroker {
 
   private async queryPrepared(query: PreparedQuery, persistence: ContextBrokerPersistence): Promise<ContextBrokerResult> {
     const prepared = await this.prepareResult(query);
-    return this.persistPrepared(prepared, persistence, query);
+    return this.finalizeRelations(await this.persistPrepared(prepared, persistence, query), query);
+  }
+
+  private finalizeRelations(result: ContextBrokerResult, query: PreparedQuery): ContextBrokerResult {
+    return result.context === null ? result : { ...result,
+      context: attachRelationDelivery(this.database, result.context, { itemLimit: query.limit }) };
   }
 
   private async prepareResult(query: PreparedQuery): Promise<PreparedBrokerResult> {

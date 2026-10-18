@@ -530,6 +530,10 @@ async function readIdenticalTargetAfterConflict(
     if (observation.kind === 'absent') {
       if (planned === undefined) return undefined;
       const pending = await readPendingAtomicMutation(filePath, parentIdentity, containmentRoot);
+      if (pending === undefined && attempt + 1 < CONCURRENT_IDENTICAL_OBSERVATION_ATTEMPTS) {
+        await delay(CONCURRENT_IDENTICAL_OBSERVATION_DELAY_MS);
+        continue;
+      }
       if (pending === undefined
         || pending.kind !== 'previous'
         || !sameRegularFileSnapshot(pending.snapshot, planned)) {
@@ -984,6 +988,12 @@ async function readRetriedAgentPlan(
           );
         }
         return undefined;
+      }
+      if (pending === undefined && attempt + 1 < CONCURRENT_IDENTICAL_OBSERVATION_ATTEMPTS) {
+        // The owner can install and retire its quarantine after our absent-target observation.
+        // Reobserve within the existing bound; never recreate or accept an unverified target.
+        await delay(CONCURRENT_IDENTICAL_OBSERVATION_DELAY_MS);
+        continue;
       }
       if (pending === undefined
         || pending.kind !== 'previous'

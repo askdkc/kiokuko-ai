@@ -16,6 +16,8 @@ request → MCP connection → retrieve relevant memory → do the work
                                   save reusable knowledge
 ```
 
+Recall defaults to 16,000 Unicode body characters, with a separate bounded typed-relation envelope. Explicit budgets and item limits are preserved. See [context delivery](docs/context-delivery.md).
+
 Memory is separated into Project, Ecosystem, and Global scopes. Current source,
 configuration, and execution results take precedence over remembered context.
 

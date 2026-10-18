@@ -109,6 +109,9 @@ test('injected recall distinguishes recorded failures, success, user corrections
   const context = await memoryContext(db, { cwd: f.input.cwd, query: 'migration retry' });
   const rendered = renderOpenCodeLearningContext(context)!;
   const entry = JSON.parse(rendered).entries[0];
+  assert.equal(JSON.parse(rendered).relationDelivery.status, 'complete');
+  assert.equal(entry.workspace, f.workspace);
+  assert.ok(db.prepare('SELECT id FROM entries WHERE id=?').get(entry.entryId), 'model-visible identity must be the stored entry, not only the proposal ID');
   assert.equal(entry.findings[0].text, condition);
   assert.equal(entry.findings[0].basis, 'user_corrected');
   assert.deepEqual(entry.findings[0].evidenceRefs, []);
@@ -282,9 +285,11 @@ test('approved corrections are recalled by their new terms in the next request',
     const recalled = await memoryContext(db, { cwd: f.input.cwd, query, sessionId: 'next-session' });
     assert.equal(recalled.available, true);
     assert.equal(recalled.entries.length, 1, query);
-    assert.equal(recalled.entries[0]?.revision, 3);
     const entry = recalled.entries[0];
     assert.ok(entry && 'findings' in entry);
+    assert.ok('proposalRevision' in entry);
+    assert.equal(entry.proposalRevision, 3);
+    assert.equal(db.prepare('SELECT current_revision FROM entries WHERE id=?').get<{current_revision:number}>(entry.entryId)?.current_revision, entry.revision);
     assert.equal(entry.findings[0]?.basis, 'user_corrected');
     assert.equal(recalled.entries[0]?.summary, correction);
     assert.equal(recalled.entries[0]?.verification, 'user_reviewed_not_task_verified');

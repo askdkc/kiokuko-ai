@@ -1,0 +1,41 @@
+{
+  "schema": "relation-envelope-boundary-v1",
+  "counting": "Unicode code points of compact JSON including outer relationDelivery key and braces",
+  "envelope": {
+    "relationDelivery": {
+      "scope": "provided_items",
+      "status": "complete",
+      "edges": [
+        {
+          "from": {
+            "workspace": "project:日本😀",
+            "entryId": "a\"\\"
+          },
+          "to": {
+            "workspace": "project:日本😀",
+            "entryId": "𠮷b"
+          },
+          "type": "contradicts"
+        },
+        {
+          "from": {
+            "workspace": "project:日本😀",
+            "entryId": "𠮷b"
+          },
+          "to": {
+            "workspace": "project:日本😀",
+            "entryId": "a\"\\"
+          },
+          "type": "derived_from"
+        }
+      ],
+      "selectionOmissions": [
+        "body_budget",
+        "item_limit"
+      ]
+    }
+  },
+  "serialized": "{\"relationDelivery\":{\"scope\":\"provided_items\",\"status\":\"complete\",\"edges\":[{\"from\":{\"workspace\":\"project:日本😀\",\"entryId\":\"a\\\"\\\\\"},\"to\":{\"workspace\":\"project:日本😀\",\"entryId\":\"𠮷b\"},\"type\":\"contradicts\"},{\"from\":{\"workspace\":\"project:日本😀\",\"entryId\":\"𠮷b\"},\"to\":{\"workspace\":\"project:日本😀\",\"entryId\":\"a\\\"\\\\\"},\"type\":\"derived_from\"}],\"selectionOmissions\":[\"body_budget\",\"item_limit\"]}}",
+  "codePoints": 376,
+  "utf8Sha256": "d1a63564a5ef2137b8b2797a305508bb334e116e2cde5e1fc333ca934f5f861b"
+}

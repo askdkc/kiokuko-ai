@@ -1,3 +1,4 @@
+import { configuredRelationDeliveryOptions, markLegacyModelContext, packRelationDelivery } from '../memory/relation-delivery.js';
 import { memoryApplicationStatus, type MemoryApplicationStatus } from '../context/memory-application.js';
 import { readMemoryResolution } from './profile-memory-store.js';
 import { snapshotProfileHints } from './profile-hint-snapshot.js';
@@ -816,7 +817,7 @@ async function selectFinalTaskContext(
     const memoryUse = scopedMemoryUseSignal(input.database, input.project.workspace, candidate);
     const closed = missingMemoryCapability && memoryUse === 'actionable';
     const returnEmptyWithoutDelivery = missingMemoryCapability && !closed && candidate.items.length === 0;
-    if (returnEmptyWithoutDelivery) approvedEmptyContext = { ...candidate, deliveryId: null };
+    if (returnEmptyWithoutDelivery) approvedEmptyContext = { ...candidate, deliveryId: null, relationDelivery: packRelationDelivery([], configuredRelationDeliveryOptions()) };
     return {
       persist: !closed && !returnEmptyWithoutDelivery,
       value: { closed, memoryUse, candidate },
@@ -951,7 +952,7 @@ function preparedEnnoState(
   return ennoStateForPreparedTask(database, prepared, run?.client);
 }
 
-export async function prepareOpenCodeTask(database: SqliteDatabase, input: PrepareOpenCodeTaskInput): Promise<PreparedOpenCodeTask> {
+async function prepareOpenCodeTaskImplementation(database: SqliteDatabase, input: PrepareOpenCodeTaskInput): Promise<PreparedOpenCodeTask> {
   const executionCatalog = executionCatalogSchema.parse(input.executionCatalog ?? { mode: 'ask', candidates: [] });
   const requestId = taskRequestId(input.requestId);
   const maxContextChars = taskContextCharacterBudget(input.maxContextChars);
@@ -1027,8 +1028,8 @@ export function selectOpenCodeTaskExecution(database: SqliteDatabase, input: Exe
   };
 }
 
-export async function answerOpenCodeTask(database: SqliteDatabase, input: AnswerOpenCodeTaskInput): Promise<PreparedOpenCodeTask> {
-  const maxContextChars = taskContextCharacterBudget(input.maxContextChars);
+async function answerOpenCodeTaskImplementation(database: SqliteDatabase, input: AnswerOpenCodeTaskInput): Promise<PreparedOpenCodeTask> {
+  const requestedBudget = input.maxContextChars === undefined ? undefined : taskContextCharacterBudget(input.maxContextChars);
   const { project, executionContext } = await requireRegisteredProjectReadOnly(database, input.cwd);
   const manifestSnapshot = captureProjectManifestSnapshot(project);
   const discoveryRequest = skillDiscoveryRequestIdentity(input.skillDiscoveryMode ?? readSkillDiscoveryConfig().mode, input.capabilities);
@@ -1038,6 +1039,9 @@ export async function answerOpenCodeTask(database: SqliteDatabase, input: Answer
   authoritativeTaskRun(database, runRow.runId);
   const taskRuns = new TaskRunService(database);
   const runMetadata = taskRuns.readRun(runRow.runId).metadata;
+  const storedBinding = runMetadata[OPEN_CODE_TASK_CONTEXT_BINDING_METADATA_KEY];
+  const savedBudget = typeof storedBinding === 'object' && storedBinding !== null && !Array.isArray(storedBinding) ? storedBinding.maxContextChars : undefined;
+  const maxContextChars = requestedBudget ?? taskContextCharacterBudget(savedBudget);
   assertProjectManifestSnapshotBinding(runMetadata, project, manifestSnapshot);
   assertSkillDiscoveryRequestBinding(runMetadata, discoveryRequest);
   assertTaskContextRequestBinding(runMetadata, maxContextChars);
@@ -1074,4 +1078,12 @@ export async function answerOpenCodeTask(database: SqliteDatabase, input: Answer
     if (input.signal?.aborted) return failOpenCodeTaskRunAfterAbort(database, answered.runId, error);
     throw error;
   }
+}
+
+export async function prepareOpenCodeTask(...args: Parameters<typeof prepareOpenCodeTaskImplementation>) {
+  return markLegacyModelContext(await prepareOpenCodeTaskImplementation(...args));
+}
+
+export async function answerOpenCodeTask(...args: Parameters<typeof answerOpenCodeTaskImplementation>) {
+  return markLegacyModelContext(await answerOpenCodeTaskImplementation(...args));
 }

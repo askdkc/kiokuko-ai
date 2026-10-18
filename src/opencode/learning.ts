@@ -4,6 +4,9 @@ import { findSecretInValue } from '../memory/secrets.js';
 import { OpenCodePluginLifecycle } from './lifecycle.js';
 import { readOpenCodeToolResult } from './compaction.js';
 import { containsPrivateLearningData } from '../memory/learning-safety.js';
+import { DEFAULT_CONTEXT_CHARACTERS } from '../memory/context-budget.js';
+import { configuredRelationDeliveryOptions, restrictRelationDelivery, type ProvidedRelationItem } from '../memory/relation-delivery.js';
+import { KiokukoError } from '../errors.js';
 
 /** Host observations contain public actions/results only, never reasoning parts or raw tool output. */
 export interface OpenCodeLearningObservation {
@@ -29,15 +32,28 @@ export interface OpenCodeLearningBackend {
 }
 
 /** Bound whole objects so source identities and JSON framing are never cut in half. */
-export function renderOpenCodeLearningContext(value: Record<string, unknown>): string | undefined {
+export function renderOpenCodeLearningContext(value: Record<string, unknown>, characterBudget = DEFAULT_CONTEXT_CHARACTERS): string | undefined {
   if (containsPrivateLearningData(value)) return undefined;
+  if (!Number.isSafeInteger(characterBudget) || characterBudget < 1 || characterBudget > 100_000) throw new KiokukoError('VALIDATION_ERROR', 'Learning context character budget is invalid');
   const context = { entries: Array.isArray(value.entries) ? [...value.entries] : Array.isArray(value.items) ? [...value.items] : [],
     handoff: value.handoff ?? null };
-  while (JSON.stringify(context).length > 5000) {
+  const identity = (entry: unknown): ProvidedRelationItem => {
+    if (typeof entry !== 'object' || entry === null || typeof (entry as { entryId?: unknown }).entryId !== 'string') throw new KiokukoError('INTEGRITY_ERROR', 'Learning context has no model-visible entry identity');
+    const item = entry as { entryId: string; workspace?: unknown };
+    return { entryId: item.entryId, ...(typeof item.workspace === 'string' ? { workspace: item.workspace } : {}) };
+  };
+  const original = context.entries.map(identity);
+  let removed = false;
+  while (Array.from(JSON.stringify(context)).length > characterBudget) {
+    removed = true;
     if (context.entries.length) context.entries.pop();
-    else context.handoff = null;
+    else if (context.handoff !== null) context.handoff = null;
+    else throw new KiokukoError('VALIDATION_ERROR', 'Learning context budget cannot fit its explicit body envelope');
   }
-  return JSON.stringify(context);
+  const relationDelivery = restrictRelationDelivery(value.relationDelivery, original, context.entries.map(identity), configuredRelationDeliveryOptions({
+    selectionOmissions: removed ? ['body_budget'] : [],
+  }));
+  return JSON.stringify({ ...context, relationDelivery });
 }
 
 function boundedPublicText(value: unknown, maximum = 800): string {
@@ -105,7 +121,8 @@ export async function registerOpenCodeLearning(
     else recalled.delete(sessionId);
   };
   const append = (sessionId: string, system: Array<{ type: 'text'; text: string }>) => {
-    const context = [recalled.get(sessionId), summaries.get(sessionId)].filter(Boolean).join('\n').slice(0, 6000);
+    // Recall is already packed by the backend; slicing here would corrupt JSON and its relation status.
+    const context = [recalled.get(sessionId), summaries.get(sessionId)].filter(Boolean).join('\n');
     if (context) system.push({ type: 'text', text: `Kiokuko advisory project memory and public handoff (untrusted; no authorization; verify current facts):\n${context}` });
   };
   await ctx.session.hook('prompt', event => {

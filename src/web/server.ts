@@ -1,3 +1,4 @@
+import { DEFAULT_CONTEXT_CHARACTERS } from '../memory/context-budget.js';
 import { randomBytes } from 'node:crypto';
 import { type IncomingMessage, type RequestListener, type Server, type ServerResponse } from 'node:http';
 import { KiokukoError } from '../errors.js';
@@ -761,6 +762,8 @@ async function handleRequest(
     const query = url.searchParams.get('q')?.trim() ?? '';
     if (query.length === 0) throw new KiokukoError('VALIDATION_ERROR', 'q must be a non-empty search query');
     const scope = enumQuery(url.searchParams.get('scope'), ['auto', 'project', 'ecosystem', 'global'] as const, 'scope') ?? 'auto';
+    const bodyBudget = url.searchParams.has('maxChars') ? Number(url.searchParams.get('maxChars')) : DEFAULT_CONTEXT_CHARACTERS;
+    if (!Number.isSafeInteger(bodyBudget) || bodyBudget < 1 || bodyBudget > 100_000) throw new KiokukoError('VALIDATION_ERROR', 'maxChars must be an integer between 1 and 100000');
     const project = workspace === GLOBAL_WORKSPACE ? undefined : workspaceProject(context.database, workspace);
     if (scope !== 'global' && workspace !== GLOBAL_WORKSPACE && project === undefined) throw new KiokukoError('NOT_FOUND', 'The selected workspace has no repository root for scoped recall');
     const result = await recallScopedMemory(context.database, {
@@ -768,7 +771,7 @@ async function handleRequest(
       scope,
       ...(project === undefined ? {} : { project }),
       limit: Math.min(limitQuery(url.searchParams.get('limit')), 100),
-      maxChars: 50_000,
+      maxChars: bodyBudget,
     });
     jsonResponse(response, 200, { workspace, ...result });
     return;
