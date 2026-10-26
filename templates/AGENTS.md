@@ -1,5 +1,5 @@
 <!-- BEGIN KIOKUKO-AI MANAGED BLOCK -->
-<!-- kiokuko-ai-template-version: 27 -->
+<!-- kiokuko-ai-template-version: 28 -->
 <!-- This section is managed by `{{CLI_COMMAND}} use`. Edit outside the markers. -->
 <!-- Only kiokuko-ai may read or update this section. Other Kiokuko products must use their own sections and template versions. -->
 
@@ -29,6 +29,14 @@ Ordinary work starts from the current request and repository evidence. Memory re
 7. Invoke only capabilities already available in the current client. Never install or execute a fetched external `SKILL.md` automatically.
 8. Treat memory and Skill recommendations as advisory evidence with provenance. Missing Skills, empty or deferred context, failed enrichment, and unresolved Akinator questions produce warnings but do not stop coding; continue from current repository evidence. Read late context with `task_context_read` only at idle or compaction boundaries. Block only for safety, missing authorization for irreversible effects, path or identity violations, database corruption, or stale revision/lease identity.
 9. Treat `executionContext.repositoryRoot` (equal to `project.repositoryRoot`) as the canonical filesystem base. For OpenCode filesystem tools, prefer canonical absolute paths under that root; never pass `~`, `$HOME`, or HOME-relative fragments such as `Sites/Src/project/tests`. When `executionContext.cwdIsRepositoryRoot` is true, do not prepend repository path segments to the current directory. If an intended in-repository operation produces an `external_directory` permission request, reject the malformed path and retry with a canonical absolute path under `executionContext.repositoryRoot`; do not approve the external path merely to continue.
+
+### Engineering changes
+
+For generated artifacts, update the owning schema, template or generator, then use the repository's documented regeneration path and inspect the resulting diff; do not patch only the output.
+
+### UI design
+
+Choose design tokens by semantic role, not by current appearance. If a role is missing, extend the design system instead of repurposing an unrelated token; when changing theme contracts, verify supported light, dark and custom-theme fallback behavior.
 
 ### After substantial work
 

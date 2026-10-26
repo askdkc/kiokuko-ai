@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { BEGIN_MARKER, END_MARKER } from '../../src/agent-file/managed-block.js';
-import { renderAgentFile, renderManagedBlock } from '../../src/agent-file/render.js';
+import { AGENT_TEMPLATE_VERSION, renderAgentFile, renderManagedBlock } from '../../src/agent-file/render.js';
 import { KiokukoError } from '../../src/errors.js';
 
 test('template placeholders produce exactly the programmatic managed block', async () => {
@@ -30,7 +30,7 @@ test('renders the non-blocking memory-first lifecycle without legacy gateway com
     cliCommand: 'kiokuko-ai',
   });
 
-  assert.match(rendered, /<!-- kiokuko-ai-template-version: 27 -->/);
+  assert.ok(rendered.includes(`<!-- kiokuko-ai-template-version: ${AGENT_TEMPLATE_VERSION} -->`));
   assert.match(rendered, /none is a prerequisite for editing, execution or task completion/);
   assert.match(rendered, /Save only the revision approved by the actual user/);
   assert.doesNotMatch(rendered, /terminal for tool use|stop tool use/);
@@ -74,4 +74,15 @@ test('agent renderer rejects identity injection before interpolation', () => {
     }),
     (error: unknown) => error instanceof KiokukoError && error.code === 'VALIDATION_ERROR',
   );
+});
+
+test('product guidance owns generated changes and semantic theme contracts without upstream repo rules', () => {
+  const rendered = renderManagedBlock({ repositoryId: 'repo-fixture', workspace: 'project:fixture', cliCommand: 'kiokuko-ai' });
+  assert.match(rendered, /update the owning schema, template or generator/u);
+  assert.match(rendered, /repository's documented regeneration path/u);
+  assert.match(rendered, /inspect the resulting diff/u);
+  assert.match(rendered, /Choose design tokens by semantic role/u);
+  assert.match(rendered, /extend the design system instead of repurposing an unrelated token/u);
+  assert.match(rendered, /supported light, dark and custom-theme fallback behavior/u);
+  assert.doesNotMatch(rendered, /bun run|Bun\.file|packages\/client|typecheck:tsc|Drizzle|Never alias imports|Avoid `else`/u);
 });
