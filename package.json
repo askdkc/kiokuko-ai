@@ -108,7 +108,7 @@
   "devDependencies": {
     "agenticreplay": ">=0.1.6",
     "@opencode/client": "2.0.18",
-    "@opencode/plugin": "2.0.18",
+    "@opencode/plugin": "2.1.4",
     "@huggingface/hub": "2.16.1",
     "@huggingface/transformers": "4.2.0",
     "@types/node": "^24.0.0",
