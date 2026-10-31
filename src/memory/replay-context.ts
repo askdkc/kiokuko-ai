@@ -34,7 +34,7 @@ export function approvedReplayContext(proposal: ReplayMemoryProposal) {
         ? 'recorded_attempts' : 'references_only',
   }));
   return {
-    entryId: proposal.proposalId, revision: proposal.revision, kind: 'reviewed_replay',
+    entryId: proposal.proposalId, revision: proposal.revision, kind: proposal.source.kind === 'unrecorded' ? 'reviewed_unrecorded' : 'reviewed_replay',
     summary: findings.map(finding => finding.text).join('\n'), findings, attempts,
     request: proposal.request.text.slice(0, 240), requestTruncated: proposal.request.text.length > 240,
     tags: proposal.tags.slice(0, 8),

@@ -39,6 +39,7 @@ test('MCP memory checkpoint and curator booleans cannot impersonate native human
   ] as const) {
     const result = await client.callTool({ name, arguments: args });
     assert.match(JSON.stringify(result), /post_task_review_required/);
+    if (name === 'memory_checkpoint') assert.match(JSON.stringify(result), /memory_review_unrecorded/);
   }
   const check = openConnection(databasePath, { readOnly: true });
   assert.equal(check.prepare('SELECT count(*) AS n FROM entries').get<{ n: number }>()?.n, 0); check.close();

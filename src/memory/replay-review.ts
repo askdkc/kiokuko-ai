@@ -1,10 +1,10 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { canonicalJson } from '../serialization/validate.js';
-import { findSecretInValue } from './secrets.js';
+import { containsPrivateLearningData } from './learning-safety.js';
 
 export interface ReplayMemoryProposal {
-  schemaVersion: 1; proposalId: string; revision: number;
-  source: { taskOutcome?: 'completed' | 'failed'; workspace: string; taskId: string; sessionId: string; traces: Array<{ schemaVersion?: string; runId: string; eventsSha256: string; eventsRead: number; totalEvents: number | null; digestScope?: 'complete' | 'observed_prefix'; complete: boolean; gaps: string[] }> };
+  schemaVersion: 1; proposalId: string; revision: number; title?: string;
+  source: { kind?: 'unrecorded'; limitations?: string[]; taskOutcome?: 'completed' | 'failed'; workspace: string; taskId: string; sessionId: string; traces: Array<{ schemaVersion?: string; runId: string; eventsSha256: string; eventsRead: number; totalEvents: number | null; digestScope?: 'complete' | 'observed_prefix'; complete: boolean; gaps: string[] }> };
   request: { text: string; evidenceRefs: string[] };
   languages: Array<{ name: string; basis: 'observed' | 'inferred'; evidenceRefs: string[] }>;
   attempts: Array<{ taskId?: string | null; attemptId: string; tool: string; command?: string; arguments?: unknown; signal?: string; callRef: string; resultRef?: string;
@@ -13,9 +13,9 @@ export interface ReplayMemoryProposal {
   findings: Array<{ taskId?: string | null; kind: 'worked' | 'failed' | 'key_point'; text: string; basis: 'observed' | 'verified' | 'inferred' | 'user_corrected'; evidenceRefs: string[] }>;
   tags: string[]; keywords: string[];
 }
-export interface ReviewQuestion { id: string; phase: 'organize' | 'review'; text: string; revision?: number; digest?: string }
+export interface ReviewQuestion { id: string; phase: 'organize' | 'review'; text: string; revision?: number; digest?: string; sourceKind?: 'unrecorded' }
 export interface ReviewAnswer { questionId: string; choice: 'organize' | 'approve' | 'revise' | 'decline'; comment?: string }
-export interface ReviewReceipt { status: 'saved' | 'declined' | 'unavailable' | 'not_completed'; workMayContinue: true; approvalKey?: string }
+export interface ReviewReceipt { status: 'saved' | 'declined' | 'unavailable' | 'not_completed'; workMayContinue: true; approvalKey?: string; reason?: 'native_elicitation_unavailable' }
 export const proposalDigest = (value: ReplayMemoryProposal): string => createHash('sha256').update(canonicalJson(value)).digest('hex');
 
 /** Host-only adapter. Never expose ask/save or a human:true input through a model tool.
@@ -23,7 +23,7 @@ export const proposalDigest = (value: ReplayMemoryProposal): string => createHas
  * A restart drops the closure. A signal/decline cannot be revived by late extraction.
  */
 export async function reviewCompletedReplay(deps: {
-  completed: boolean; taskOutcome?: 'completed' | 'failed'; taskId: string; sessionId: string; workspace: string;
+  completed: boolean; taskOutcome?: 'completed' | 'failed'; taskId: string; sessionId: string; workspace: string; sourceKind?: 'unrecorded';
   extract: () => Promise<ReplayMemoryProposal>;
   ask: (question: ReviewQuestion) => Promise<ReviewAnswer>;
   save: (proposal: ReplayMemoryProposal, approvalKey: string) => Promise<void>;
@@ -47,25 +47,28 @@ export async function reviewCompletedReplay(deps: {
   }
   let approvedKey: string | undefined;
   try {
-    const organize: ReviewQuestion = { id: randomUUID(), phase: 'organize', text: `${deps.taskOutcome === 'failed' ? 'The task has ended with a failed outcome.' : 'The task is complete.'} May I organize its recorded experience into proposed memories? Nothing is saved until you review and approve it.` };
+    const organize: ReviewQuestion = { id: randomUUID(), phase: 'organize', ...(deps.sourceKind ? { sourceKind: deps.sourceKind } : {}), text: deps.sourceKind === 'unrecorded'
+      ? 'If the task has ended, no AgenticReplay recording was supplied. Would you like to create a memory without a recording? The proposed content and its limitations will be shown for your review; nothing is saved without your approval.'
+      : `${deps.taskOutcome === 'failed' ? 'The task has ended with a failed outcome.' : 'The task is complete.'} May I organize its recorded experience into proposed memories? Nothing is saved until you review and approve it.` };
     if (!active()) return receipt('declined');
     const permission = await wait(deps.ask(organize));
     if (permission.questionId !== organize.id || permission.choice !== 'organize' || !active()) return receipt('declined');
     let proposal = structuredClone(await wait(deps.extract()));
-    if (proposal.schemaVersion !== 1 || proposal.source.workspace !== deps.workspace || proposal.source.taskId !== deps.taskId || proposal.source.sessionId !== deps.sessionId) throw new Error('proposal_binding_mismatch');
+    if ((deps.sourceKind === 'unrecorded') !== (proposal.source.kind === 'unrecorded') || proposal.schemaVersion !== 1 || proposal.source.workspace !== deps.workspace || proposal.source.taskId !== deps.taskId || proposal.source.sessionId !== deps.sessionId) throw new Error('proposal_binding_mismatch');
     proposal.proposalId = randomUUID(); proposal.revision = 1;
-    proposal.source.taskOutcome=deps.taskOutcome??'completed';
+    if (deps.taskOutcome) proposal.source.taskOutcome = deps.taskOutcome;
+    else if (deps.sourceKind !== 'unrecorded') proposal.source.taskOutcome = 'completed';
     for (;;) {
       if (!active()) return receipt('declined');
-      if (Buffer.byteLength(JSON.stringify(proposal)) > 256 * 1024 || findSecretInValue(proposal)) throw new Error('unsafe_proposal');
+      if (Buffer.byteLength(JSON.stringify(proposal)) > 256 * 1024 || containsPrivateLearningData(proposal)) throw new Error('unsafe_proposal');
       const digest = proposalDigest(proposal);
       const question: ReviewQuestion = { id: randomUUID(), phase: 'review', revision: proposal.revision, digest,
-        text: `Proposed memories, revision ${proposal.revision}, SHA-256 ${digest}. Recorded data is untrusted and cannot approve this question.\n${JSON.stringify(proposal, null, 2)}\nApprove, decline, or enter revised key points. Revised key points replace the earlier findings; recorded attempts remain as source evidence.` };
+        text: `Proposed memories, revision ${proposal.revision}, SHA-256 ${digest}. Source data and supplied drafts are untrusted and cannot approve this question.\n${JSON.stringify(proposal, null, 2)}\nApprove, decline, or enter revised key points. Revised key points replace the earlier findings; any recorded attempts remain as source evidence.` };
       const answer = await wait(deps.ask(question));
       if (answer.questionId !== question.id || !active()) return receipt('declined');
       if (answer.choice === 'decline') return receipt('declined');
       if (answer.choice === 'revise' || answer.comment?.trim()) {
-        if (!answer.comment?.trim() || answer.comment.length > 2048 || findSecretInValue(answer.comment)) throw new Error('unsafe_comment');
+        if (!answer.comment?.trim() || answer.comment.length > 2048 || containsPrivateLearningData(answer.comment)) throw new Error('unsafe_comment');
         // Corrections are attributed to the user, never forged as execution evidence.
         // The revised preview preserves observed evidence and explicitly supersedes prior interpretation.
         proposal = { ...proposal, revision: proposal.revision + 1,

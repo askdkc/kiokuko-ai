@@ -50,6 +50,27 @@ The TUI avoids duplicating a review already queued by that request.
 It has no model-callable approval argument. Clients without supported native UI
 return an unavailable receipt, without blocking or undoing the completed task.
 
+When no AgenticReplay recording is supplied, the TUI instead asks whether to
+create a memory without one. Its draft uses only bounded excerpts of the latest
+public request and final response, with fenced code, block-quoted lines, private
+reasoning, and known credentials excluded. It does not claim that assistant statements
+or task results have been independently verified. A missing recording directory
+also takes this path; malformed or integrity-failing recordings are not silently
+reclassified as missing.
+
+An agent may call `memory_review_unrecorded` on an MCP client supporting native
+elicitation, even when no `task_prepare` run exists. Supply an absolute project
+`cwd`, a new `requestId`, and a bounded `draft` containing `title`, `request`,
+`body`, `tags`, `keywords`, and `sourceNotes`. The draft must not contain raw
+logs, transcripts, private reasoning or credentials. The first native question
+asks whether to create memory without AgenticReplay; a second shows the exact
+proposal, including its source limitations, for approval or revision. The
+unrecorded source is marked explicitly and carries no invented trace or execution
+evidence. Reuse the same `requestId` only with identical inputs for reconciliation;
+a different draft or project cannot inherit an earlier approval. Unsupported
+clients, rejection, cancellation and dismissal save nothing. The MCP call is not
+itself approval, nor is a textual answer in the model conversation.
+
 Candidates, revisions and approval state remain in process-local memory until
 approval. Native UI comments replace proposed findings with explicitly attributed
 user corrections, preserve source observations, and show a new exact revision.

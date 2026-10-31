@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -299,4 +299,74 @@ test('approved corrections are recalled by their new terms in the next request',
   }
   assert.equal((await memoryContext(db, { cwd: f.input.cwd, query: 'discardedinterpretation' })).entries.length, 0);
   assert.equal((await memoryContext(db, { cwd: f.input.cwd, query: 'unrelatedweather' })).entries.length, 0);
+});
+
+
+test('packaged native worker reviews and stores an explicitly unrecorded proposal without a ledger run', async t => {
+  const f = await fixture(t);
+  const { runNativeReviewWorker } = await import(new URL('../../dist/opencode/tui.js', import.meta.url).href);
+  const { traceDirectory: _ignored, ...input } = f.input;
+  const questions: ReviewQuestion[] = [];
+  const receipt = await runNativeReviewWorker({ ...input, unrecordedDraft: {
+    title: 'Unrecorded migration fix', request: 'Fix migration retry',
+    body: 'Migration retry was fixed; actual deployment remains unverified.',
+    tags: ['migration'], keywords: ['retry'], sourceNotes: ['No AgenticReplay trace was supplied.'],
+  } }, process.execPath, async (q: ReviewQuestion) => {
+    questions.push(q);
+    return { questionId: q.id, choice: q.phase === 'organize' ? 'organize' : 'approve' };
+  }, new AbortController().signal);
+  assert.equal(receipt.status, 'saved');
+  assert.equal(questions.length, 2);
+  assert.match(questions[0]!.text, /without a recording/i);
+  const db = openConnection(f.databasePath); t.after(() => db.close());
+  const [stored] = createApprovedReplayMemoryStore(db, f.workspace).query('migration');
+  assert.ok(stored);
+  assert.equal(stored.source.kind, 'unrecorded');
+  assert.deepEqual(stored.source.traces, []);
+  assert.ok(questions[1]!.text.includes(JSON.stringify(stored, null, 2)));
+});
+
+
+test('missing or empty recordings offer unrecorded review, but partial recordings never silently fall back', async t => {
+  const f = await fixture(t);
+  const noLogDraft = { title: 'Unrecorded fix', request: 'Fix migration', body: 'Deployment remains unverified.', tags: [], keywords: [], sourceNotes: [] };
+  const runs = path.dirname(f.input.traceDirectory);
+  for (const directory of [path.join(runs, 'missing'), path.join(runs, 'empty')]) {
+    if (directory.endsWith('empty')) mkdirSync(directory);
+    const questions: ReviewQuestion[] = [];
+    const receipt = await runNativeReplayReview({ ...f.input, taskId: `task-${path.basename(directory)}`, traceDirectory: directory, unrecordedDraft: noLogDraft }, async q => {
+      questions.push(q); return { questionId: q.id, choice: q.phase === 'organize' ? 'organize' : 'approve' };
+    });
+    assert.equal(receipt.status, 'saved');
+    assert.match(questions[0]!.text, /without a recording/i);
+  }
+  const partial = path.join(runs, 'partial'); mkdirSync(partial);
+  writeFileSync(path.join(partial, 'manifest.json'), '{}');
+  const questions: ReviewQuestion[] = [];
+  const result = await runNativeReplayReview({ ...f.input, taskId: 'partial', traceDirectory: partial, unrecordedDraft: noLogDraft }, async q => {
+    questions.push(q); return { questionId: q.id, choice: 'organize' };
+  });
+  assert.equal(result.status, 'unavailable');
+  assert.equal(questions.length, 1);
+  assert.doesNotMatch(questions[0]!.text, /without a recording/i);
+  const db = openConnection(f.databasePath); t.after(() => db.close());
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM entries').get<{n:number}>()?.n, 2);
+});
+
+
+test('an external or symlinked recording path cannot be reclassified as an unrecorded review', async t => {
+  const f = await fixture(t);
+  const external = path.join(path.dirname(f.input.cwd), 'external'); mkdirSync(external);
+  const link = path.join(f.input.cwd, '.agenticreplay', 'runs', 'outside'); symlinkSync(external, link, 'dir');
+  const noLogDraft = { title: 'Unrecorded fix', request: 'Fix migration', body: 'Unverified.', tags: [], keywords: [], sourceNotes: [] };
+  for (const traceDirectory of [external, link]) {
+    let prompts = 0;
+    const receipt = await runNativeReplayReview({ ...f.input, traceDirectory, unrecordedDraft: noLogDraft }, async q => {
+      prompts++; return { questionId: q.id, choice: q.phase === 'organize' ? 'organize' : 'approve' };
+    });
+    assert.equal(receipt.status, 'unavailable');
+    assert.equal(prompts, 0);
+  }
+  const db = openConnection(f.databasePath, { readOnly: true }); t.after(() => db.close());
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM entries').get<{n:number}>()?.n, 0);
 });

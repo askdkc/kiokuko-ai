@@ -67,6 +67,7 @@ test('MCP exposes advisory tools, refuses unapproved writes and recalls existing
       'memory_improve',
       'memory_observe',
       'memory_review_completed',
+      'memory_review_unrecorded',
       'source_context',
       'task_answer',
       'task_context_read',

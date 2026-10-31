@@ -6,12 +6,14 @@ import { parseOpenCodePluginOptions } from './runtime-invocation.js';
 import { v2EventSession } from './v2-adapter.js';
 import type { ReplayReviewStart, ApprovedReplayRecovery } from './replay-review-worker.js';
 import type { ReviewAnswer, ReviewQuestion, ReviewReceipt } from '../memory/replay-review.js';
+import { containsPrivateLearningData } from '../memory/learning-safety.js';
+import type { UnrecordedDraft } from '../memory/unrecorded-review.js';
 
 /** Actual native dialogs return answers directly; model text cannot supply approval. */
 export async function askNativeReplayQuestion(ctx: Plugin.Context, question: ReviewQuestion): Promise<ReviewAnswer> {
   if (question.phase === 'organize') {
-    const yes = await ctx.ui.dialog.confirm({ title: 'Organize recorded experience?', message: question.text,
-      label: { confirm: 'Organize', cancel: 'No, finish without saving' } });
+    const yes = await ctx.ui.dialog.confirm({ title: question.sourceKind === 'unrecorded' ? 'Create memory without a recording?' : 'Organize recorded experience?', message: question.text,
+      label: { confirm: question.sourceKind === 'unrecorded' ? 'Create proposal' : 'Organize', cancel: 'No, finish without saving' } });
     return { questionId: question.id, choice: yes === true ? 'organize' : 'decline' };
   }
   // Exact canonical revision is visible before the approve/revise decision.
@@ -60,11 +62,33 @@ export const runNativeReviewWorker: NativeReviewRunner = (input, nodeExecutable,
   if (signal.aborted) abort(); else child.send({ type: 'start', input });
 });
 
+/** Capture bounded public excerpts without fenced code or block-quoted lines. */
+function sessionExcerpt(value: unknown): string {
+  if (typeof value !== 'string' || value.length > 64 * 1024 || containsPrivateLearningData(value)) return '';
+  return value.replace(/```[\s\S]*?(?:```|$)/gu, '').split('\n')
+    .filter(line => !/^\s*>/u.test(line)).join(' ').replace(/[\p{Cc}\p{Cf}]/gu, ' ')
+    .replace(/\s+/gu, ' ').trim().slice(0, 1800);
+}
+
+function sessionDraft(request: unknown, response: string): UnrecordedDraft {
+  const safeRequest = sessionExcerpt(request);
+  const safeResponse = sessionExcerpt(response);
+  return {
+    title: safeRequest.slice(0, 120) || 'Unrecorded session experience',
+    request: safeRequest || 'The public request was unavailable or excluded.',
+    body: safeResponse || 'The public final response was unavailable or excluded; no task result is established.',
+    tags: [], keywords: [], sourceNotes: [
+      'Bounded excerpts from the latest OpenCode request and public final response; fenced code and block-quoted lines are omitted.',
+      'Assistant statements are unverified; no command output or private reasoning was extracted.',
+    ],
+  };
+}
+
 /** Successful idle is necessary, but human organization consent also confirms the task is finished. */
 export async function registerNativeReplayReview(ctx: Plugin.Context, run: NativeReviewRunner = runNativeReviewWorker) {
   const runtime = parseOpenCodePluginOptions(ctx.options);
   const traceDirectory = process.env.AGENTICREPLAY_RUN_DIR;
-  if (!runtime || !traceDirectory || !ctx.location) return () => undefined;
+  if (!runtime || !ctx.location) return () => undefined;
   if (run === runNativeReviewWorker && !(await trustedInvocation({ runtime })).argv) return () => undefined;
   const directory = ctx.location.directory;
   const reviewed = new Set<string>();
@@ -100,7 +124,13 @@ export async function registerNativeReplayReview(ctx: Plugin.Context, run: Nativ
             if (content.type !== 'text') return false;
             try { return JSON.parse(content.text)?.memoryReview?.status === 'queued'; } catch { return false; }
           })));
-      if (queuedByMcp) return;
+      const reviewedByMcp = messages.slice(messages.indexOf(user) + 1).some(message => message.type === 'assistant'
+        && message.content.some(part => part.type === 'tool' && /(?:^|_)memory_review_(?:completed|unrecorded)$/u.test(part.name)
+          && part.state.status === 'completed' && part.state.content.some(content => {
+            if (content.type !== 'text') return false;
+            try { return ['saved', 'declined'].includes(JSON.parse(content.text)?.status); } catch { return false; }
+          })));
+      if (queuedByMcp || reviewedByMcp) return;
       const taskId = user.id;
       const key = `${event.sessionId}:${taskId}`;
       if (reviewed.has(key) || (approvedRecoveries.size >= 256 && !approvedRecoveries.has(key))) return;
@@ -108,7 +138,9 @@ export async function registerNativeReplayReview(ctx: Plugin.Context, run: Nativ
       // Bounded volatile dedup; restart intentionally drops all candidate/approval state.
       if (reviewed.size > 1024) reviewed.delete(reviewed.values().next().value!);
       const recovery = approvedRecoveries.get(key);
-      const receipt = await run({ ...(recovery ? { approvedRecovery: recovery } : {}), cwd: directory, traceDirectory, taskId, sessionId: event.sessionId, taskOutcome: last.outcome === 'failed' ? 'failed' : 'completed' }, runtime.nodeExecutable,
+      const publicResponse = assistant.content.flatMap(part => part.type === 'text' ? [part.text] : []).join('\n');
+      const draft = sessionDraft(user.text, publicResponse);
+      const receipt = await run({ ...(recovery ? { approvedRecovery: recovery } : {}), cwd: directory, ...(traceDirectory ? { traceDirectory } : {}), unrecordedDraft: draft, taskId, sessionId: event.sessionId, taskOutcome: last.outcome === 'failed' ? 'failed' : 'completed' }, runtime.nodeExecutable,
         async q => {
           if (!current(event.sessionId) || controller.signal.aborted) return { questionId: q.id, choice: 'decline' };
           const answer = await askNativeReplayQuestion(ctx, q);

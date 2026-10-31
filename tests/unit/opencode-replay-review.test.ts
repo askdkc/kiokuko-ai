@@ -103,3 +103,53 @@ test('TUI retry keeps the already-approved identity after an unavailable save in
   f.emit('session.execution.succeeded', 'duplicate'); await tick();
   assert.equal(calls, 2);
 });
+
+
+test('native TUI offers unrecorded review after a completed session without AgenticReplay', async t => {
+  const previous = process.env.AGENTICREPLAY_RUN_DIR; delete process.env.AGENTICREPLAY_RUN_DIR;
+  t.after(() => { if (previous !== undefined) process.env.AGENTICREPLAY_RUN_DIR = previous; });
+  const f = fixture(); let calls = 0;
+  const cleanup = await registerNativeReplayReview(f.ctx, async (input, _node, ask) => {
+    calls++;
+    assert.equal(input.traceDirectory, undefined);
+    assert.match(input.unrecordedDraft!.request, /Fix startup/);
+    assert.match(input.unrecordedDraft!.body, /Fixed and tested startup/);
+    return { status: 'declined', workMayContinue: true };
+  });
+  t.after(cleanup);
+  f.emit('session.execution.succeeded'); await tick();
+  assert.equal(calls, 1);
+});
+
+
+test('a completed MCP review suppresses the duplicate native TUI dialog', async t => {
+  const previous = process.env.AGENTICREPLAY_RUN_DIR; delete process.env.AGENTICREPLAY_RUN_DIR;
+  t.after(() => { if (previous !== undefined) process.env.AGENTICREPLAY_RUN_DIR = previous; });
+  const f = fixture(); let calls = 0;
+  const cleanup = await registerNativeReplayReview(f.ctx, async () => { calls++; return { status: 'declined', workMayContinue: true }; });
+  t.after(cleanup);
+  f.setMessages([{ type: 'user', id: 'request-1', text: 'Fix startup' }, { type: 'assistant', finish: 'stop', time: { completed: 4 }, content: [
+    { type: 'text', text: 'Done' }, { type: 'tool', name: 'kiokuko_memory_review_unrecorded', state: { status: 'completed', content: [{ type: 'text', text: JSON.stringify({ status: 'saved' }) }] } },
+  ] }, { type: 'idle', outcome: 'succeeded' }]);
+  f.emit('session.execution.succeeded'); await tick();
+  assert.equal(calls, 0);
+});
+
+
+test('unrecorded session draft excludes credentials and private reasoning parts', async t => {
+  const previous = process.env.AGENTICREPLAY_RUN_DIR; delete process.env.AGENTICREPLAY_RUN_DIR;
+  t.after(() => { if (previous !== undefined) process.env.AGENTICREPLAY_RUN_DIR = previous; });
+  const f = fixture(); let calls = 0;
+  const cleanup = await registerNativeReplayReview(f.ctx, async input => {
+    calls++;
+    assert.doesNotMatch(JSON.stringify(input.unrecordedDraft), /secretvalue123456|sensitive internal thought/);
+    assert.match(input.unrecordedDraft!.request, /excluded/);
+    assert.match(input.unrecordedDraft!.body, /Public result/);
+    return { status: 'declined', workMayContinue: true };
+  });
+  t.after(cleanup);
+  f.setMessages([{ type: 'user', id: 'request-1', text: 'password=secretvalue123456' }, { type: 'assistant', finish: 'stop', time: { completed: 4 }, content: [
+    { type: 'reasoning', text: 'sensitive internal thought' }, { type: 'text', text: 'Public result.' },
+  ] }, { type: 'idle', outcome: 'succeeded' }]);
+  f.emit('session.execution.succeeded'); await tick(); assert.equal(calls, 1);
+});
