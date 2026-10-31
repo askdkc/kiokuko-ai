@@ -5,6 +5,9 @@ on:
   workflow_dispatch: null
 permissions:
   contents: read
+env:
+  # CPU CI uses bundled ONNX binaries; skip optional CUDA/TensorRT downloads.
+  ONNXRUNTIME_NODE_INSTALL: skip
 jobs:
   verify:
     runs-on: ubuntu-latest

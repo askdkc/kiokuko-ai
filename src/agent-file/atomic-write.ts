@@ -160,7 +160,7 @@ function changedAfterPlanning(filePath?: string): KiokukoError {
   );
 }
 
-function identityFromStat(info: Awaited<ReturnType<FileHandle['stat']>>): FileIdentity {
+function identityFromStat(info: NonNullable<Awaited<ReturnType<FileHandle['stat']>>>): FileIdentity {
   const device = BigInt(info.dev);
   const inode = BigInt(info.ino);
   if (inode === 0n) {
@@ -184,7 +184,7 @@ function sameSnapshot(left: RegularFileSnapshot | undefined, right: RegularFileS
 }
 
 function artifactFromOpenHandle(
-  info: Awaited<ReturnType<FileHandle['stat']>>,
+  info: NonNullable<Awaited<ReturnType<FileHandle['stat']>>>,
   content: string,
 ): BoundRegularArtifact {
   if (!info.isFile()) {

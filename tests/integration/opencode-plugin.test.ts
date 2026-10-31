@@ -83,13 +83,16 @@ test('cleanup prevents a late execution event from starting more work', async ()
 test('an ended v2 event subscription is reopened and cleanup stops the retry', async () => {
   const fixture = pluginContextFixture();
   let subscriptions = 0;
-  fixture.ctx.event.subscribe = ({ signal }: { signal: AbortSignal }) => ({
+  Object.defineProperty(fixture.ctx.event, 'subscribe', {
+    value: ({ signal }: { signal: AbortSignal }) => ({
     async *[Symbol.asyncIterator]() {
       subscriptions++;
       if (subscriptions === 1) return;
       await new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true }));
     },
-  }) as never;
+    }),
+    configurable: true,
+  });
   const cleanup = await KiokukoPlugin.setup(fixture.ctx);
   const deadline = Date.now() + 1_000;
   while (subscriptions < 2 && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10));

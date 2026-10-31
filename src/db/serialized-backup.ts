@@ -605,7 +605,7 @@ async function descriptorSha256(handle: FileHandle, size: bigint): Promise<strin
 }
 
 function sameArtifactStatus(
-  status: Awaited<ReturnType<FileHandle['stat']>>,
+  status: NonNullable<Awaited<ReturnType<FileHandle['stat']>>>,
   attestation: BackupArtifactAttestation,
 ): boolean {
   return status.isFile()
