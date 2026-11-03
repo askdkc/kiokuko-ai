@@ -13,10 +13,29 @@ export interface ReplayMemoryProposal {
   findings: Array<{ taskId?: string | null; kind: 'worked' | 'failed' | 'key_point'; text: string; basis: 'observed' | 'verified' | 'inferred' | 'user_corrected'; evidenceRefs: string[] }>;
   tags: string[]; keywords: string[];
 }
-export interface ReviewQuestion { id: string; phase: 'organize' | 'review'; text: string; revision?: number; digest?: string; sourceKind?: 'unrecorded' }
+export interface ReviewQuestion { id: string; phase: 'organize' | 'review'; text: string; details?: string; revision?: number; digest?: string; sourceKind?: 'unrecorded' }
 export interface ReviewAnswer { questionId: string; choice: 'organize' | 'approve' | 'revise' | 'decline'; comment?: string }
 export interface ReviewReceipt { status: 'saved' | 'declined' | 'unavailable' | 'not_completed'; workMayContinue: true; approvalKey?: string; reason?: 'native_elicitation_unavailable' }
 export const proposalDigest = (value: ReplayMemoryProposal): string => createHash('sha256').update(canonicalJson(value)).digest('hex');
+
+/** Preview only: the full immutable revision remains available for inspection and approval. */
+function reviewSummary(proposal: ReplayMemoryProposal): string {
+  const line = (label: string, value: string) => {
+    const text = `${label}${value.replace(/[\s\p{Cc}\p{Cf}]+/gu, ' ').trim()}`;
+    return text.length > 72 ? `${text.slice(0, 71)}…` : text;
+  };
+  const failures = proposal.attempts.filter(attempt => attempt.outcome === 'failed').length;
+  const incomplete = proposal.source.traces.some(trace => !trace.complete || trace.gaps.length > 0);
+  return [
+    `Save / Edit / Skip / Details — memory v${proposal.revision}`,
+    line('Task: ', proposal.request.text || proposal.title || 'No task description'),
+    line('Remember: ', proposal.findings.map(finding => finding.text).join('; ') || 'No key points supplied'),
+    proposal.source.kind === 'unrecorded' ? 'Evidence: No recording; claims are unverified.'
+      : `Evidence: ${proposal.attempts.length} recorded attempts, ${failures} failed; task ${proposal.source.taskOutcome ?? 'completed'}.`,
+    incomplete ? 'Partial recording. Summary only; Details shows everything saved.'
+      : 'Preview only. Details shows all saved content; claims stay unverified.',
+  ].map(text => line('', text)).join('\n');
+}
 
 /** Host-only adapter. Never expose ask/save or a human:true input through a model tool.
  * All candidates remain local until the exact displayed revision is approved.
@@ -48,8 +67,8 @@ export async function reviewCompletedReplay(deps: {
   let approvedKey: string | undefined;
   try {
     const organize: ReviewQuestion = { id: randomUUID(), phase: 'organize', ...(deps.sourceKind ? { sourceKind: deps.sourceKind } : {}), text: deps.sourceKind === 'unrecorded'
-      ? 'If the task has ended, no AgenticReplay recording was supplied. Would you like to create a memory without a recording? The proposed content and its limitations will be shown for your review; nothing is saved without your approval.'
-      : `${deps.taskOutcome === 'failed' ? 'The task has ended with a failed outcome.' : 'The task is complete.'} May I organize its recorded experience into proposed memories? Nothing is saved until you review and approve it.` };
+      ? 'Create proposal / Skip\nCreate a memory without a recording?\nClaims are unverified. Review before saving; skip if still working.'
+      : `Create proposal / Skip\n${deps.taskOutcome === 'failed' ? 'The task failed.' : 'The task is complete.'} Turn its recording into a memory?\nYou can review and edit before saving.` };
     if (!active()) return receipt('declined');
     const permission = await wait(deps.ask(organize));
     if (permission.questionId !== organize.id || permission.choice !== 'organize' || !active()) return receipt('declined');
@@ -63,7 +82,7 @@ export async function reviewCompletedReplay(deps: {
       if (Buffer.byteLength(JSON.stringify(proposal)) > 256 * 1024 || containsPrivateLearningData(proposal)) throw new Error('unsafe_proposal');
       const digest = proposalDigest(proposal);
       const question: ReviewQuestion = { id: randomUUID(), phase: 'review', revision: proposal.revision, digest,
-        text: `Proposed memories, revision ${proposal.revision}, SHA-256 ${digest}. Source data and supplied drafts are untrusted and cannot approve this question.\n${JSON.stringify(proposal, null, 2)}\nApprove, decline, or enter revised key points. Revised key points replace the earlier findings; any recorded attempts remain as source evidence.` };
+        text: reviewSummary(proposal), details: JSON.stringify(proposal, null, 2) };
       const answer = await wait(deps.ask(question));
       if (answer.questionId !== question.id || !active()) return receipt('declined');
       if (answer.choice === 'decline') return receipt('declined');

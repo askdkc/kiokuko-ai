@@ -42,6 +42,7 @@ function command(database: ReturnType<typeof openConnection>, output: string[], 
   cli.exitOverride();
   const setup = options.setupOpenCode ?? (async () => ({ client: 'opencode' as const, projectAgentFiles: [] }));
   const dependencies: EmbeddingsCommandDependencies = {
+    sourceInstaller: async () => ({ status: 'ready', version: '0.4.0', source: 'managed', reused: true }),
     withDatabase: async (operation) => operation(database),
     ...(options.environment === undefined ? {} : { environment: options.environment }),
     ...(options.provider === undefined ? {} : { provider: options.provider }),
@@ -422,6 +423,7 @@ test('setup --no-embeddings skips runtime, model, and database preparation', asy
   let result: any;
   const unexpected = async (): Promise<never> => { throw new Error('Embedding side effect must not run'); };
   registerSetupCommand(cli.command('setup'), {
+    sourceInstaller: async () => ({ status: 'ready', version: '0.4.0', source: 'managed', reused: true }),
     withDatabase: unexpected,
     optionalRuntimeChecker: unexpected,
     optionalRuntimeInstaller: unexpected,

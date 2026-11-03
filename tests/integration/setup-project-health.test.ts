@@ -79,7 +79,7 @@ test('setup reports partial repair and exits nonzero in both human and JSON mode
       process.exitCode = undefined;
       let output = '';
       process.stdout.write = ((chunk: string | Uint8Array) => { output += chunk.toString(); return true; }) as typeof process.stdout.write;
-      await buildCli({ setupEnvironment: { env: options.env } }).parseAsync(['node', 'kiokuko-ai', 'setup', '--no-embeddings', '--no-standard-skills', ...(json ? ['--json'] : [])]);
+      await buildCli({ setupEnvironment: { env: options.env } }).parseAsync(['node', 'kiokuko-ai', 'setup', '--no-embeddings', '--no-source', '--no-standard-skills', ...(json ? ['--json'] : [])]);
       assert.equal(process.exitCode, 9);
       if (json) {
         const response = JSON.parse(output);

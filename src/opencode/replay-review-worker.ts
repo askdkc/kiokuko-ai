@@ -84,7 +84,7 @@ export async function runNativeReplayReview(input: ReplayReviewStart, ask: (q: R
     ...(!traceDirectory ? { sourceKind: 'unrecorded' as const } : {}),
     ...(signal ? { signal } : {}), ...(onApproved ? { onApproved: (proposal: ReplayMemoryProposal, key: string) => { approvalRetained = onApproved(proposal, key); } } : {}),
     ask: question => ask(question.phase === 'organize' && traceDirectory ? { ...question,
-      text: `If this task has ended${input.taskOutcome === 'failed' ? ' with a failed outcome' : ''}, may I organize the recorded run into proposed memories?\n${traceDirectory}\nA recording can span several requests or sessions. You will review its exact scope and contents before anything is saved. Decline if you are still working.` } : question),
+      text: `Create proposal / Skip\n${input.taskOutcome === 'failed' ? 'The task failed.' : 'If finished,'} turn its recording into a memory?\nRecordings may span tasks. Review before saving; skip if still working.` } : question),
     extract: () => traceDirectory
       ? extractReplayProposal({ ...input, traceDirectory, cwd: project.repositoryRoot, workspace: project.workspace })
       : Promise.resolve(unrecordedProposal({ workspace: project.workspace, taskId: input.taskId, sessionId: input.sessionId, draft: draft!.data! })),

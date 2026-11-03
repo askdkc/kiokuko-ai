@@ -21,7 +21,7 @@ const draft = {
   sourceNotes: ['Working tree and reported test results; no recording was made.'],
 };
 
-async function fixture(t: { after(fn: () => Promise<void> | void): void }, choices: Array<'organize' | 'approve' | 'decline' | 'revise'>, supportsElicitation = true) {
+async function fixture(t: { after(fn: () => Promise<void> | void): void }, choices: Array<'organize' | 'approve' | 'decline' | 'revise' | 'details'>, supportsElicitation = true) {
   const root = mkdtempSync(path.join(tmpdir(), 'kiokuko-no-replay-'));
   execFileSync('git', ['init', '-q', root]);
   const databasePath = path.join(root, 'memory.sqlite');
@@ -31,6 +31,8 @@ async function fixture(t: { after(fn: () => Promise<void> | void): void }, choic
   const prompts: string[] = [];
   if (supportsElicitation) client.setRequestHandler(ElicitRequestSchema, async req => {
     prompts.push(req.params.message);
+    assert.ok('requestedSchema' in req.params);
+    assert.match(JSON.stringify(req.params.requestedSchema.properties.choice), /Skip — do not save/);
     const db = openConnection(databasePath, { readOnly: true });
     try { assert.equal(db.prepare('SELECT COUNT(*) AS n FROM entries').get<{n:number}>()?.n, 0, 'nothing may be saved before native approval'); } finally { db.close(); }
     return { action: 'accept', content: { choice: choices.shift() ?? 'decline' } };
@@ -47,9 +49,12 @@ test('no-log MCP review asks the human and saves the exact approved project memo
   const result = await f.client.callTool({ name: 'memory_review_unrecorded', arguments: input });
   assert.equal((result.structuredContent as any)?.status, 'saved', JSON.stringify(result));
   assert.equal(f.prompts.length, 2);
-  assert.match(f.prompts[0]!, /AgenticReplay/i);
   assert.match(f.prompts[0]!, /without|no recording/i);
-  for (const text of [draft.title, draft.request, draft.body, draft.sourceNotes[0]!]) assert.ok(f.prompts[1]!.includes(text), text);
+  assert.ok(f.prompts.every(text => text.split('\n').length < 6));
+  assert.match(f.prompts[1]!, /Save \/ Edit \/ Skip \/ Details/);
+  assert.ok(f.prompts[1]!.includes(draft.request));
+  assert.match(f.prompts[1]!, /Remove only byte-identical files/);
+  assert.doesNotMatch(f.prompts[1]!, /schemaVersion/);
   const db = openConnection(f.databasePath); t.after(() => db.close());
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM entries').get<{n:number}>()?.n, 1);
   const recalled = await memoryContext(db, { cwd: f.root, query: 'retireStandardSkills' });
@@ -64,6 +69,15 @@ test('no-log MCP review asks the human and saves the exact approved project memo
   assert.equal((again.structuredContent as any)?.status, 'saved');
   assert.equal(f.prompts.length, 2);
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM entries').get<{n:number}>()?.n, 1);
+});
+
+test('MCP Details reveals the full revision on request without saving or changing it', async t => {
+  const f = await fixture(t, ['organize', 'details', 'approve']);
+  const result = await f.client.callTool({ name: 'memory_review_unrecorded', arguments: { cwd: f.root, requestId: 'details-1', draft } });
+  assert.equal((result.structuredContent as any)?.status, 'saved');
+  assert.equal(f.prompts.length, 3);
+  assert.ok(f.prompts[1]!.split('\n').length < 6);
+  for (const text of [draft.title, draft.request, draft.body, draft.sourceNotes[0]!]) assert.ok(f.prompts[2]!.includes(text), text);
 });
 
 test('decline at either native prompt and unavailable native UI never create memory', async t => {
@@ -158,7 +172,7 @@ test('a native revision replaces the draft finding and needs a fresh approval', 
   const result = await f.client.callTool({ name: 'memory_review_unrecorded', arguments: { cwd: f.root, requestId: 'revised', draft: { ...draft, body: `${draft.body} discardedinterpretation` } } });
   assert.equal((result.structuredContent as any)?.status, 'saved', JSON.stringify(result));
   assert.equal(prompts.length, 3);
-  assert.ok(prompts[1]!.includes(draft.body));
+  assert.match(prompts[1]!, /Remove only byte-identical files/);
   assert.ok(prompts[2]!.includes('Verify symlink behavior before applying this.'));
   assert.ok(!prompts[2]!.includes(draft.body));
   const db = openConnection(f.databasePath); t.after(() => db.close());

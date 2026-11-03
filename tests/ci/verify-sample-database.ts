@@ -152,7 +152,7 @@ function migrationVersions(value: unknown): number[] {
 
 async function verifySetup(environment: NodeJS.ProcessEnv, databasePath: string): Promise<void> {
   const setup = await runCliJson(
-    ['setup', '--no-embeddings', '--no-standard-skills', '--skill-discovery', 'off', '--json'],
+    ['setup', '--no-embeddings', '--no-source', '--no-standard-skills', '--skill-discovery', 'off', '--json'],
     'setup',
     environment,
   );

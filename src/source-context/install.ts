@@ -57,7 +57,7 @@ export async function downloadRelease(url: string, signal: AbortSignal, fetcher:
   }
   return Buffer.concat(chunks);
 }
-export interface InstallDependencies { signal?: AbortSignal; fetcher?: typeof fetch; runner?: SourceRunner; release?: ReturnType<typeof releaseAsset> }
+export interface InstallDependencies { signal?: AbortSignal; offline?: boolean; fetcher?: typeof fetch; runner?: SourceRunner; release?: ReturnType<typeof releaseAsset> }
 /** Only this explicit operation downloads. Publish a complete, probed directory once. */
 export async function setupSource(directory: string, dependencies: InstallDependencies = {}) {
   const asset = dependencies.release ?? releaseAsset();
@@ -79,6 +79,7 @@ export async function setupSource(directory: string, dependencies: InstallDepend
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     }
+    if (dependencies.offline) throw new SourceFailure('offline_installation_missing');
     const compressed = await downloadRelease(asset.url, signal, dependencies.fetcher);
     if (createHash('sha256').update(compressed).digest('hex') !== asset.sha256) throw new SourceFailure('checksum_mismatch');
     const archive = readReleaseArchive(compressed, asset.root);

@@ -137,7 +137,7 @@ try {
     KIOKUKO_DATA_DIR: path.join(temporaryRoot, 'memory'),
   };
   await mkdir(isolatedEnvironment.HOME, { recursive: true });
-  const setup = await run(cliPath, ['setup', '--no-embeddings', '--json'], temporaryRoot, isolatedEnvironment);
+  const setup = await run(cliPath, ['setup', '--no-embeddings', '--no-source', '--json'], temporaryRoot, isolatedEnvironment);
   const setupResult = JSON.parse(setup.stdout).data;
   const routineFiles = setupResult.files.filter(file => file.path.includes('/coding-ideal-routine-skill/'));
   assert.equal(routineFiles.length, 3, 'normal installed setup must deliver the coding routine and references');
@@ -147,7 +147,7 @@ try {
   }
   const instructions = setupResult.files.find(file => file.purpose === 'instructions');
   assert.match(await readFile(instructions.path, 'utf8'), /When useful for the current coding risk, read and apply `coding-ideal-routine-skill`/u);
-  const repeated = await run(cliPath, ['setup', '--no-embeddings', '--json'], temporaryRoot, isolatedEnvironment);
+  const repeated = await run(cliPath, ['setup', '--no-embeddings', '--no-source', '--json'], temporaryRoot, isolatedEnvironment);
   assert.equal(JSON.parse(repeated.stdout).data.files.every(file => file.action === 'unchanged'), true);
 
   const hostRequests = [];

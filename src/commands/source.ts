@@ -7,7 +7,7 @@ import { setupSource } from '../source-context/install.js';
 import { SourceContextService, sourceStatus } from '../source-context/service.js';
 import { successEnvelope } from '../serialization/envelope.js';
 
-async function withSourceCancellation<T>(operation: (signal: AbortSignal) => Promise<T>): Promise<T> {
+export async function withSourceCancellation<T>(operation: (signal: AbortSignal) => Promise<T>): Promise<T> {
   const controller = new AbortController();
   const interrupt = () => controller.abort(new DOMException('Source operation cancelled', 'AbortError'));
   process.once('SIGINT', interrupt); process.once('SIGTERM', interrupt);

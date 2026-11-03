@@ -7,6 +7,7 @@ import { recordEntryInTransaction } from '../memory/entries.js';
 import { createApprovedReplayMemoryStore } from '../memory/replay-store.js';
 import { extractReplayProposal } from '../memory/replay-extract.js';
 import { reviewCompletedReplay, type ReviewReceipt, type ReplayMemoryProposal } from '../memory/replay-review.js';
+import { askMcpReviewQuestion } from './review-question.js';
 
 /** MCP elicitation responses come from the client UI, never a model tool argument. */
 export function createMcpReplayReview(server: McpServer, withDatabase: <T>(fn:(db:SqliteDatabase)=>Promise<T>|T)=>Promise<T>) {
@@ -37,12 +38,7 @@ export function createMcpReplayReview(server: McpServer, withDatabase: <T>(fn:(d
     const combined=signal?AbortSignal.any([signal,abort.signal]):abort.signal;
     const receipt=await reviewCompletedReplay({completed:true,taskOutcome:binding.taskOutcome,workspace:binding.workspace,taskId:input.runId,sessionId:binding.sessionId,signal:combined,
       extract:()=>extractReplayProposal({cwd:root,traceDirectory:input.traceDirectory,workspace:binding.workspace,taskId:input.runId,sessionId:binding.sessionId}),
-      ask:async question=>{
-        const choices=question.phase==='organize'?['organize','decline']:['approve','revise','decline'];
-        const result=await server.server.elicitInput({mode:'form',message:question.text,requestedSchema:{type:'object',properties:{choice:{type:'string',enum:choices},comment:{type:'string',maxLength:2048}},required:['choice']}},{signal:combined,timeout:300_000});
-        const choice=result.action==='accept'?result.content?.choice:'decline';
-        return {questionId:question.id,choice:choice==='organize'||choice==='approve'||choice==='revise'?choice:'decline',...(typeof result.content?.comment==='string'?{comment:result.content.comment}:{})};
-      },
+      ask:question=>askMcpReviewQuestion(server,question,combined),
       onApproved:(proposal,key)=>{approved.set(input.runId,{proposal,key});},
       save:async(proposal,key)=>withDatabase(async db=>{
         const run=new LedgerStore(db).readRun(input.runId);

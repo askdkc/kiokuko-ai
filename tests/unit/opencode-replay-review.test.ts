@@ -26,7 +26,7 @@ function fixture() {
     ui: { router: { current: () => ({ type: 'session', sessionID: sessionId }) }, toast: { show: () => undefined },
       dialog: { confirm: async ({ message }: { message: string }) => { shown.push(message); return true; },
         alert: async ({ message }: { message: string }) => { shown.push(message); },
-        select: async () => choices.shift(), prompt: async () => 'Use the revised finding.' } },
+        select: async ({ title }: { title: string }) => { shown.push(title); return choices.shift(); }, prompt: async () => 'Use the revised finding.' } },
   } as unknown as Plugin.Context;
   return { ctx, shown, choices, emit(type: string, id = 'event-1') { listener?.({ details: { id, type, data: { sessionID: sessionId } } }); }, setMessages(value: unknown[]) { messages = value; }, navigate(id: string) { sessionId = id; } };
 }
@@ -46,6 +46,14 @@ test('native dialog displays the exact revision, comments and close never approv
   assert.equal(f.shown[0], q.text);
   assert.deepEqual(await askNativeReplayQuestion(f.ctx, { ...q, id: 'q-2', revision: 2 }), { questionId: 'q-2', choice: 'approve' });
   assert.deepEqual(await askNativeReplayQuestion(f.ctx, q), { questionId: 'q-1', choice: 'decline' });
+});
+
+test('native summary and actions share one dialog; full details require an explicit action', async () => {
+  const f = fixture();
+  f.choices.splice(0, f.choices.length, 'details', 'approve');
+  const q: ReviewQuestion = { id: 'details', phase: 'review', revision: 1, text: 'Save / Edit / Skip / Details\nShort summary', details: 'Full immutable revision' };
+  assert.deepEqual(await askNativeReplayQuestion(f.ctx, q), { questionId: q.id, choice: 'approve' });
+  assert.deepEqual(f.shown, [q.text, q.details, q.text]);
 });
 
 test('successful final idle offers once per request; tool turns and duplicate events do not', async t => {

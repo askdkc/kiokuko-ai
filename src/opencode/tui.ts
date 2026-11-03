@@ -16,15 +16,19 @@ export async function askNativeReplayQuestion(ctx: Plugin.Context, question: Rev
       label: { confirm: question.sourceKind === 'unrecorded' ? 'Create proposal' : 'Organize', cancel: 'No, finish without saving' } });
     return { questionId: question.id, choice: yes === true ? 'organize' : 'decline' };
   }
-  // Exact canonical revision is visible before the approve/revise decision.
-  await ctx.ui.dialog.alert({ title: `Proposed memory revision ${question.revision}`, message: question.text });
-  const choice = await ctx.ui.dialog.select({ title: `Save reviewed revision ${question.revision}?`, options: [
-    { title: 'Save this exact revision', value: 'approve' },
-    { title: 'Revise the proposed findings', value: 'revise' },
-    { title: 'Finish without saving', value: 'decline' },
-  ] });
+  // Keep actions beside the summary, not behind a large JSON alert.
+  let choice: string | undefined;
+  do {
+    choice = await ctx.ui.dialog.select({ title: question.text, options: [
+      { title: 'Save memory', value: 'approve' },
+      { title: 'Edit key points', value: 'revise' },
+      { title: 'Skip — do not save', value: 'decline' },
+      ...(question.details ? [{ title: 'Details — everything that will be saved', value: 'details' }] : []),
+    ] });
+    if (choice === 'details') await ctx.ui.dialog.alert({ title: `Full memory v${question.revision}`, message: question.details! });
+  } while (choice === 'details');
   if (choice !== 'revise') return { questionId: question.id, choice: choice === 'approve' ? 'approve' : 'decline' };
-  const comment = await ctx.ui.dialog.prompt({ title: 'Revise proposed memory', description: 'Describe the corrected findings. Recorded evidence remains attributed to its source; the revised proposal will be shown again.' });
+  const comment = await ctx.ui.dialog.prompt({ title: 'Edit key points', description: 'Replace the key points. Source evidence stays unchanged. Review again before saving.' });
   return comment?.trim() ? { questionId: question.id, choice: 'revise', comment } : { questionId: question.id, choice: 'decline' };
 }
 

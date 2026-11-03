@@ -42,6 +42,7 @@ for (const initial of ['fresh', 'legacy', 'current'] as const) {
         const cli = new Command();
         cli.exitOverride();
         const dependencies: EmbeddingsCommandDependencies = {
+          sourceInstaller: async () => ({ status: 'ready', version: '0.4.0', source: 'managed', reused: true }),
           pathEnvironment: { env },
           withDatabase: async (operation) => {
             const database = openConnection(getGlobalDatabasePath({ env }));
@@ -139,6 +140,7 @@ test('embedding setup reports missing instructions in JSON and repairs them afte
     let output: any;
     const cli = new Command();
     registerEmbeddingsCommands(cli, {
+      sourceInstaller: async () => ({ status: 'ready', version: '0.4.0', source: 'managed', reused: true }),
       pathEnvironment: { env },
       setupInput: input,
       setupOutput,

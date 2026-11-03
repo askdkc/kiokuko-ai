@@ -1,11 +1,11 @@
 # Source investigation with ripwire
 
-Optional ripwire provides ranked definitions, callers/callees and test
+Ripwire is installed automatically by `kiokuko-ai setup` and provides ranked definitions, callers/callees and test
 candidates. It is navigation evidence, not proof that a change is safe. Automatic
 Enno use remains disabled until the repository acceptance evaluation passes.
 
 ```bash
-kiokuko-ai source setup
+kiokuko-ai setup
 kiokuko-ai source status
 kiokuko-ai source inspect --task "Inspect model selection failures" --query "readExecutionRouting" --json
 kiokuko-ai source configure --mode off
@@ -13,9 +13,14 @@ kiokuko-ai source configure --mode auto --binary /absolute/path/to/ripwire
 kiokuko-ai source configure --managed
 ```
 
-Only `source setup` downloads anything: checksum-pinned macOS/Linux arm64/x64
-assets (currently 0.4.0), binary and license only. This download pin identifies audited bytes; it is not a runtime version gate. Explicit binaries are accepted when their consumed pack-task API and JSON fields validate, including compatible additive fields. Status/setup exercise a small source probe. Observed version and binary-content fingerprint identify results and caches. No upstream skills, agent settings, shell files,
-repository binding, PATH discovery, automatic upgrade or source build is involved.
+`setup` installs ripwire by default, even with `--no-embeddings`. Use `--no-source`
+to skip it. `--dry-run` never installs it; `--offline` requires an existing verified
+installation and never downloads. Existing installations are probed and reused.
+`source setup` remains available for installing ripwire alone.
+
+These setup commands download checksum-pinned macOS/Linux arm64/x64
+assets (currently 0.4.0), binary and license only. This download pin identifies audited bytes; it is not a runtime version gate. Explicit binaries are accepted when their consumed pack-task API and JSON fields validate, including compatible additive fields. Status/setup exercise a small source probe. Observed version and binary-content fingerprint identify results and caches. The ripwire installer does not install upstream skills or modify agent settings,
+shell files, repository bindings or PATH; it does not auto-upgrade or build from source.
 Installation is atomic and preserves an existing installation on failure. An
 interrupted setup may leave `source-context/setup.lock`; confirm no setup is
 running before removing that empty directory and retrying.

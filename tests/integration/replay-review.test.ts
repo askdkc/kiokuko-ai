@@ -72,7 +72,8 @@ test('native approved revision survives restart, recalls context, retains failed
   assert.equal(stored.length, 1); assert.equal(stored[0]?.revision, 2);
   assert.equal(stored[0]?.attempts[0]?.outcome, 'failed'); assert.equal(stored[0]?.attempts[1]?.outcome, 'succeeded');
   assert.equal(stored[0]?.findings.length, 1); assert.equal(stored[0]?.findings[0]?.basis, 'user_corrected');
-  assert.ok(questions[2]?.text.includes(JSON.stringify(stored[0], null, 2)));
+  assert.equal(questions[2]?.details, JSON.stringify(stored[0], null, 2));
+  assert.ok(questions[2]!.text.split('\n').length < 6);
   assert.equal(createApprovedReplayMemoryStore(db, 'foreign').query('migration').length, 0);
   assert.equal(createApprovedReplayMemoryStore(db, f.workspace).query('unrelated').length, 0);
   const recalled = await memoryContext(db, { cwd: f.input.cwd, query: 'migration retry' });
@@ -179,7 +180,7 @@ test('packaged native Node worker completes actual IPC approval and commits only
   assert.equal(receipt.status, 'saved'); assert.equal(questions.length, 2);
   const db = openConnection(f.databasePath, { readOnly: true }); t.after(() => db.close());
   const stored = createApprovedReplayMemoryStore(db, f.workspace).query('migration');
-  assert.equal(stored.length, 1); assert.ok(questions[1]?.text.includes(JSON.stringify(stored[0], null, 2)));
+  assert.equal(stored.length, 1); assert.equal(questions[1]?.details, JSON.stringify(stored[0], null, 2));
 });
 
 test('native IPC retains the approved revision before commit and refuses to write when retention fails', async t => {
@@ -323,7 +324,7 @@ test('packaged native worker reviews and stores an explicitly unrecorded proposa
   assert.ok(stored);
   assert.equal(stored.source.kind, 'unrecorded');
   assert.deepEqual(stored.source.traces, []);
-  assert.ok(questions[1]!.text.includes(JSON.stringify(stored, null, 2)));
+  assert.equal(questions[1]!.details, JSON.stringify(stored, null, 2));
 });
 
 

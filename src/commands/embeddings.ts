@@ -26,6 +26,9 @@ import { acquireEmbeddingSetupLock, type EmbeddingSetupLock, withEmbeddingSetupL
 import type { ModelDownloader } from '../embedding/model-download.js';
 import type { InstalledModel } from '../embedding/model-installation.js';
 import type { PathEnvironment } from '../config/paths.js';
+import { sourceDirectory } from '../source-context/config.js';
+import { setupSource } from '../source-context/install.js';
+import { withSourceCancellation } from './source.js';
 import {
   parseEnnoSetupMode,
   parseSetupSkillDiscoveryMode,
@@ -56,6 +59,7 @@ export interface EmbeddingsSignalSource {
 }
 
 export interface EmbeddingsCommandDependencies {
+  readonly sourceInstaller?: typeof setupSource;
   readonly withDatabase: EmbeddingsDatabaseRunner;
   readonly withSetupDatabase?: <T>(dryRun: boolean, operation: (database: SqliteDatabase, backend?: VectorSearchBackend) => T | Promise<T>) => Promise<T>;
   readonly environment?: NodeJS.ProcessEnv;
@@ -272,8 +276,9 @@ function defaultOutput(
 export function registerSetupCommand(command: Command, dependencies: EmbeddingsCommandDependencies, operation: 'setup' | 'embeddings.setup' = 'setup'): Command {
   const output = dependencies.output ?? defaultOutput;
   command
-    .description(operation === 'setup' ? 'Configure OpenCode and install local semantic search' : 'Compatibility alias for kiokuko-ai setup')
+    .description(operation === 'setup' ? 'Configure OpenCode, ripwire and local semantic search' : 'Compatibility alias for kiokuko-ai setup')
     .option('--no-embeddings', 'Configure OpenCode without installing or changing embeddings')
+    .option('--no-source', 'Skip installing ripwire source analysis')
     .option('--preset <name>', 'Embedding preset', 'local-small')
     .option('--command <path>', 'Kiokuko executable name or absolute path')
     .option('--dry-run', 'Plan setup without downloading or mutating anything')
@@ -286,6 +291,7 @@ export function registerSetupCommand(command: Command, dependencies: EmbeddingsC
     .action(async (options: {
       preset: string;
       embeddings: boolean;
+      source: boolean;
       command?: string;
       dryRun?: boolean;
       standardSkills: boolean;
@@ -326,7 +332,19 @@ export function registerSetupCommand(command: Command, dependencies: EmbeddingsC
         }, {
           ...(dependencies.setupOpenCode === undefined ? {} : { setupOpenCode: dependencies.setupOpenCode }),
         });
-        if (!embeddingsEnabled) return { setup, embeddingData: undefined };
+        let sourceSetup: Awaited<ReturnType<typeof setupSource>> | { status: 'planned' | 'skipped' };
+        if (options.source === false || dryRun) {
+          sourceSetup = { status: options.source === false ? 'skipped' : 'planned' };
+        } else {
+          if (!options.json) (dependencies.setupOutput ?? process.stdout).write('Preparing ripwire source analysis; existing installations are reused.\n');
+          try {
+            sourceSetup = await withSourceCancellation(signal => (dependencies.sourceInstaller ?? setupSource)(
+              sourceDirectory(dependencies.pathEnvironment), { signal, offline: options.offline === true }));
+          } catch {
+            throw new KiokukoError('SERVICE_UNAVAILABLE', 'Ripwire installation failed. Rerun kiokuko-ai setup, or use --no-source to skip source analysis.');
+          }
+        }
+        if (!embeddingsEnabled) return { setup, sourceSetup, embeddingData: undefined };
         const runDatabase = dependencies.withSetupDatabase === undefined
           ? dependencies.withDatabase
           : <T>(callback: (database: SqliteDatabase, backend?: VectorSearchBackend) => T | Promise<T>) => dependencies.withSetupDatabase!(dryRun, callback);
@@ -344,9 +362,9 @@ export function registerSetupCommand(command: Command, dependencies: EmbeddingsC
           ...(backend === undefined ? {} : { backendId: backend.id }),
           ...(setupLock === undefined ? {} : { setupLock }),
         }));
-        return { setup, embeddingData };
+        return { setup, sourceSetup, embeddingData };
       };
-      const { setup, embeddingData } = setupLock === undefined
+      const { setup, sourceSetup, embeddingData } = setupLock === undefined
         ? await executeSetup()
         : await withEmbeddingSetupLock(setupLock, executeSetup);
       const health = summarizeProjectAgentRefresh(setup.projectAgentFiles);
@@ -355,6 +373,7 @@ export function registerSetupCommand(command: Command, dependencies: EmbeddingsC
         ...embeddingData,
         ...(operation === 'setup' ? { projectAgentHealth: health } : {}),
         embeddingsSetup: embeddingsEnabled ? dryRun ? 'planned' : 'completed' : 'skipped',
+        sourceSetup,
         ok: health.ok,
         projectSetup: {
           client: setup.client,

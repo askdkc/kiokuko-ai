@@ -204,8 +204,11 @@ test('setup validates before publishing, is repeatable, and retains an existing 
   let downloads = 0;
   const dependencies = { release, fetcher: (async () => { downloads++; return new Response(new Uint8Array(archive)); }) as typeof fetch,
     runner: (async request => ({ code: 0, stderr: Buffer.alloc(0), stdout: Buffer.from(request.args.includes('--version')
-      ? 'ripwire 0.4.0' : JSON.stringify({ ...packFixture(), ranking: [{ p: 'probe.ts', n: 'sourceProbe', l: 1 }] })) })) as typeof f.runner };
+       ? 'ripwire 0.4.0' : JSON.stringify({ ...packFixture(), ranking: [{ p: 'probe.ts', n: 'sourceProbe', l: 1 }] })) })) as typeof f.runner };
+  await assert.rejects(setupSource(f.directory, { ...dependencies, offline: true }), /offline_installation_missing/u);
+  assert.equal(downloads, 0);
   const installed = await setupSource(f.directory, dependencies); assert.equal(installed.reused, false);
+  assert.equal((await setupSource(f.directory, { ...dependencies, offline: true })).reused, true);
   assert.equal((await setupSource(f.directory, dependencies)).reused, true); assert.equal(downloads, 1);
   assert.deepEqual((await readdir(path.join(f.directory, 'ripwire-0.4.0'))).sort(), ['LICENSE', 'release.json', 'ripwire']);
   await assert.rejects(setupSource(path.join(f.base, 'bad'), { ...dependencies, release: { ...release, sha256: '0'.repeat(64) } }), /checksum_mismatch/u);
