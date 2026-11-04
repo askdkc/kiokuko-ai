@@ -98,7 +98,13 @@ async function checkpointRules(
     let stored: { status: string; workspace: string } | undefined;
     const receipt = await reviewCompletedReplay({ completed: true, taskId: "policy-fixture", sessionId: "host-fixture", workspace: project.workspace,
       ask: async question => {
-        if (question.phase === "review") { assert.ok(question.text.includes(title)); assert.ok(question.text.includes(body)); }
+        if (question.phase === "review") {
+          assert.equal(question.text.split('\n').length, 5);
+          assert.match(question.text, /Save \/ Edit \/ Skip \/ Details/);
+          const candidate = JSON.parse(question.details!);
+          assert.equal(candidate.request.text, title);
+          assert.deepEqual(candidate.findings, [{ kind: 'key_point', text: body, basis: 'user_corrected', evidenceRefs: [] }]);
+        }
         return { questionId: question.id, choice: question.phase === "organize" ? "organize" : "approve" };
       },
       extract: async () => ({ schemaVersion: 1, proposalId: "fixture", revision: 1,
