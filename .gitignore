@@ -7,7 +7,6 @@ node_modules
 .opencode/
 AGENTS.md
 !templates/AGENTS.md
-.kiokuko.json
 
 # SQLite runtime sidecars are never source artifacts
 *.sqlite-wal
@@ -20,3 +19,4 @@ AGENTS.md
 # Reproducible Akinator evaluation and benchmark reports
 /artifacts
 .kiokuko-ai.json
+.kiokuko.json
