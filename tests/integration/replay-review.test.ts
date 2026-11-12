@@ -13,6 +13,10 @@ import { createApprovedReplayMemoryStore } from '../../src/memory/replay-store.j
 import { memoryContext, observeMemory, improveMemory } from '../../src/memory/learning.js';
 import type { ReviewQuestion } from '../../src/memory/replay-review.js';
 import { renderOpenCodeLearningContext } from '../../src/opencode/learning.js';
+import { registerOpenCodeLearning } from '../../src/opencode/learning.js';
+import { OpenCodePluginLifecycle } from '../../src/opencode/lifecycle.js';
+import { pluginContextFixture } from '../fixtures/opencode-v2-plugin.js';
+import { recordEntryInTransaction, readEntry } from '../../src/memory/entries.js';
 
 async function fixture(t: { after(fn: () => void): void }, schemaVersion = '0.4.0') {
   const directory = mkdtempSync(path.join(tmpdir(), 'kiokuko-reviewed-replay-'));
@@ -48,12 +52,12 @@ test('automatic observations and improvement cannot write, including a fabricate
   assert.deepEqual(db.prepare('SELECT count(*) AS n FROM entries').get(), before);
 });
 
-test('decline before extraction and after preview leave no proposal, entry, or replay tables', async t => {
+test('declining the compact preview leaves no proposal, entry, or replay tables', async t => {
   const f = await fixture(t);
   for (const afterPreview of [false, true]) {
     let asks = 0;
     const result = await runNativeReplayReview(f.input, async q => { asks++; return { questionId: q.id, choice: afterPreview && q.phase === 'organize' ? 'organize' : 'decline' }; });
-    assert.equal(result.status, 'declined'); assert.equal(asks, afterPreview ? 2 : 1);
+    assert.equal(result.status, 'declined'); assert.equal(asks, 1);
     const db = openConnection(f.databasePath, { readOnly: true });
     assert.equal(db.prepare("SELECT 1 FROM sqlite_master WHERE name='replay_memories'").get(), undefined);
     assert.equal(db.prepare('SELECT count(*) AS n FROM entries').get<{ n: number }>()?.n, 0); db.close();
@@ -66,16 +70,18 @@ test('native approved revision survives restart, recalls context, retains failed
     questions.push(q);
     return { questionId: q.id, choice: q.phase === 'organize' ? 'organize' : q.revision === 1 ? 'revise' : 'approve', ...(q.phase === 'review' && q.revision === 1 ? { comment: 'Migration retry check passed; overall task still needs deployment validation.' } : {}) };
   });
-  assert.equal(receipt.status, 'saved'); assert.equal(questions.length, 3);
+  assert.equal(receipt.status, 'saved'); assert.equal(questions.length, 2);
   const db = openConnection(f.databasePath); t.after(() => db.close());
   const stored = createApprovedReplayMemoryStore(db, f.workspace).query('migration retry');
   assert.equal(stored.length, 1); assert.equal(stored[0]?.revision, 2);
   assert.equal(stored[0]?.attempts[0]?.outcome, 'failed'); assert.equal(stored[0]?.attempts[1]?.outcome, 'succeeded');
   assert.equal(stored[0]?.findings.length, 1); assert.equal(stored[0]?.findings[0]?.basis, 'user_corrected');
-  assert.equal(questions[2]?.details, JSON.stringify(stored[0], null, 2));
-  assert.ok(questions[2]!.text.split('\n').length < 6);
+  assert.equal(questions[1]?.details, JSON.stringify(stored[0], null, 2));
+  assert.ok(questions[1]!.text.includes(stored[0]!.summary!));
   assert.equal(createApprovedReplayMemoryStore(db, 'foreign').query('migration').length, 0);
   assert.equal(createApprovedReplayMemoryStore(db, f.workspace).query('unrelated').length, 0);
+  assert.equal(createApprovedReplayMemoryStore(db, f.workspace).query('Please fix unrelated CSS spacing').length, 0,
+    'generic request verbs must not make unrelated memories relevant');
   const recalled = await memoryContext(db, { cwd: f.input.cwd, query: 'migration retry' });
   assert.match(JSON.stringify(recalled.entries), /deployment validation/);
   const count = db.prepare('SELECT count(*) AS n FROM entries').get();
@@ -177,10 +183,10 @@ test('packaged native Node worker completes actual IPC approval and commits only
     assert.equal(check.prepare('SELECT COUNT(*) AS n FROM entries').get<{n:number}>()?.n, 0); check.close();
     return { questionId: question.id, choice: question.phase === 'organize' ? 'organize' : 'approve' };
   }, new AbortController().signal);
-  assert.equal(receipt.status, 'saved'); assert.equal(questions.length, 2);
+  assert.equal(receipt.status, 'saved'); assert.equal(questions.length, 1);
   const db = openConnection(f.databasePath, { readOnly: true }); t.after(() => db.close());
   const stored = createApprovedReplayMemoryStore(db, f.workspace).query('migration');
-  assert.equal(stored.length, 1); assert.equal(questions[1]?.details, JSON.stringify(stored[0], null, 2));
+  assert.equal(stored.length, 1); assert.equal(questions[0]?.details, JSON.stringify(stored[0], null, 2));
 });
 
 test('native IPC retains the approved revision before commit and refuses to write when retention fails', async t => {
@@ -229,7 +235,7 @@ test('Stop while acquiring the save database prevents a late approved revision f
   ledger.updateRunStatusInTransaction('terminal', 'completed');
   let prompts = 0, connections = 0; let entered!: () => void, release!: () => void;
   const pending = new Promise<void>(r => entered = r); const wait = new Promise<void>(r => release = r);
-  const server = { server: { getClientCapabilities: () => ({ elicitation: { form: {} } }), elicitInput: async () => ({ action: 'accept', content: { choice: ++prompts === 1 ? 'organize' : 'approve' } }) } };
+  const server = { server: { getClientCapabilities: () => ({ elicitation: { form: {} } }), elicitInput: async () => { prompts++; return { action: 'accept', content: { choice: 'approve' } }; } } };
   const review = createMcpReplayReview(server as any, async fn => { if (++connections === 2) { entered(); await wait; } return fn(db); });
   const controller = new AbortController();
   const running = review.review({ runId: 'terminal', cwd: f.input.cwd, traceDirectory: f.input.traceDirectory }, controller.signal);
@@ -263,12 +269,12 @@ test('MCP adapter retries the retained approval after a lost save acknowledgemen
   ledger.createRunInTransaction({ runId: 'uncertain', workspace: f.workspace, protocolVersion: '1', client: { kind: 'opencode', sessionId: 'session-1' }, captureProfile: 'minimal', coverage: { run: 'best_effort', tool: 'declared', command: 'declared', file: 'declared', approval: 'unavailable' }, task: { title: 'Check migration', query: 'Check migration', profileHints: { taskType: null, target: null, expected: null, constraints: null } }, metadata: { intakeRequired: false } });
   ledger.updateRunStatusInTransaction('uncertain', 'completed');
   let prompts = 0, connections = 0;
-  const server = { server: { getClientCapabilities: () => ({ elicitation: { form: {} } }), elicitInput: async () => ({ action: 'accept', content: { choice: ++prompts === 1 ? 'organize' : 'approve' } }) } };
+  const server = { server: { getClientCapabilities: () => ({ elicitation: { form: {} } }), elicitInput: async () => { prompts++; return { action: 'accept', content: { choice: 'approve' } }; } } };
   const review = createMcpReplayReview(server as any, async fn => { const n = ++connections; const result = await fn(db); if (n === 2) throw Error('lost save acknowledgement'); return result; });
   const input = { runId: 'uncertain', cwd: f.input.cwd, traceDirectory: f.input.traceDirectory };
   const uncertain = await review.review(input); assert.equal(uncertain.status, 'unavailable'); assert.match(uncertain.approvalKey!, /^[a-f0-9]{64}$/u);
   const recovered = await review.review(input); assert.equal(recovered.status, 'saved'); assert.equal(recovered.approvalKey, uncertain.approvalKey);
-  assert.equal(prompts, 2); assert.equal(db.prepare('SELECT COUNT(*) AS n FROM entries').get<{n:number}>()?.n, 1);
+  assert.equal(prompts, 1); assert.equal(db.prepare('SELECT COUNT(*) AS n FROM entries').get<{n:number}>()?.n, 1);
 });
 
 
@@ -317,14 +323,14 @@ test('packaged native worker reviews and stores an explicitly unrecorded proposa
     return { questionId: q.id, choice: q.phase === 'organize' ? 'organize' : 'approve' };
   }, new AbortController().signal);
   assert.equal(receipt.status, 'saved');
-  assert.equal(questions.length, 2);
-  assert.match(questions[0]!.text, /without a recording/i);
+  assert.equal(questions.length, 1);
+  assert.match(questions[0]!.text, /No recording/i);
   const db = openConnection(f.databasePath); t.after(() => db.close());
   const [stored] = createApprovedReplayMemoryStore(db, f.workspace).query('migration');
   assert.ok(stored);
   assert.equal(stored.source.kind, 'unrecorded');
   assert.deepEqual(stored.source.traces, []);
-  assert.equal(questions[1]!.details, JSON.stringify(stored, null, 2));
+  assert.equal(questions[0]!.details, JSON.stringify(stored, null, 2));
 });
 
 
@@ -339,7 +345,7 @@ test('missing or empty recordings offer unrecorded review, but partial recording
       questions.push(q); return { questionId: q.id, choice: q.phase === 'organize' ? 'organize' : 'approve' };
     });
     assert.equal(receipt.status, 'saved');
-    assert.match(questions[0]!.text, /without a recording/i);
+    assert.match(questions[0]!.text, /No recording/i);
   }
   const partial = path.join(runs, 'partial'); mkdirSync(partial);
   writeFileSync(path.join(partial, 'manifest.json'), '{}');
@@ -348,8 +354,7 @@ test('missing or empty recordings offer unrecorded review, but partial recording
     questions.push(q); return { questionId: q.id, choice: 'organize' };
   });
   assert.equal(result.status, 'unavailable');
-  assert.equal(questions.length, 1);
-  assert.doesNotMatch(questions[0]!.text, /without a recording/i);
+  assert.equal(questions.length, 0, 'invalid recording fails before the save prompt');
   const db = openConnection(f.databasePath); t.after(() => db.close());
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM entries').get<{n:number}>()?.n, 2);
 });
@@ -370,4 +375,52 @@ test('an external or symlinked recording path cannot be reclassified as an unrec
   }
   const db = openConnection(f.databasePath, { readOnly: true }); t.after(() => db.close());
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM entries').get<{n:number}>()?.n, 0);
+});
+
+test('approved six-line body is searched by Japanese keywords and tags on the first context of another session', async t => {
+  const f = await fixture(t);
+  let displayed = '';
+  const { traceDirectory: _trace, ...input } = f.input;
+  const receipt = await runNativeReplayReview({ ...input, unrecordedDraft: {
+    title: 'ロック対策', request: 'SQLiteの競合を修正する',
+    body: '一時的なロックだけ再試行する。配置先の確認は未実施。',
+    tags: ['ロック対策'], keywords: ['排他制御'], sourceNotes: [],
+  } }, async question => {
+    const proposal = JSON.parse(question.details!);
+    displayed = proposal.summary;
+    assert.equal(displayed.split('\n').length, 6);
+    assert.ok(question.text.includes(displayed));
+    return { questionId: question.id, choice: 'approve' };
+  });
+  assert.equal(receipt.status, 'saved');
+  const db = openConnection(f.databasePath); t.after(() => db.close());
+  const indexed = db.prepare('SELECT id FROM entries WHERE workspace=?').get<{id: string}>(f.workspace)!;
+  assert.equal(readEntry(db, { workspace: f.workspace, entryId: indexed.id }).body, displayed);
+  const host = pluginContextFixture(input.cwd);
+  const lifecycle = new OpenCodePluginLifecycle(); t.after(() => lifecycle.dispose(() => undefined));
+  await registerOpenCodeLearning(host.ctx, input.cwd, lifecycle, {
+    recall: async (query, sessionId) => renderOpenCodeLearningContext(await memoryContext(db, { cwd: input.cwd, query, sessionId })),
+  }, reason => assert.fail(reason));
+  for (const query of ['排他制御を修正して', 'ロック対策を実装して']) {
+    await host.hooks.get('session:prompt')!({ sessionID: 'ses_1', messageID: query, prompt: { text: query } } as never);
+    const system: unknown[] = [];
+    await host.hooks.get('session:context')!({ sessionID: 'ses_1', system } as never);
+    assert.match(JSON.stringify(system), /一時的なロック/);
+    assert.match(JSON.stringify(system), /未実施/);
+  }
+});
+
+test('older project memories are recalled by body and tags without leaking another repository', async t => {
+  const f = await fixture(t);
+  const db = openConnection(f.databasePath); t.after(() => db.close());
+  recordEntryInTransaction(db, { workspace: f.workspace, kind: 'lesson', title: '既存の記憶',
+    body: 'マイグレーションは新しい番号のファイルを追加する。', tags: ['forward-only'] });
+  for (const selector of [{ query: 'マイグレーションを追加して' }, { tags: ['forward-only'] }]) {
+    const context = await memoryContext(db, { cwd: f.input.cwd, ...selector });
+    assert.equal(context.entries.length, 1, JSON.stringify(context));
+    assert.match(context.entries[0]!.summary!, /新しい番号/);
+  }
+  const other = path.join(f.input.cwd, 'foreign'); execFileSync('git', ['init', '-q', other]);
+  await resolveProjectWorkspace(db, other);
+  assert.deepEqual((await memoryContext(db, { cwd: other, query: 'マイグレーション' })).entries, []);
 });

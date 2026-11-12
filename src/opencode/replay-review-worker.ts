@@ -83,8 +83,7 @@ export async function runNativeReplayReview(input: ReplayReviewStart, ask: (q: R
   return reviewCompletedReplay({ completed: true, ...input, workspace: project.workspace,
     ...(!traceDirectory ? { sourceKind: 'unrecorded' as const } : {}),
     ...(signal ? { signal } : {}), ...(onApproved ? { onApproved: (proposal: ReplayMemoryProposal, key: string) => { approvalRetained = onApproved(proposal, key); } } : {}),
-    ask: question => ask(question.phase === 'organize' && traceDirectory ? { ...question,
-      text: `Create proposal / Skip\n${input.taskOutcome === 'failed' ? 'The task failed.' : 'If finished,'} turn its recording into a memory?\nRecordings may span tasks. Review before saving; skip if still working.` } : question),
+    ask,
     extract: () => traceDirectory
       ? extractReplayProposal({ ...input, traceDirectory, cwd: project.repositoryRoot, workspace: project.workspace })
       : Promise.resolve(unrecordedProposal({ workspace: project.workspace, taskId: input.taskId, sessionId: input.sessionId, draft: draft!.data! })),
@@ -98,7 +97,7 @@ export async function runNativeReplayReview(input: ReplayReviewStart, ask: (q: R
         createApprovedReplayMemoryStore(database, project.workspace, (approved, approvalKey) => {
           return recordEntryInTransaction(database, { workspace: project.workspace, kind: 'lesson', status: 'candidate', trustLevel: 'untrusted',
             title: approved.title ?? `Reviewed recorded experience: ${approved.request.text.slice(0, 100) || approved.source.taskId}`,
-            body: [approved.source.kind === 'unrecorded' ? 'User-reviewed unrecorded experience; claims are unverified.' : 'Approved recorded-experience excerpt. Full revision is retained in the replay store.', approved.request.text, ...approved.findings.map(finding => finding.text)].join('\n').slice(0, 19000), tags: approved.tags, confidence: 0.5,
+            body: approved.summary!, summary: approved.summary!, tags: [...new Set([...approved.tags, ...approved.keywords])].slice(0, 20), confidence: 0.5,
             scope: buildStructuredScope({ visibility: 'project', retrievalScope: 'project-only', repositoryId: project.repositoryId, memoryClass: 'workflow' }),
             provenance: { type: approved.source.kind === 'unrecorded' ? 'user_reviewed_unrecorded' : 'user_reviewed_replay', reference: approvalKey, sourceRepositoryId: project.repositoryId, sourceWorkspace: project.workspace }, createdBy: 'kiokuko-ai-user-review' });
         }).save(proposal, key);

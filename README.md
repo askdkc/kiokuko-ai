@@ -21,6 +21,8 @@ Recall defaults to 16,000 Unicode body characters, with a separate bounded typed
 Memory is separated into Project, Ecosystem, and Global scopes. Current source,
 configuration, and execution results take precedence over remembered context.
 
+Before coding, request keywords and tags retrieve matching memories from the same repository. After work, one native dialog shows a compact summary of about six lines: save it, edit it, or skip. No comment is required. Only the approved summary and bounded provenance/search metadata are saved, not raw logs.
+
 Record OpenCode and import its final trace with `kiokuko-ai trace record --`. Interactive setup can add the `agenticreplay-opencode` shorthand. See [AgenticReplay integration](docs/agenticreplay-integration.md) for synchronization and recovery.
 
 ## Quick start

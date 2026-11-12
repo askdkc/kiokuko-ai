@@ -5,6 +5,9 @@ import { parseRetrievalQuery } from './retrieval-query.js';
 import { findSecretInValue } from './secrets.js';
 import { proposalDigest, type ReplayMemoryProposal } from './replay-review.js';
 
+const REQUEST_STOP_WORDS = new Set(['a', 'an', 'the', 'and', 'or', 'to', 'of', 'for', 'in', 'this', 'that', 'with',
+  'please', 'fix', 'add', 'update', 'implement', 'して', 'する', 'ください', 'してく', 'くだ', 'ださい', '修正', '実装', '追加', '変更', 'お願い']);
+
 /** Call only from a trusted review adapter's save closure. This is not a model API. */
 export function createApprovedReplayMemoryStore(db: SqliteDatabase, workspace: string,
   indexApproved?: (proposal: ReplayMemoryProposal, approvalKey: string) => {id:string;revision:number} | void) {
@@ -45,9 +48,9 @@ export function createApprovedReplayMemoryStore(db: SqliteDatabase, workspace: s
         if(duplicate)return;
         db.prepare('INSERT INTO replay_memory_content VALUES(?,?,?)').run(workspace,contentHash,approvalKey);
         db.prepare('INSERT INTO replay_memories VALUES(?,?,?,?,?,?,?,?,?)').run(approvalKey, workspace, owned.source.taskId, owned.source.sessionId, owned.proposalId, owned.revision, digest, JSON.stringify(owned), new Date().toISOString());
-        // Index the final unrecorded finding or human correction, never superseded draft text.
+        // Index final compact findings (including human corrections), never superseded draft text.
         // This does not change the reviewed revision or digest.
-        const correctedTerms = owned.findings.filter(finding => owned.source.kind === 'unrecorded' || finding.basis === 'user_corrected').map(finding => finding.text);
+        const correctedTerms = owned.findings.map(finding => finding.text);
         for (const [kind, terms] of [['tag', owned.tags], ['keyword', [...correctedTerms, ...owned.keywords]]] as const) {
           for (const term of [...new Set(terms.flatMap(t => { const parsed=parseRetrievalQuery(t); return [t.toLowerCase(),...parsed.lexicalTerms,...parsed.substringTerms]; }).filter(t => t.length > 0 && t.length <= 64))].slice(0,256)) {
             db.prepare('INSERT INTO replay_memory_terms VALUES(?,?,?)').run(approvalKey, term, kind);
@@ -70,7 +73,9 @@ export function createApprovedReplayMemoryStore(db: SqliteDatabase, workspace: s
       // memory_context permits an omitted query, including tag-only recall and
       // same-session handoff refresh. Empty text contributes no search terms.
       const parsed = query.length ? parseRetrievalQuery(query) : { lexicalTerms: [], substringTerms: [] };
-      const terms = [...new Set([...tags, ...parsed.lexicalTerms, ...parsed.substringTerms].map(t => t.toLowerCase()))].slice(0, 64);
+      const requestTerms = [...parsed.lexicalTerms, ...parsed.substringTerms].map(t => t.toLowerCase())
+        .filter(term => !REQUEST_STOP_WORDS.has(term));
+      const terms = [...new Set([...tags.map(tag => tag.toLowerCase()), ...requestTerms])].slice(0, 64);
       if (!terms.length) return [];
       const indexed=db.prepare("SELECT 1 FROM sqlite_master WHERE name='entries'").get();
       const live=indexed?"AND NOT EXISTS(SELECT 1 FROM replay_memory_entries r WHERE r.memory_key=m.approval_key AND NOT EXISTS(SELECT 1 FROM entries e WHERE e.id=r.entry_id AND e.current_revision=r.entry_revision AND e.status<>'superseded'))":"";

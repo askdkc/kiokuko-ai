@@ -11,6 +11,7 @@ import type { UnrecordedDraft } from '../memory/unrecorded-review.js';
 
 /** Actual native dialogs return answers directly; model text cannot supply approval. */
 export async function askNativeReplayQuestion(ctx: Plugin.Context, question: ReviewQuestion): Promise<ReviewAnswer> {
+  const japanese = /[\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}]/u.test(question.text);
   if (question.phase === 'organize') {
     const yes = await ctx.ui.dialog.confirm({ title: question.sourceKind === 'unrecorded' ? 'Create memory without a recording?' : 'Organize recorded experience?', message: question.text,
       label: { confirm: question.sourceKind === 'unrecorded' ? 'Create proposal' : 'Organize', cancel: 'No, finish without saving' } });
@@ -20,15 +21,15 @@ export async function askNativeReplayQuestion(ctx: Plugin.Context, question: Rev
   let choice: string | undefined;
   do {
     choice = await ctx.ui.dialog.select({ title: question.text, options: [
-      { title: 'Save memory', value: 'approve' },
-      { title: 'Edit key points', value: 'revise' },
-      { title: 'Skip — do not save', value: 'decline' },
-      ...(question.details ? [{ title: 'Details — everything that will be saved', value: 'details' }] : []),
+      { title: japanese ? 'この要約を保存' : 'Save this summary', value: 'approve' },
+      { title: japanese ? '要約を修正' : 'Edit summary', value: 'revise' },
+      { title: japanese ? '保存しない' : 'Skip — do not save', value: 'decline' },
+      ...(question.details ? [{ title: japanese ? '詳細と出典を確認' : 'Details and provenance', value: 'details' }] : []),
     ] });
     if (choice === 'details') await ctx.ui.dialog.alert({ title: `Full memory v${question.revision}`, message: question.details! });
   } while (choice === 'details');
   if (choice !== 'revise') return { questionId: question.id, choice: choice === 'approve' ? 'approve' : 'decline' };
-  const comment = await ctx.ui.dialog.prompt({ title: 'Edit key points', description: 'Replace the key points. Source evidence stays unchanged. Review again before saving.' });
+  const comment = await ctx.ui.dialog.prompt({ title: japanese ? '保存する要約を修正' : 'Edit summary', description: japanese ? '6行以内で要約を入力してください。修正後にもう一度確認します。' : 'Replace the summary in up to six lines. Review again before saving.' });
   return comment?.trim() ? { questionId: question.id, choice: 'revise', comment } : { questionId: question.id, choice: 'decline' };
 }
 
@@ -88,7 +89,7 @@ function sessionDraft(request: unknown, response: string): UnrecordedDraft {
   };
 }
 
-/** Successful idle is necessary, but human organization consent also confirms the task is finished. */
+/** Settled idle offers summary review; only native approval authorizes saving, not task-success claims. */
 export async function registerNativeReplayReview(ctx: Plugin.Context, run: NativeReviewRunner = runNativeReviewWorker) {
   const runtime = parseOpenCodePluginOptions(ctx.options);
   const traceDirectory = process.env.AGENTICREPLAY_RUN_DIR;

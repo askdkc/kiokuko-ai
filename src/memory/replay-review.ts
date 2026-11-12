@@ -1,9 +1,10 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { canonicalJson } from '../serialization/validate.js';
 import { containsPrivateLearningData } from './learning-safety.js';
+import { compactMemoryProposal } from './compact-proposal.js';
 
 export interface ReplayMemoryProposal {
-  schemaVersion: 1; proposalId: string; revision: number; title?: string;
+  schemaVersion: 1; proposalId: string; revision: number; title?: string; summary?: string;
   source: { kind?: 'unrecorded'; limitations?: string[]; taskOutcome?: 'completed' | 'failed'; workspace: string; taskId: string; sessionId: string; traces: Array<{ schemaVersion?: string; runId: string; eventsSha256: string; eventsRead: number; totalEvents: number | null; digestScope?: 'complete' | 'observed_prefix'; complete: boolean; gaps: string[] }> };
   request: { text: string; evidenceRefs: string[] };
   languages: Array<{ name: string; basis: 'observed' | 'inferred'; evidenceRefs: string[] }>;
@@ -18,23 +19,10 @@ export interface ReviewAnswer { questionId: string; choice: 'organize' | 'approv
 export interface ReviewReceipt { status: 'saved' | 'declined' | 'unavailable' | 'not_completed'; workMayContinue: true; approvalKey?: string; reason?: 'native_elicitation_unavailable' }
 export const proposalDigest = (value: ReplayMemoryProposal): string => createHash('sha256').update(canonicalJson(value)).digest('hex');
 
-/** Preview only: the full immutable revision remains available for inspection and approval. */
+/** The displayed summary is the saved body; details contain only bounded provenance. */
 function reviewSummary(proposal: ReplayMemoryProposal): string {
-  const line = (label: string, value: string) => {
-    const text = `${label}${value.replace(/[\s\p{Cc}\p{Cf}]+/gu, ' ').trim()}`;
-    return text.length > 72 ? `${text.slice(0, 71)}…` : text;
-  };
-  const failures = proposal.attempts.filter(attempt => attempt.outcome === 'failed').length;
-  const incomplete = proposal.source.traces.some(trace => !trace.complete || trace.gaps.length > 0);
-  return [
-    `Save / Edit / Skip / Details — memory v${proposal.revision}`,
-    line('Task: ', proposal.request.text || proposal.title || 'No task description'),
-    line('Remember: ', proposal.findings.map(finding => finding.text).join('; ') || 'No key points supplied'),
-    proposal.source.kind === 'unrecorded' ? 'Evidence: No recording; claims are unverified.'
-      : `Evidence: ${proposal.attempts.length} recorded attempts, ${failures} failed; task ${proposal.source.taskOutcome ?? 'completed'}.`,
-    incomplete ? 'Partial recording. Summary only; Details shows everything saved.'
-      : 'Preview only. Details shows all saved content; claims stay unverified.',
-  ].map(text => line('', text)).join('\n');
+  const japanese = /[\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}]/u.test(proposal.request.text);
+  return `${japanese ? 'この要約を同じリポジトリの記憶として保存しますか？' : 'Save this summary as memory for this repository?'}\n${proposal.summary}`;
 }
 
 /** Host-only adapter. Never expose ask/save or a human:true input through a model tool.
@@ -66,17 +54,14 @@ export async function reviewCompletedReplay(deps: {
   }
   let approvedKey: string | undefined;
   try {
-    const organize: ReviewQuestion = { id: randomUUID(), phase: 'organize', ...(deps.sourceKind ? { sourceKind: deps.sourceKind } : {}), text: deps.sourceKind === 'unrecorded'
-      ? 'Create proposal / Skip\nCreate a memory without a recording?\nClaims are unverified. Review before saving; skip if still working.'
-      : `Create proposal / Skip\n${deps.taskOutcome === 'failed' ? 'The task failed.' : 'The task is complete.'} Turn its recording into a memory?\nYou can review and edit before saving.` };
     if (!active()) return receipt('declined');
-    const permission = await wait(deps.ask(organize));
-    if (permission.questionId !== organize.id || permission.choice !== 'organize' || !active()) return receipt('declined');
     let proposal = structuredClone(await wait(deps.extract()));
     if ((deps.sourceKind === 'unrecorded') !== (proposal.source.kind === 'unrecorded') || proposal.schemaVersion !== 1 || proposal.source.workspace !== deps.workspace || proposal.source.taskId !== deps.taskId || proposal.source.sessionId !== deps.sessionId) throw new Error('proposal_binding_mismatch');
     proposal.proposalId = randomUUID(); proposal.revision = 1;
     if (deps.taskOutcome) proposal.source.taskOutcome = deps.taskOutcome;
     else if (deps.sourceKind !== 'unrecorded') proposal.source.taskOutcome = 'completed';
+    if (Buffer.byteLength(JSON.stringify(proposal)) > 256 * 1024 || containsPrivateLearningData(proposal)) throw new Error('unsafe_proposal');
+    proposal = compactMemoryProposal(proposal);
     for (;;) {
       if (!active()) return receipt('declined');
       if (Buffer.byteLength(JSON.stringify(proposal)) > 256 * 1024 || containsPrivateLearningData(proposal)) throw new Error('unsafe_proposal');
@@ -87,10 +72,10 @@ export async function reviewCompletedReplay(deps: {
       if (answer.questionId !== question.id || !active()) return receipt('declined');
       if (answer.choice === 'decline') return receipt('declined');
       if (answer.choice === 'revise' || answer.comment?.trim()) {
-        if (!answer.comment?.trim() || answer.comment.length > 2048 || containsPrivateLearningData(answer.comment)) throw new Error('unsafe_comment');
+        if (!answer.comment?.trim() || answer.comment.length > 2048 || answer.comment.trim().split('\n').length > 6 || containsPrivateLearningData(answer.comment)) throw new Error('unsafe_comment');
         // Corrections are attributed to the user, never forged as execution evidence.
         // The revised preview preserves observed evidence and explicitly supersedes prior interpretation.
-        proposal = { ...proposal, revision: proposal.revision + 1,
+        proposal = { ...proposal, revision: proposal.revision + 1, summary: answer.comment.trim(),
           findings: [{ kind: 'key_point', text: answer.comment.trim(), basis: 'user_corrected', evidenceRefs: [] }] };
         continue;
       }

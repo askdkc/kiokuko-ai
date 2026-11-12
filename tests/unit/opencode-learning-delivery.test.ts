@@ -58,7 +58,7 @@ test('foreign, stale, non-system and incomplete cautions cannot satisfy delivery
   assert.equal(probe.requests, before, 'foreign session requests are not probe receipts');
 });
 
-test('ephemeral completion does not imply recall readiness, and delayed real hooks deliver on the fourth request', { timeout: 2_000 }, async t => {
+test('ephemeral completion does not imply recall readiness; the first context waits for actual delivery', { timeout: 2_000 }, async t => {
   const fixture = pluginContextFixture();
   const lifecycle = new OpenCodePluginLifecycle();
   t.after(() => lifecycle.dispose(() => undefined));
@@ -80,7 +80,10 @@ test('ephemeral completion does not imply recall readiness, and delayed real hoo
       signals.push(signal);
       await fixture.hooks.get('session:prompt')!({ sessionID, messageID: `request-${++attempts}`, prompt: { text } } as never);
       const system: Array<{ type: 'text'; text: string }> = [];
-      await fixture.hooks.get('session:context')!({ sessionID, system } as never);
+      const delivery = fixture.hooks.get('session:context')!({ sessionID, system } as never);
+      assert.equal(probe.seen, false, 'no receipt exists before the actual provider request');
+      release(context);
+      await delivery;
       receipts.push(system);
       probe.observe(providerBody(text, system));
     },
@@ -90,19 +93,16 @@ test('ephemeral completion does not imply recall readiness, and delayed real hoo
       adapter.observeEvent({ id: `completed-${waits}`, type: 'session.execution.succeeded', sessionId: sessionID });
       await tick();
       assert.equal(observations.length, 0, 'completion does not authorize persistence');
-      if (waits <= 3) assert.equal(probe.seen, false, 'the completed observation cannot prove recall delivery');
-      if (waits === 3) { release(context); await tick(); }
     },
   } }, expected.sessionId, probe, { timeoutMs: 1_000, intervalMs: 0 });
-  assert.deepEqual(result, { attempts: 4, providerRequests: 4, eventId: expected.eventId });
-  assert.equal(waits, 4);
-  assert.equal(signals.length, 8);
+  assert.deepEqual(result, { attempts: 1, providerRequests: 1, eventId: expected.eventId });
+  assert.equal(waits, 1);
+  assert.equal(signals.length, 2);
   assert.ok(signals.every(signal => signal === signals[0]));
-  for (const receipt of receipts.slice(0, 3)) assert.doesNotMatch(JSON.stringify(receipt), /complaint-event-1/);
-  assert.match(JSON.stringify(receipts[3]), /complaint-event-1/);
+  assert.match(JSON.stringify(receipts[0]), /complaint-event-1/);
 });
 
-test('never-resolving recall leaves real prompt, context and plugin disposal nonblocking', { timeout: 1_000 }, async t => {
+test('never-resolving recall leaves prompt immediate, context bounded, and disposal nonblocking', { timeout: 2_000 }, async t => {
   const fixture = pluginContextFixture();
   const lifecycle = new OpenCodePluginLifecycle();
   t.after(() => lifecycle.dispose(() => undefined));
@@ -115,7 +115,9 @@ test('never-resolving recall leaves real prompt, context and plugin disposal non
   await tick();
   assert.equal(recallStarted, true);
   const system: unknown[] = [];
+  const started = performance.now();
   await fixture.hooks.get('session:context')!({ sessionID: expected.sessionId, system } as never);
+  assert.ok(performance.now() - started < 1500, 'a hung backend cannot hold context beyond the one-second grace period');
   assert.deepEqual(system, []);
   await lifecycle.dispose(() => undefined);
   assert.equal(lifecycle.isActive(), false);

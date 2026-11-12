@@ -74,9 +74,8 @@ export function createMcpUnrecordedReview(server: McpServer, withDatabase: <T>(f
               || registered.repositoryRoot !== project.repositoryRoot || combined.aborted) throw new Error('review_binding_changed');
             createApprovedReplayMemoryStore(db, project.workspace, p => recordEntryInTransaction(db, {
               workspace: project.workspace, kind: 'reference', title: p.title!,
-              body: ['User-reviewed unrecorded experience; claims are unverified.', p.request.text, ...p.findings.map(f => f.text)].join('\n').slice(0, 19000),
-              summary: p.findings.map(f => f.text).join('\n').slice(0, 2048),
-              tags: p.tags, scope: { visibility: 'project' },
+              body: p.summary!, summary: p.summary!,
+              tags: [...new Set([...p.tags, ...p.keywords])].slice(0, 20), scope: { visibility: 'project' },
               provenance: { type: 'user_approved_unrecorded', reference: key, sourceRepositoryId: project.repositoryId, sourceWorkspace: project.workspace },
               trustLevel: 'untrusted', confidence: 0.4, createdBy: 'kiokuko-ai-user-review', actor: 'user',
             })).save(proposal, key);

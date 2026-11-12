@@ -31,27 +31,32 @@ computer or installed runtime.
 
 ## Runtime contract
 
-Server prompt/context hooks recall advisory memory asynchronously and retain only
-volatile public handoff excerpts. They do not persist new observations. They never
-await memory availability before allowing the user's task to proceed.
+Server prompt hooks search the same repository using request keywords and tags,
+including Japanese terms, and retain only volatile public handoff excerpts. The
+first context hook waits at most one second for the lexical result so matching
+memories can reach the first model response. Slow or unavailable recall does not
+block the task; a late result can reach a later context. Unrelated, stale and
+foreign-repository results are not injected. Hooks do not persist observations.
 
 The exported `/tui` entrypoint is resolved by the installed OpenCode plugin host.
 It offers review after a root session reaches settled succeeded/failed idle with a completed
 assistant `finish=stop`, public final text, and no queued requests. Tool-only turns
-and duplicate events do not qualify. The native organization dialog asks the user
-whether the task is actually finished; an idle event alone is not a task-success
-claim. New execution and explicit Stop cancel any pending review.
+and duplicate events do not qualify. An idle event alone is not a task-success
+claim. One native dialog shows the actual summary to save, normally six lines,
+with Save summary / Edit summary / Skip actions. It does not ask for permission
+to organize or an open-ended comment. New execution and explicit Stop cancel
+any pending review.
 
 The optional `memory_review_completed` MCP tool supports clients advertising
 native elicitation. It validates an already-settled completed/failed operational run, then asks
-organization and revision-bound review questions through the client's native UI.
+a revision-bound summary-save question through the client's native UI.
 A memory-free terminal checkpoint queues that review without awaiting the answer.
 The TUI avoids duplicating a review already queued by that request.
 It has no model-callable approval argument. Clients without supported native UI
 return an unavailable receipt, without blocking or undoing the completed task.
 
-When no AgenticReplay recording is supplied, the TUI instead asks whether to
-create a memory without one. Its draft uses only bounded excerpts of the latest
+When no AgenticReplay recording is supplied, the same summary-save dialog
+discloses that limitation. Its draft uses only bounded excerpts of the latest
 public request and final response, with fenced code, block-quoted lines, private
 reasoning, and known credentials excluded. It does not claim that assistant statements
 or task results have been independently verified. A missing recording directory
@@ -62,9 +67,8 @@ An agent may call `memory_review_unrecorded` on an MCP client supporting native
 elicitation, even when no `task_prepare` run exists. Supply an absolute project
 `cwd`, a new `requestId`, and a bounded `draft` containing `title`, `request`,
 `body`, `tags`, `keywords`, and `sourceNotes`. The draft must not contain raw
-logs, transcripts, private reasoning or credentials. The first native question
-asks whether to create memory without AgenticReplay; a second shows the exact
-proposal, including its source limitations, for approval or revision. The
+logs, transcripts, private reasoning or credentials. The native question shows
+the compact summary and its source limitations for approval or revision. The
 unrecorded source is marked explicitly and carries no invented trace or execution
 evidence. Reuse the same `requestId` only with identical inputs for reconciliation;
 a different draft or project cannot inherit an earlier approval. Unsupported
@@ -72,8 +76,11 @@ clients, rejection, cancellation and dismissal save nothing. The MCP call is not
 itself approval, nor is a textual answer in the model conversation.
 
 Candidates, revisions and approval state remain in process-local memory until
-approval. Native UI comments replace proposed findings with explicitly attributed
-user corrections, preserve source observations, and show a new exact revision.
+approval. Only choosing Edit summary opens a replacement-text field. Edits replace
+the summary with explicitly attributed user corrections and require a new exact
+revision to be approved. The displayed summary is the indexed memory body. Only
+bounded provenance, tags, keywords and historical execution states accompany it;
+raw command output and the full extracted proposal are not copied into memory.
 Decline, dismissal, stale answers, shutdown and cancellation do not save candidates.
 The approved revision and contextual keyword/tag index commit together in SQLite.
 An uncertain COMMIT is confirmed only through a separate read-only connection;

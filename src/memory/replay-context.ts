@@ -35,7 +35,7 @@ export function approvedReplayContext(proposal: ReplayMemoryProposal) {
   }));
   return {
     entryId: proposal.proposalId, revision: proposal.revision, kind: proposal.source.kind === 'unrecorded' ? 'reviewed_unrecorded' : 'reviewed_replay',
-    summary: findings.map(finding => finding.text).join('\n'), findings, attempts,
+    summary: proposal.summary ?? findings.map(finding => finding.text).join('\n'), findings, attempts,
     request: proposal.request.text.slice(0, 240), requestTruncated: proposal.request.text.length > 240,
     tags: proposal.tags.slice(0, 8),
     source: { ...proposal.source, traces: proposal.source.traces.slice(0, 1).map(trace => ({

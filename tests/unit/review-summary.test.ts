@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { reviewCompletedReplay, type ReplayMemoryProposal, type ReviewQuestion } from '../../src/memory/replay-review.js';
 
-test('review is five short human-readable lines with actions first and exact details available', async () => {
+test('review asks once with six saved summary lines and bounded provenance available', async () => {
   const proposal: ReplayMemoryProposal = {
     schemaVersion: 1, proposalId: '', revision: 1,
     source: { kind: 'unrecorded', workspace: 'project', taskId: 'task', sessionId: 'session', traces: [], limitations: ['No recording supplied.'] },
@@ -17,16 +17,19 @@ test('review is five short human-readable lines with actions first and exact det
     save: async p => { saved = p; },
   });
   for (const q of questions) {
-    assert.ok(q.text.split('\n').length < 6);
-    assert.ok(q.text.split('\n').every(line => line.length <= 72));
+    assert.equal(q.text.split('\n').length, 7);
+    assert.ok(q.text.split('\n').every(line => line.length <= 240));
   }
-  const review = questions[1]!;
-  assert.match(review.text.split('\n')[0]!, /Save.*Edit.*Skip.*Details/);
+  assert.equal(questions.length, 1);
+  const review = questions[0]!;
+  assert.match(review.text.split('\n')[0]!, /Save this summary/);
   assert.match(review.text, /Fix startup/);
   assert.match(review.text, /Startup now works/);
   assert.match(review.text, /No recording.*unverified/);
   assert.doesNotMatch(review.text, /SHA-256|schemaVersion|workspace/);
   assert.equal(review.details, JSON.stringify(saved, null, 2));
+  assert.equal(saved!.summary, review.text.split('\n').slice(1).join('\n'));
+  assert.ok(saved!.findings[0]!.text.length <= 240);
 });
 
 test('recorded preview keeps task failure and partial evidence visible', async () => {
@@ -42,5 +45,5 @@ test('recorded preview keeps task failure and partial evidence visible', async (
   assert.match(preview!.text, /task failed/);
   assert.match(preview!.text, /Partial recording/);
   assert.match(preview!.text, /No key points supplied/);
-  assert.equal(preview!.text.split('\n').length, 5);
+  assert.equal(preview!.text.split('\n').length, 7);
 });

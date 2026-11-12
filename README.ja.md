@@ -17,6 +17,8 @@ KiokukoはOpenCode向けのローカル外部メモリ導入Pluginです。SQLit
 
 記憶はProject・Ecosystem・Globalに分離されます。現在のコード、設定、実行結果が過去の記憶より優先されます。
 
+コーディング前に、依頼のキーワードやタグで同じリポジトリの記憶を検索します。作業後は6行程度の要約を表示し、「保存・修正・保存しない」を選ぶだけ。コメントは不要です。承認した要約と必要最小限の出典・検索用メタデータだけを保存し、生のログは保存しません。
+
 `kiokuko-ai trace record --` でOpenCodeを記録し、終了後の最終トレースまで取り込めます。対話セットアップで `agenticreplay-opencode` のショートハンドを設定できます。同期と復旧は [AgenticReplay連携](docs/agenticreplay-integration.md) を参照してください。
 
 ## 最短セットアップ

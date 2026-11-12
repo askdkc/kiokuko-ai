@@ -45,7 +45,7 @@ test('MCP memory checkpoint and curator booleans cannot impersonate native human
   assert.equal(check.prepare('SELECT count(*) AS n FROM entries').get<{ n: number }>()?.n, 0); check.close();
 });
 
-test('native MCP elicitation asks organization and exact candidate; only host approval saves',async()=>{
+test('native MCP elicitation asks once about the exact summary; only host approval saves',async()=>{
  const {ElicitRequestSchema}=await import('@modelcontextprotocol/sdk/types.js');
  const {LedgerStore}=await import('../../src/ledger/store.js');
  const {resolveProjectWorkspace}=await import('../../src/memory/workspaces.js');
@@ -58,16 +58,15 @@ test('native MCP elicitation asks organization and exact candidate; only host ap
   client.setRequestHandler(ElicitRequestSchema,async request=>{
     prompts++;
     assert.equal(db.prepare('SELECT COUNT(*) AS n FROM entries').get<{n:number}>()?.n,0);
-    if(prompts===1)return{action:'accept',content:{choice:'organize'}};
     assert.ok(request.params.message.includes('Check sqlite'));
-    if(prompts===2){
-      assert.equal(request.params.message.split('\n').length,5);
-      assert.match(request.params.message,/Save \/ Edit \/ Skip \/ Details/);
+    if(prompts===1){
+      assert.equal(request.params.message.split('\n').length,7);
+      assert.match(request.params.message,/Save this summary/);
       assert.doesNotMatch(request.params.message,/SHA-256|schemaVersion/);
       return{action:'accept',content:{choice:'details'}};
     }
-    assert.equal(prompts,3);
-    const candidate=JSON.parse(request.params.message.slice(0,request.params.message.lastIndexOf('\nSave / Edit / Skip')));
+    assert.equal(prompts,2);
+    const candidate=JSON.parse(request.params.message.slice(0,request.params.message.lastIndexOf('\nSave this summary')));
     assert.equal(candidate.schemaVersion,1);
     assert.equal(candidate.source.workspace,project.workspace);
     assert.equal(candidate.source.taskId,'completed-run');
@@ -75,7 +74,7 @@ test('native MCP elicitation asks organization and exact candidate; only host ap
     return{action:'accept',content:{choice:'approve'}};
   });
  const [a,b]=InMemoryTransport.createLinkedPair();await server.connect(b);await client.connect(a);
-  try{const result=await client.callTool({name:'memory_review_completed',arguments:{runId:'completed-run',cwd:root,traceDirectory:trace}});assert.equal((result.structuredContent as Record<string,unknown>|undefined)?.status,'saved');assert.equal(prompts,3);assert.equal(db.prepare('SELECT COUNT(*) AS n FROM entries').get<{n:number}>()?.n,1);assert.equal(ledger.readRun('completed-run')?.status,'completed');
+  try{const result=await client.callTool({name:'memory_review_completed',arguments:{runId:'completed-run',cwd:root,traceDirectory:trace}});assert.equal((result.structuredContent as Record<string,unknown>|undefined)?.status,'saved');assert.equal(prompts,2);assert.equal(db.prepare('SELECT COUNT(*) AS n FROM entries').get<{n:number}>()?.n,1);assert.equal(ledger.readRun('completed-run')?.status,'completed');
   ledger.createRunInTransaction({runId:'queued-run',workspace:project.workspace,protocolVersion:'1',client:{kind:'opencode',sessionId:'queued-session'},captureProfile:'minimal',coverage:{run:'best_effort',tool:'declared',command:'declared',file:'declared',approval:'unavailable'},task:{title:'Check sqlite again',query:'Check sqlite again',profileHints:{taskType:null,target:null,expected:null,constraints:null}},metadata:{intakeRequired:false}});ledger.updateRunStatusInTransaction('queued-run','active');
   let dismiss!:(value:{action:'decline'})=>void;let offered!:()=>void;const offer=new Promise<void>(r=>offered=r);
   client.setRequestHandler(ElicitRequestSchema,async()=>{offered();return await new Promise<{action:'decline'}>(r=>dismiss=r);});

@@ -44,17 +44,17 @@ async function fixture(t: { after(fn: () => Promise<void> | void): void }, choic
 }
 
 test('no-log MCP review asks the human and saves the exact approved project memory without a task run', async t => {
-  const f = await fixture(t, ['organize', 'approve']);
+  const f = await fixture(t, ['approve']);
   const input = { cwd: f.root, requestId: 'standalone-review-1', draft };
   const result = await f.client.callTool({ name: 'memory_review_unrecorded', arguments: input });
   assert.equal((result.structuredContent as any)?.status, 'saved', JSON.stringify(result));
-  assert.equal(f.prompts.length, 2);
+  assert.equal(f.prompts.length, 1);
   assert.match(f.prompts[0]!, /without|no recording/i);
-  assert.ok(f.prompts.every(text => text.split('\n').length < 6));
-  assert.match(f.prompts[1]!, /Save \/ Edit \/ Skip \/ Details/);
-  assert.ok(f.prompts[1]!.includes(draft.request));
-  assert.match(f.prompts[1]!, /Remove only byte-identical files/);
-  assert.doesNotMatch(f.prompts[1]!, /schemaVersion/);
+  assert.equal(f.prompts[0]!.split('\n').length, 7);
+  assert.match(f.prompts[0]!, /Save this summary/);
+  assert.ok(f.prompts[0]!.includes(draft.request));
+  assert.match(f.prompts[0]!, /Remove only byte-identical files/);
+  assert.doesNotMatch(f.prompts[0]!, /schemaVersion/);
   const db = openConnection(f.databasePath); t.after(() => db.close());
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM entries').get<{n:number}>()?.n, 1);
   const recalled = await memoryContext(db, { cwd: f.root, query: 'retireStandardSkills' });
@@ -67,21 +67,21 @@ test('no-log MCP review asks the human and saves the exact approved project memo
   assert.equal(memory.verification, 'user_reviewed_not_task_verified');
   const again = await f.client.callTool({ name: 'memory_review_unrecorded', arguments: input });
   assert.equal((again.structuredContent as any)?.status, 'saved');
-  assert.equal(f.prompts.length, 2);
+  assert.equal(f.prompts.length, 1);
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM entries').get<{n:number}>()?.n, 1);
 });
 
 test('MCP Details reveals the full revision on request without saving or changing it', async t => {
-  const f = await fixture(t, ['organize', 'details', 'approve']);
+  const f = await fixture(t, ['details', 'approve']);
   const result = await f.client.callTool({ name: 'memory_review_unrecorded', arguments: { cwd: f.root, requestId: 'details-1', draft } });
   assert.equal((result.structuredContent as any)?.status, 'saved');
-  assert.equal(f.prompts.length, 3);
-  assert.ok(f.prompts[1]!.split('\n').length < 6);
-  for (const text of [draft.title, draft.request, draft.body, draft.sourceNotes[0]!]) assert.ok(f.prompts[2]!.includes(text), text);
+  assert.equal(f.prompts.length, 2);
+  assert.equal(f.prompts[0]!.split('\n').length, 7);
+  for (const text of [draft.title, draft.request, draft.body, draft.sourceNotes[0]!]) assert.ok(f.prompts[1]!.includes(text), text);
 });
 
 test('decline at either native prompt and unavailable native UI never create memory', async t => {
-  for (const [choices, supports] of [[['decline'], true], [['organize', 'decline'], true], [[], false]] as Array<[Array<'organize' | 'decline'>, boolean]>) {
+  for (const [choices, supports] of [[['decline'], true], [[], false]] as Array<[Array<'decline'>, boolean]>) {
     const f = await fixture(t, choices, supports);
     const result = await f.client.callTool({ name: 'memory_review_unrecorded', arguments: { cwd: f.root, requestId: 'decline-1', draft } });
     assert.equal((result.structuredContent as any)?.status, supports ? 'declined' : 'unavailable', JSON.stringify(result));
@@ -92,7 +92,7 @@ test('decline at either native prompt and unavailable native UI never create mem
 });
 
 test('no-log draft cannot contain credentials or a model-supplied approval flag', async t => {
-  const f = await fixture(t, ['organize', 'approve']);
+  const f = await fixture(t, ['approve']);
   for (const badDraft of [ { ...draft, body: 'authorization: bearer abcdefghijklmnop1234' }, { ...draft, approved: true } ]) {
     const result = await f.client.callTool({ name: 'memory_review_unrecorded', arguments: { cwd: f.root, requestId: 'unsafe-1', draft: badDraft } });
     assert.notEqual((result.structuredContent as any)?.status, 'saved', JSON.stringify(result));
@@ -104,14 +104,14 @@ test('no-log draft cannot contain credentials or a model-supplied approval flag'
 
 
 test('the same review identity cannot reuse approval for changed draft or project', async t => {
-  const f = await fixture(t, ['organize', 'approve']);
+  const f = await fixture(t, ['approve']);
   const input = { cwd: f.root, requestId: 'bound-review', draft };
   assert.equal((await f.client.callTool({ name: 'memory_review_unrecorded', arguments: input }).then(r => r.structuredContent as any)).status, 'saved');
   const changed = await f.client.callTool({ name: 'memory_review_unrecorded', arguments: { ...input, draft: { ...draft, body: 'Different contents' } } });
   assert.notEqual((changed.structuredContent as any)?.status, 'saved');
   const otherProject = await f.client.callTool({ name: 'memory_review_unrecorded', arguments: { ...input, cwd: path.join(f.root, 'other') } });
   assert.notEqual((otherProject.structuredContent as any)?.status, 'saved');
-  assert.equal(f.prompts.length, 2);
+  assert.equal(f.prompts.length, 1);
   const db = openConnection(f.databasePath, { readOnly: true });
   try { assert.equal(db.prepare('SELECT COUNT(*) AS n FROM entries').get<{n:number}>()?.n, 1); } finally { db.close(); }
 });
@@ -122,7 +122,7 @@ test('unrecorded review reconciles a lost save acknowledgement without a second 
   const db = openConnection(f.databasePath); t.after(() => db.close());
   let prompts = 0, connections = 0;
   const server = { server: { getClientCapabilities: () => ({ elicitation: { form: {} } }),
-    elicitInput: async () => ({ action: 'accept', content: { choice: ++prompts === 1 ? 'organize' : 'approve' } }) } };
+    elicitInput: async () => { prompts++; return { action: 'accept', content: { choice: 'approve' } }; } } };
   const review = createMcpUnrecordedReview(server as any, async fn => {
     const n = ++connections; const result = await fn(db);
     if (n === 2) throw Error('lost save acknowledgement');
@@ -137,7 +137,7 @@ test('unrecorded review reconciles a lost save acknowledgement without a second 
   const recovered = await review.review(input);
   assert.equal(recovered.status, 'saved');
   assert.equal(recovered.approvalKey, first.approvalKey);
-  assert.equal(prompts, 2);
+  assert.equal(prompts, 1);
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM entries').get<{n:number}>()?.n, 1);
 });
 
@@ -148,7 +148,7 @@ test('Stop while the approved no-log review waits for its save prevents a late w
   let prompts = 0, connections = 0; let entered!: () => void, release!: () => void;
   const pending = new Promise<void>(r => entered = r); const wait = new Promise<void>(r => release = r);
   const server = { server: { getClientCapabilities: () => ({ elicitation: { form: {} } }),
-    elicitInput: async () => ({ action: 'accept', content: { choice: ++prompts === 1 ? 'organize' : 'approve' } }) } };
+    elicitInput: async () => { prompts++; return { action: 'accept', content: { choice: 'approve' } }; } } };
   const review = createMcpUnrecordedReview(server as any, async fn => { if (++connections === 2) { entered(); await wait; } return fn(db); });
   const controller = new AbortController();
   const running = review.review(unrecordedReviewInputSchema.parse({ cwd: f.root, requestId: 'stop-save', draft }), controller.signal);
@@ -165,14 +165,17 @@ test('a native revision replaces the draft finding and needs a fresh approval', 
     prompts.push(req.params.message);
     const db = openConnection(f.databasePath, { readOnly: true });
     try { assert.equal(db.prepare('SELECT COUNT(*) AS n FROM entries').get<{n:number}>()?.n, 0); } finally { db.close(); }
-    if (prompts.length === 1) return { action: 'accept', content: { choice: 'organize' } };
-    if (prompts.length === 2) return { action: 'accept', content: { choice: 'revise', comment: 'Verify symlink behavior before applying this.' } };
+    if (prompts.length === 1) return { action: 'accept', content: { choice: 'revise' } };
+    if (prompts.length === 2) {
+      assert.ok('requestedSchema' in req.params && 'summary' in req.params.requestedSchema.properties);
+      return { action: 'accept', content: { summary: 'Verify symlink behavior before applying this.' } };
+    }
     return { action: 'accept', content: { choice: 'approve' } };
   });
   const result = await f.client.callTool({ name: 'memory_review_unrecorded', arguments: { cwd: f.root, requestId: 'revised', draft: { ...draft, body: `${draft.body} discardedinterpretation` } } });
   assert.equal((result.structuredContent as any)?.status, 'saved', JSON.stringify(result));
   assert.equal(prompts.length, 3);
-  assert.match(prompts[1]!, /Remove only byte-identical files/);
+  assert.match(prompts[0]!, /Remove only byte-identical files/);
   assert.ok(prompts[2]!.includes('Verify symlink behavior before applying this.'));
   assert.ok(!prompts[2]!.includes(draft.body));
   const db = openConnection(f.databasePath); t.after(() => db.close());

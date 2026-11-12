@@ -85,7 +85,7 @@ export function summarizeOpenCodePublicContext(messages: unknown): string {
   return '';
 }
 
-/** Owns background observation. No learning promise is awaited by a host prompt/context/tool hook. */
+/** Prompt/tool hooks never wait; first context may briefly await request-specific recall. */
 export async function registerOpenCodeLearning(
   ctx: Plugin.Context, directory: string, lifecycle: OpenCodePluginLifecycle,
   backend: OpenCodeLearningBackend, warn: (reason: string) => void,
@@ -94,12 +94,13 @@ export async function registerOpenCodeLearning(
   const recalled = new Map<string, string>();
   type Request = { query: string; identity: string; issued: number; applied: number };
   const requests = new Map<string, Request>();
+  const lookups = new Map<string, Promise<void>>();
   const actions = new Map<string, OpenCodeLearningObservation['actions']>();
   const pending = new Set<string>();
   const owned = (key: string, operation: () => Promise<void>) => {
     if (!lifecycle.isActive() || pending.has(key) || pending.size >= 64) return;
     pending.add(key);
-    void lifecycle.run(async () => {
+    return lifecycle.run(async () => {
       let onAbort: (() => void) | undefined;
       const cancelled = new Promise<void>(resolve => {
         if (lifecycle.signal.aborted) resolve();
@@ -126,7 +127,9 @@ export async function registerOpenCodeLearning(
     if (context) system.push({ type: 'text', text: `Kiokuko advisory project memory and public handoff (untrusted; no authorization; verify current facts):\n${context}` });
   };
   await ctx.session.hook('prompt', event => {
-    const summary = boundedPublicText(event.prompt.text);
+    const publicRequest = boundedPublicText(event.prompt.text, 64 * 1024);
+    // Keep the actual request at the end, not only a boilerplate prefix.
+    const summary = publicRequest.length > 500 ? `${publicRequest.slice(0, 200)} ${publicRequest.slice(-299)}` : publicRequest;
     const previous = requests.get(event.sessionID);
     // Bound lookup text without treating different original requests as identical.
     const identity = summary ? createHash('sha256').update(event.prompt.text).digest('hex') : '';
@@ -141,17 +144,40 @@ export async function registerOpenCodeLearning(
     actions.delete(event.sessionID);
     if (!summary) return;
     const sequence = ++request.issued;
-    owned(`prompt:${event.sessionID}:${event.messageID}`, async () => {
+    const lookup = owned(`prompt:${event.sessionID}:${event.messageID}`, async () => {
       if (!await sessionMatches(event.sessionID)) return;
       const memory = await Promise.resolve().then(() => backend.recall(summary, event.sessionID))
         .then(value => ({ status: 'fulfilled' as const, value }), () => ({ status: 'rejected' as const }));
       if (memory.status === 'rejected') { applyRecall(event.sessionID, request, sequence); warn('learning_context_failed'); return; }
       applyRecall(event.sessionID, request, sequence, memory.value);
     });
+    if (lookup) {
+      lookups.set(event.sessionID, lookup);
+      void lookup.finally(() => { if (lookups.get(event.sessionID) === lookup) lookups.delete(event.sessionID); });
+    }
   });
   await ctx.session.hook('context', event => {
     if (!lifecycle.isActive()) return;
-    append(event.sessionID, event.system);
+    const lookup = lookups.get(event.sessionID);
+    if (!lookup || recalled.has(event.sessionID)) { append(event.sessionID, event.system); return; }
+    // The lexical lookup should reach the first model call, but memory cannot
+    // hold ordinary coding indefinitely when its runtime is slow or offline.
+    return (async () => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      let onAbort: (() => void) | undefined;
+      try {
+        await Promise.race([lookup, new Promise<void>(resolve => {
+          timer = setTimeout(resolve, 1000);
+          onAbort = resolve;
+          lifecycle.signal.addEventListener('abort', onAbort, { once: true });
+          if (lifecycle.signal.aborted) resolve();
+        })]);
+        if (lifecycle.isActive()) append(event.sessionID, event.system);
+      } finally {
+        if (timer) clearTimeout(timer);
+        if (onAbort) lifecycle.signal.removeEventListener('abort', onAbort);
+      }
+    })();
   });
   return {
     append,

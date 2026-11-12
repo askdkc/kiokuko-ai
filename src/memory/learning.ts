@@ -10,6 +10,7 @@ import { resolveProjectWorkspaceReadOnly, GLOBAL_WORKSPACE } from './workspaces.
 import { recordEntryInTransaction, readEntry } from './entries.js';
 import { DEFAULT_CONTEXT_CHARACTERS } from './context-budget.js';
 import { attachRelationDelivery, configuredRelationDeliveryOptions, legacyRelationDelivery } from './relation-delivery.js';
+import { searchEntries } from './retrieval.js';
 
 const id = z.string().min(1).max(256).regex(/^[\w.:/-]+$/u);
 const text = z.string().trim().max(2048).refine(value => !/[\p{Cc}\p{Cf}]/u.test(value.replaceAll('\n', '')));
@@ -166,7 +167,22 @@ export async function memoryContext(database: SqliteDatabase, raw: unknown) {
         return mapped ? { ...preview, proposalId: preview.entryId, proposalRevision: preview.revision,
           entryId: mapped.entry_id, revision: mapped.entry_revision, workspace: project.workspace } : preview;
       });
-    const candidates = [...approved, ...items, ...routines, ...principles];
+    // Older project memories may predate the reviewed-replay store. Reuse the
+    // existing lexical index for their bodies/tags, without crossing workspaces.
+    // A replay mirror is owned by its revision checks above, not this fallback.
+    const hasReplayIndex = database.prepare("SELECT 1 FROM sqlite_master WHERE name='replay_memory_entries'").get();
+    const query = input.query.trim() || input.tags.join(' ');
+    const projectMemories = query ? searchEntries(database, { workspace: project.workspace, query, limit: 50 }).items
+      .filter(entry => requestedTags.every(tag => entry.tags.some(value => value.toLowerCase() === tag))
+        && !(hasReplayIndex && database.prepare('SELECT 1 FROM replay_memory_entries WHERE entry_id=?').get(entry.id)))
+      .map(entry => ({ entryId: entry.id, workspace: project.workspace, revision: entry.revision, kind: entry.kind,
+        title: entry.title, summary: (entry.summary ?? entry.body).slice(0, 1600), tags: entry.tags,
+        source: entry.provenance, verification: 'unknown', currentApplicability: 'unverified', untrusted: true })) : [];
+    const unique = new Map<string, (typeof approved | typeof items | typeof routines | typeof principles | typeof projectMemories)[number]>();
+    for (const entry of [...approved, ...items, ...routines, ...principles, ...projectMemories]) {
+      if (!unique.has(entry.entryId)) unique.set(entry.entryId, entry);
+    }
+    const candidates = [...unique.values()];
     const entries = candidates.slice(0, input.limit);
     const body = () => {
       const ids = new Set(entries.map(entry => entry.entryId));

@@ -41,7 +41,9 @@ test('different original requests sharing a bounded search prefix do not share c
   await tick(); pending[0]!('SQLITE_ONLY_ADVICE'); await tick();
   await fixture.hooks.get('session:prompt')!({ sessionID: 'ses_1', messageID: 'css', prompt: { text: prefix + 'Fix CSS spacing.' } } as never);
   await tick();
-  assert.equal(queries[0], queries[1], 'the lookup stays bounded; request identity must retain the distinction');
+  assert.ok(queries.every(query => query.length <= 500));
+  assert.match(queries[0]!, /sqlite locks/);
+  assert.match(queries[1]!, /CSS spacing/);
   const system: unknown[] = [];
   await fixture.hooks.get('session:context')!({ sessionID: 'ses_1', system } as never);
   assert.doesNotMatch(JSON.stringify(system), /SQLITE_ONLY_ADVICE/);

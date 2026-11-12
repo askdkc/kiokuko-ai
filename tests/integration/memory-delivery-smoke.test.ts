@@ -99,8 +99,8 @@ async function checkpointRules(
     const receipt = await reviewCompletedReplay({ completed: true, taskId: "policy-fixture", sessionId: "host-fixture", workspace: project.workspace,
       ask: async question => {
         if (question.phase === "review") {
-          assert.equal(question.text.split('\n').length, 5);
-          assert.match(question.text, /Save \/ Edit \/ Skip \/ Details/);
+          assert.equal(question.text.split('\n').length, 7);
+          assert.match(question.text, /Save this summary|この要約を同じリポジトリの記憶として保存/);
           const candidate = JSON.parse(question.details!);
           assert.equal(candidate.request.text, title);
           assert.deepEqual(candidate.findings, [{ kind: 'key_point', text: body, basis: 'user_corrected', evidenceRefs: [] }]);
